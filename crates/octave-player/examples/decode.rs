@@ -76,7 +76,7 @@ fn wait_for(
     loop {
         let snapshot = player.snapshot();
         if let octave_player::PlaybackState::Failed(_, error) = &snapshot.state {
-            return Err(error.clone());
+            return Err(error.to_string());
         }
         if predicate(&snapshot) {
             return Ok(());

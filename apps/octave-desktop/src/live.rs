@@ -135,7 +135,7 @@ impl eframe::App for Octave {
                 PlaybackState::Playing(_) => "Playing".into(),
                 PlaybackState::Paused(_) => "Paused".into(),
                 PlaybackState::Ended(_) => "Finished".into(),
-                PlaybackState::Failed(_, error) => error.clone(),
+                PlaybackState::Failed(_, error) => error.to_string(),
             };
             ui.label(text);
             ui.horizontal(|ui| {

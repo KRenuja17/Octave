@@ -1,13 +1,34 @@
 # Octave
 
-A native desktop music client in Rust. The default app is now the **native
-experience prototype**: an offline sample library with Home, Search, albums,
-playlists, queue editing, a persistent player and a sample lyrics view.
+A native desktop music client in Rust. The default app is the **listening alpha**:
+live search, supported unsigned AAC playback, and a local persistent queue.
+The earlier silent native experience prototype is available with `--prototype`.
+Broader playback feasibility and account access remain deferred.
 
-The prototype simulates playback silently. Likes, queue, position and volume
-are session-only; they reset on restart. It never contacts YouTube or reads an
-account. The earlier experimental live playback build remains available with
-`--live-preview`; its feasibility work is deferred.
+## Listening alpha
+
+- Search automatically after a 350 ms pause in typing. A single worker replaces
+  pending searches and discards obsolete results immediately when the query changes.
+- Play a result to replace the queue; use its menu to append or play next.
+  Duplicate video IDs are rejected. Queue menus move or remove tracks.
+- Resume, pause, seek, change volume, advance, shuffle upcoming songs, or repeat
+  one song/the queue. Completion advances through your queue; no recommendation
+  radio is requested. Removing the current song stops playback.
+- Queue, current position, volume and repeat mode save atomically to SQLite every
+  two seconds and on clean exit. Restart restores them **without autoplay**.
+  Shuffle order is saved exactly as displayed. Maximum queue size: 500 songs.
+- Transient network/time-out/selected HTTP failures re-resolve the stream and
+  resume from the retained position, with at most two retries per play action.
+  Sign-in/unsupported-stream failures stop for manual action. Retry and Skip are
+  available without losing the queue. Stop cancels pending recovery.
+- Ctrl+K focuses search; Space controls playback outside text inputs;
+  Alt+Left/Right select previous/next. Lists virtualize visible rows.
+
+Data is stored in `%LOCALAPPDATA%\Octave\listening.sqlite3` on Windows. Override
+the location with `--data-dir ABSOLUTE_DIRECTORY` (also useful for QA profiles).
+The database stores track metadata and settings, never signed stream URLs,
+credentials, or audio. Newer unknown database versions are left untouched.
+Storage failures are shown in the window; do not assume changes were saved then.
 
 ## Build
 
@@ -26,6 +47,9 @@ an external build directory. No global PATH changes are required.
 
 ## Explore the prototype
 
+Launch with `--prototype`. This fixture UI simulates playback silently, has no
+account/network access, and resets its sample state on each launch.
+
 - Browse the six original collections, search 10,000 sample tracks, or filter likes.
 - Use row menus to add songs, play next, reorder or remove queue entries.
 - The player simulates play/pause, previous/next, seek, shuffle, repeat and volume.
@@ -39,8 +63,8 @@ an external build directory. No global PATH changes are required.
   page content scrolls while the player stays visible.
 
 ```text
-cargo run -p octave-desktop --locked -- --compact
-cargo run -p octave-desktop --locked -- --page album --collection 5
+cargo run -p octave-desktop --locked -- --prototype --compact
+cargo run -p octave-desktop --locked -- --prototype --page album --collection 5
 cargo run -p octave-desktop --locked -- --live-preview
 ```
 
@@ -48,7 +72,7 @@ The last collection includes Japanese, Korean, Greek, Cyrillic and long-title
 fixtures. Windows-installed Segoe UI, MS Gothic and Malgun Gothic are loaded as
 available; OS fonts are never redistributed. Other systems use egui fallbacks.
 
-For repeatable visual QA, use `--page home|search|library|album|playlist|queue|lyrics`,
+For repeatable prototype visual QA, use `--prototype --page home|search|library|album|playlist|queue|lyrics`,
 `--query TEXT`, `--state loading|empty|error|offline|signed-out`, `--scale 1|1.5|2`,
 and `--capture ABSOLUTE_PATH.png`. Captures wait for all artwork, save outside the
 repository, then close the window. `--capture-scroll` exercises a short page's
@@ -97,7 +121,8 @@ Probes do not save media, signed URLs, credentials or raw service responses.
 - `octave-core`: application models and redacted diagnostics.
 - `octave-provider`: unsigned search/resolution and seekable HTTP ranges.
 - `octave-player`: one decode worker and a bounded PCM queue feeding rodio.
-- `octave-desktop`: native fixture UI, asynchronous artwork, input/layout tests, and the separate live playback preview.
+- `octave-desktop`: native listening UI, queue state, SQLite worker, debounced
+  search worker, and the separate fixture prototype and feasibility preview.
 
 Network and decoding work stays off the UI and audio callback. The transport
 retains one 256 KiB payload block, independent of track duration. Playback queues
@@ -106,14 +131,17 @@ callback reads PCM only. New commands replace pending work; generation checks
 reject stale audio and results. In-flight HTTP work may take up to its 12-second
 timeout to relinquish the worker, while stop silences queued audio immediately.
 
-## Live playback preview limitations
+## Playback limitations
 
 Only direct AAC/MP4 streams (itag 140) are supported. No account login, Premium
-validation, cipher/JavaScript resolver, live-stream support, automatic retries,
-queue persistence or device-switch recovery is implemented. Retry re-resolves the
+validation, cipher/JavaScript resolver, live-stream support or automatic
+device-switch recovery is implemented. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
 is reported and needs a manual retry. Brief network stalls can exhaust the small
-PCM queue and cause silence. This is a feasibility build, not a release candidate.
+PCM queue and cause silence before recovery. An in-flight search cannot be
+interrupted until its bounded HTTP request returns. This is an alpha, not a
+release candidate. The original `--live-preview` remains a minimal diagnostic
+window without the alpha's persistence or automatic recovery.
 
 The unsigned client profile is a compatibility experiment informed by
 [Tubefast](https://github.com/yigitbozyaka/tubefast); it is not an official API

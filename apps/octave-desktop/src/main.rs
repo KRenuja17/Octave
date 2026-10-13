@@ -1,7 +1,11 @@
+mod alpha;
 mod artwork;
+mod listening;
 mod live;
 mod model;
 mod prototype;
+mod search;
+mod storage;
 mod theme;
 #[cfg(test)]
 mod ui_tests;
@@ -16,6 +20,9 @@ fn argument(name: &str) -> Option<String> {
 fn main() -> eframe::Result {
     if std::env::args().any(|s| s == "--live-preview") {
         return live::run();
+    }
+    if !std::env::args().any(|s| s == "--prototype") {
+        return alpha::run();
     }
     let compact = std::env::args().any(|s| s == "--compact");
     let capture = argument("--capture");

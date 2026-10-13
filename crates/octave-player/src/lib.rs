@@ -5,7 +5,7 @@ use rodio::{Decoder, Source, buffer::SamplesBuffer};
 use std::{
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     },
     thread,
     time::Duration,
@@ -19,7 +19,31 @@ pub enum PlaybackState {
     Playing(TrackId),
     Paused(TrackId),
     Ended(TrackId),
-    Failed(TrackId, String),
+    Failed(TrackId, Failure),
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Failure {
+    Provider(octave_provider::Error),
+    Audio(&'static str),
+}
+impl Failure {
+    pub fn retryable(&self) -> bool {
+        use octave_provider::Error;
+        matches!(
+            self,
+            Self::Provider(
+                Error::Network | Error::Timeout | Error::Http(403 | 408 | 429 | 500..=599)
+            )
+        )
+    }
+}
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Provider(e) => e.fmt(f),
+            Self::Audio(message) => f.write_str(message),
+        }
+    }
 }
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
@@ -41,6 +65,7 @@ struct Shared {
     closed: AtomicBool,
     snapshot: Mutex<Snapshot>,
     output: Mutex<Option<Arc<rodio::Player>>>,
+    volume: AtomicU32,
 }
 /// Dropping this handle cancels work. Networking has a bounded timeout and never blocks the UI.
 pub struct Player {
@@ -54,12 +79,31 @@ impl Default for Player {
 impl Player {
     pub fn new() -> Self {
         let shared = Arc::new(Shared::default());
+        shared.volume.store(0.7_f32.to_bits(), Ordering::Release);
         let worker = shared.clone();
         thread::spawn(move || work(worker));
         Self { shared }
     }
     pub fn play(&self, id: TrackId) {
         self.request(id, Duration::ZERO, false, Duration::ZERO);
+    }
+    /// Explicit resume only; constructing a player never starts audio.
+    pub fn play_at(&self, id: TrackId, offset: Duration) {
+        self.request(id, offset, false, Duration::ZERO);
+    }
+    pub fn set_volume(&self, volume: f32) {
+        let volume = if volume.is_finite() {
+            volume.clamp(0.0, 1.0)
+        } else {
+            0.7
+        };
+        let output = self.shared.output.lock().unwrap();
+        self.shared
+            .volume
+            .store(volume.to_bits(), Ordering::Release);
+        if let Some(output) = output.as_ref() {
+            output.set_volume(volume);
+        }
     }
     pub fn seek(&self, offset: Duration) {
         let snapshot = self.snapshot();
@@ -137,14 +181,10 @@ fn work(shared: Arc<Shared>) {
         let request = shared.pending.lock().unwrap().take();
         if let Some(request) = request {
             if let Err(message) = play_request(&shared, &request) {
-                publish(
-                    &shared,
-                    &request,
-                    Snapshot {
-                        state: PlaybackState::Failed(request.id.clone(), message),
-                        ..Default::default()
-                    },
-                );
+                let mut snapshot = shared.snapshot.lock().unwrap();
+                if current(&shared, &request) {
+                    snapshot.state = PlaybackState::Failed(request.id.clone(), message);
+                }
             }
             *shared.output.lock().unwrap() = None;
         } else {
@@ -152,11 +192,11 @@ fn work(shared: Arc<Shared>) {
         }
     }
 }
-fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
-    let provider = Provider::new().map_err(|e| e.to_string())?;
+fn play_request(shared: &Shared, request: &Request) -> Result<(), Failure> {
+    let provider = Provider::new().map_err(Failure::Provider)?;
     let stream = provider
         .resolve_cancellable(&request.id, || !current(shared, request))
-        .map_err(|e| e.to_string())?;
+        .map_err(Failure::Provider)?;
     if !current(shared, request) {
         return Ok(());
     }
@@ -176,9 +216,12 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
         .with_hint("m4a")
         .build()
         .map_err(|_| transport_error(&fault, "Audio decoder could not open this stream."))?;
-    if !request.offset.is_zero() {
+    let offset = request
+        .offset
+        .min(duration.saturating_sub(Duration::from_millis(100)));
+    if !offset.is_zero() {
         decoder
-            .try_seek(request.offset)
+            .try_seek(offset)
             .map_err(|_| transport_error(&fault, "Seeking this stream failed."))?;
     }
     if !current(shared, request) {
@@ -187,30 +230,34 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
     let device_failed = Arc::new(AtomicBool::new(false));
     let callback_failed = device_failed.clone();
     let mut device = rodio::DeviceSinkBuilder::from_default_device()
-        .map_err(|_| "No usable audio output device is available.".to_owned())?
+        .map_err(|_| Failure::Audio("No usable audio output device is available."))?
         .with_error_callback(move |_| {
             callback_failed.store(true, Ordering::Release);
         })
         .open_sink_or_fallback()
-        .map_err(|_| "No usable audio output device is available.".to_owned())?;
+        .map_err(|_| Failure::Audio("No usable audio output device is available."))?;
     device.log_on_drop(false);
     let output = Arc::new(rodio::Player::connect_new(device.mixer()));
-    output.set_volume(0.7);
-    *shared.output.lock().unwrap() = Some(output.clone());
+    {
+        let mut active = shared.output.lock().unwrap();
+        output.set_volume(f32::from_bits(shared.volume.load(Ordering::Acquire)));
+        *active = Some(output.clone());
+    }
     let channels = decoder.channels();
     let rate = decoder.sample_rate();
     if channels.get() > 8 || rate.get() > 192000 {
-        return Err("Unsupported audio channel count or sample rate.".into());
+        return Err(Failure::Audio(
+            "Unsupported audio channel count or sample rate.",
+        ));
     }
     let count = (rate.get() as usize / 10) * channels.get() as usize;
     let consumed = Arc::new(AtomicU64::new(0));
     let mut ended = false;
     while current(shared, request) {
         if device_failed.load(Ordering::Acquire) {
-            return Err(
-                "The audio output device disconnected or failed. Select an output and retry."
-                    .into(),
-            );
+            return Err(Failure::Audio(
+                "The audio output device disconnected or failed. Select an output and retry.",
+            ));
         }
         let paused = shared.paused.load(Ordering::Acquire);
         if paused {
@@ -218,7 +265,7 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
         } else {
             output.play();
         }
-        let position = request.offset
+        let position = offset
             + Duration::from_secs_f64(
                 consumed.load(Ordering::Relaxed) as f64
                     / f64::from(rate.get())
@@ -227,7 +274,9 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
         // The decoder iterator hides codec errors, so reject an early EOF after
         // all queued PCM has drained rather than reporting a successful finish.
         if ended && output.empty() && position + Duration::from_secs(2) < duration {
-            return Err("Audio ended before the advertised duration. Retry playback.".into());
+            return Err(Failure::Audio(
+                "Audio ended before the advertised duration. Retry playback.",
+            ));
         }
         let state = if ended && output.empty() {
             PlaybackState::Ended(request.id.clone())
@@ -254,7 +303,7 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
         }
         let samples: Vec<f32> = decoder.by_ref().take(count).collect();
         if let Some(error) = *fault.lock().unwrap() {
-            return Err(error.to_string());
+            return Err(Failure::Provider(error));
         }
         if samples.is_empty() {
             ended = true;
@@ -271,13 +320,15 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
     drop(device);
     Ok(())
 }
-fn transport_error(fault: &Arc<Mutex<Option<octave_provider::Error>>>, fallback: &str) -> String {
+fn transport_error(
+    fault: &Arc<Mutex<Option<octave_provider::Error>>>,
+    fallback: &'static str,
+) -> Failure {
     fault
         .lock()
         .unwrap()
-        .as_ref()
-        .map(ToString::to_string)
-        .unwrap_or_else(|| fallback.to_owned())
+        .map(Failure::Provider)
+        .unwrap_or(Failure::Audio(fallback))
 }
 /// The audio callback consumes PCM only; a stale generation becomes silent immediately.
 struct Gated {
@@ -344,7 +395,7 @@ mod tests {
             &player.shared,
             &old,
             Snapshot {
-                state: PlaybackState::Failed(old.id.clone(), "old error".into()),
+                state: PlaybackState::Failed(old.id.clone(), Failure::Audio("old error")),
                 ..Default::default()
             },
         );
