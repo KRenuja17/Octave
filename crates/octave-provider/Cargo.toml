@@ -1,0 +1,10 @@
+[package]
+name = "octave-provider"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+[dependencies]
+octave-core.workspace = true
+[lints]
+workspace = true
