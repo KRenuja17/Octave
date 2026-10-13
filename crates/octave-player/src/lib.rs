@@ -366,6 +366,56 @@ impl Source for Gated {
 mod tests {
     use super::*;
     #[test]
+    fn recovery_only_retries_transient_provider_failures() {
+        use octave_provider::Error;
+        for error in [
+            Error::Timeout,
+            Error::Network,
+            Error::Http(403),
+            Error::Http(503),
+        ] {
+            assert!(Failure::Provider(error).retryable());
+        }
+        for error in [
+            Error::SignInRequired,
+            Error::UnsupportedStream,
+            Error::InvalidTrack,
+            Error::Http(404),
+        ] {
+            assert!(!Failure::Provider(error).retryable());
+        }
+        assert!(!Failure::Audio("Device disconnected").retryable());
+    }
+    #[test]
+    fn resume_offset_and_volume_are_explicit_and_bounded() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        assert_eq!(player.snapshot().state, PlaybackState::Idle);
+        player.set_volume(2.0);
+        assert_eq!(
+            f32::from_bits(player.shared.volume.load(Ordering::Acquire)),
+            1.0
+        );
+        player.set_volume(f32::NAN);
+        assert_eq!(
+            f32::from_bits(player.shared.volume.load(Ordering::Acquire)),
+            0.7
+        );
+        player.play_at(TrackId("abcdefghijk".into()), Duration::from_secs(42));
+        assert_eq!(
+            player
+                .shared
+                .pending
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .offset,
+            Duration::from_secs(42)
+        );
+    }
+    #[test]
     fn rapid_requests_keep_latest_seek_and_reject_old_results() {
         let player = Player {
             shared: Arc::new(Shared::default()),

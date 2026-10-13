@@ -7,7 +7,7 @@ use crate::{
 };
 use eframe::egui;
 use octave_core::{Track, TrackId};
-use octave_player::{PlaybackState, Player};
+use octave_player::{PlaybackState, Player, Snapshot};
 use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -32,7 +32,11 @@ pub fn run() -> eframe::Result {
         "Octave",
         eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
-                .with_inner_size([1180.0, 760.0])
+                .with_inner_size(if std::env::args().any(|s| s == "--compact") {
+                    [560.0, 720.0]
+                } else {
+                    [1180.0, 760.0]
+                })
                 .with_min_inner_size([480.0, 480.0]),
             ..Default::default()
         },
@@ -192,6 +196,19 @@ impl Alpha {
             }
         }
         let snapshot = self.player.snapshot();
+        self.observe(snapshot);
+        if self.retry_at.is_some_and(|t| Instant::now() >= t) {
+            self.start(false);
+        }
+        if self.loaded
+            && self.save_time.elapsed() >= Duration::from_secs(2)
+            && self.session != self.saved
+            && self.store.save(self.session.clone())
+        {
+            self.save_time = Instant::now();
+        }
+    }
+    fn observe(&mut self, snapshot: Snapshot) {
         let same_track = match &snapshot.state {
             PlaybackState::Idle => false,
             PlaybackState::Loading(id)
@@ -218,16 +235,6 @@ impl Alpha {
                 }
                 _ => (),
             }
-        }
-        if self.retry_at.is_some_and(|t| Instant::now() >= t) {
-            self.start(false);
-        }
-        if self.loaded
-            && self.save_time.elapsed() >= Duration::from_secs(2)
-            && self.session != self.saved
-            && self.store.save(self.session.clone())
-        {
-            self.save_time = Instant::now();
         }
     }
     fn transport(&mut self, ui: &mut egui::Ui) {
@@ -260,7 +267,8 @@ impl Alpha {
             if ui
                 .add_enabled(
                     self.loaded && self.session.current().is_some(),
-                    egui::Button::new(label).fill(theme::ACCENT),
+                    egui::Button::new(egui::RichText::new(label).color(theme::BG))
+                        .fill(theme::ACCENT),
                 )
                 .clicked()
             {
@@ -363,7 +371,7 @@ impl Alpha {
         ui.add_space(6.0);
     }
     fn content(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.heading("Octave");
             ui.weak("LISTENING ALPHA");
             if ui.selectable_label(!self.queue_page, "Search").clicked() {
@@ -409,6 +417,9 @@ impl Alpha {
                     .char_limit(512)
                     .desired_width(f32::INFINITY),
             );
+            input.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search YouTube Music")
+            });
             if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
                 input.request_focus();
             }
@@ -433,6 +444,23 @@ impl Alpha {
                     self.debounce = None;
                 }
             });
+            if !self.results.is_empty() {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Play results").clicked() {
+                        self.session.queue = self.results.clone();
+                        self.session.select(0);
+                        self.start(true);
+                    }
+                    if ui.button("Add results to queue").clicked() {
+                        let mut added = 0;
+                        for track in &self.results {
+                            added += usize::from(self.session.append(track.clone(), false));
+                        }
+                        self.message =
+                            format!("Added {added} songs. Already queued songs were skipped.");
+                    }
+                });
+            }
             ui.collapsing("Open a video ID", |ui| {
                 ui.horizontal(|ui| {
                     ui.add(
@@ -491,15 +519,21 @@ impl Alpha {
                     };
                     ui.push_id(index, |ui| {
                         ui.horizontal(|ui| {
-                            if ui
+                            let play = ui
                                 .button(if self.queue_page && self.session.cursor == index {
                                     "▶"
                                 } else {
                                     "Play"
                                 })
-                                .on_hover_text(format!("Play {}", track.title))
-                                .clicked()
-                            {
+                                .on_hover_text(format!("Play {}", track.title));
+                            play.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!("Play {}", track.title),
+                                )
+                            });
+                            if play.clicked() {
                                 action = Some((index, 0));
                             }
                             ui.vertical(|ui| {
@@ -516,7 +550,7 @@ impl Alpha {
                                     .truncate(),
                                 );
                             });
-                            ui.menu_button("•••", |ui| {
+                            let menu = ui.menu_button("•••", |ui| {
                                 for (label, code) in if self.queue_page {
                                     vec![("Move up", 3), ("Move down", 4), ("Remove", 5)]
                                 } else {
@@ -527,6 +561,13 @@ impl Alpha {
                                         ui.close();
                                     }
                                 }
+                            });
+                            menu.response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!("Actions for {}", track.title),
+                                )
                             });
                         });
                         ui.separator();
@@ -621,5 +662,288 @@ impl eframe::App for Alpha {
             }
         }
         ui.ctx().request_repaint_after(Duration::from_millis(50));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::listening::track;
+    use octave_player::Failure;
+    use octave_provider::Error;
+
+    fn path(name: &str) -> PathBuf {
+        std::env::var_os("OCTAVE_TEST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(format!(
+                "octave-{name}-{}-{}.sqlite3",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ))
+    }
+    fn loaded(path: PathBuf) -> Alpha {
+        let mut app = Alpha::new(path);
+        let start = Instant::now();
+        while !app.loaded {
+            app.poll();
+            assert!(start.elapsed() < Duration::from_secs(5));
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(!app.storage_failed);
+        app
+    }
+    fn content_frame(
+        ctx: &egui::Context,
+        app: &mut Alpha,
+        events: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1180.0, 760.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| app.content(ui),
+        );
+        output.textures_delta.clear();
+        output
+    }
+    fn click(ctx: &egui::Context, app: &mut Alpha, name: &str) {
+        let output = content_frame(ctx, app, vec![]);
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let bounds = tree
+            .nodes
+            .iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some(name))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .unwrap_or_else(|| panic!("Missing action: {name}"));
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        );
+        for pressed in [true, false] {
+            content_frame(
+                ctx,
+                app,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+    }
+    #[test]
+    fn search_results_to_queue_and_clear_work_through_widgets() {
+        let path = path("widgets");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        app.results = vec![track(1), track(2)];
+        content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Add results to queue");
+        assert_eq!(app.session.queue.len(), 2);
+        click(&ctx, &mut app, "Add results to queue");
+        assert_eq!(app.session.queue.len(), 2);
+        click(&ctx, &mut app, "Queue · 2");
+        assert!(app.queue_page);
+        click(&ctx, &mut app, "Clear queue");
+        assert!(app.session.queue.is_empty());
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn restart_restores_queue_position_and_volume_without_audio() {
+        let path = path("restart");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.add(track(2), false);
+        app.session.select(1);
+        app.session.position = 37.5;
+        app.session.volume = 0.2;
+        app.session.repeat = Repeat::All;
+        let expected = app.session.clone();
+        drop(app);
+        let restored = loaded(path.clone());
+        assert_eq!(restored.session, expected);
+        assert_eq!(restored.player.snapshot().state, PlaybackState::Idle);
+        drop(restored);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn interruption_retains_queue_and_position_and_retry_is_bounded() {
+        let path = path("recovery");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.add(track(2), false);
+        let queue = app.session.queue.clone();
+        let failed = Snapshot {
+            state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::Timeout)),
+            position: Duration::from_secs(42),
+            duration: Duration::from_secs(180),
+        };
+        for attempt in 1..=2 {
+            app.failure_seen = false;
+            app.retry_at = None;
+            app.observe(failed.clone());
+            assert_eq!(app.retry_count, attempt);
+            assert!(app.retry_at.is_some());
+            app.observe(failed.clone());
+            assert_eq!(
+                app.retry_count, attempt,
+                "Repeated UI frames must not spend retries"
+            );
+        }
+        app.failure_seen = false;
+        app.retry_at = None;
+        app.observe(failed);
+        assert!(app.retry_at.is_none());
+        assert_eq!(app.session.position, 42.0);
+        assert_eq!(app.session.queue, queue);
+        app.halt();
+        assert!(app.retry_at.is_none());
+        assert_eq!(app.session.position, 42.0);
+        app.failure_seen = false;
+        app.observe(Snapshot {
+            state: PlaybackState::Failed(track(2).id, Failure::Provider(Error::Timeout)),
+            position: Duration::ZERO,
+            duration: Duration::ZERO,
+        });
+        assert_eq!(
+            app.session.position, 42.0,
+            "Stale track events must be ignored"
+        );
+        app.retry_count = 0;
+        app.failure_seen = false;
+        app.observe(Snapshot {
+            state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::SignInRequired)),
+            position: Duration::from_secs(42),
+            duration: Duration::ZERO,
+        });
+        assert!(app.retry_at.is_none());
+        assert_eq!(app.retry_count, 0);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn listening_layout_and_text_input_work_at_narrow_sizes() {
+        let path = path("layout");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        for size in [[1180.0, 760.0], [560.0, 720.0], [480.0, 480.0]] {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(size[0], size[1]),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    egui::Panel::bottom("test-player").show(ui, |ui| app.transport(ui));
+                    egui::CentralPanel::default().show(ui, |ui| app.content(ui));
+                },
+            );
+            output.textures_delta.clear();
+            assert!(!output.shapes.is_empty());
+        }
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("alpha-search")));
+        let old = app.search.generation;
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events: vec![egui::Event::Text("東京 ".into())],
+                ..Default::default()
+            },
+            |ui| app.content(ui),
+        );
+        output.textures_delta.clear();
+        assert_eq!(app.query, "東京 ");
+        assert!(app.search.generation > old);
+        assert!(app.debounce.is_some());
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    #[ignore = "Opt-in live service/audio test; takes about four minutes and uses an isolated database"]
+    fn live_full_track_restart_and_intentional_resume() {
+        let path = path("live");
+        let mut app = loaded(path.clone());
+        let tracks = octave_provider::Provider::new()
+            .unwrap()
+            .search("Rick Astley Never Gonna Give You Up")
+            .unwrap();
+        let track = tracks
+            .into_iter()
+            .find(|t| t.id.0 == "dQw4w9WgXcQ")
+            .expect("Reference result missing");
+        app.add(track, false);
+        app.session.volume = 0.0;
+        app.start(true);
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            app.poll();
+            if matches!(app.player.snapshot().state, PlaybackState::Playing(_))
+                && app.session.position >= 3.0
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Track did not start: {:?}",
+                app.player.snapshot().state
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let position = app.session.position;
+        drop(app);
+        let mut app = loaded(path.clone());
+        assert_eq!(app.session.position, position);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        app.start(true);
+        let deadline = Instant::now() + Duration::from_secs(270);
+        let mut played = false;
+        loop {
+            app.poll();
+            let snapshot = app.player.snapshot();
+            if matches!(snapshot.state, PlaybackState::Playing(_)) {
+                played = true;
+            }
+            if played && snapshot.state == PlaybackState::Idle {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "Full track did not finish: {:?}",
+                snapshot.state
+            );
+            if matches!(snapshot.state, PlaybackState::Failed(_, _)) && app.retry_at.is_none() {
+                panic!("Playback failed: {:?}", snapshot.state);
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(app.session.queue.len(), 1);
+        assert_eq!(app.session.position, 0.0);
+        println!("full_track_restart_intentional_resume=passed restored_seconds={position:.2}");
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
 }

@@ -246,6 +246,28 @@ mod tests {
         )
     }
     #[test]
+    fn reconnect_with_a_fresh_reader_preserves_requested_range() {
+        let (mut failed, first) = server_reader("503 Service Unavailable", "", vec![], 100);
+        failed.seek(SeekFrom::Start(42)).unwrap();
+        assert!(failed.read(&mut [0; 1]).is_err());
+        assert_eq!(*failed.fault().lock().unwrap(), Some(Error::Http(503)));
+        first.join().unwrap();
+        let (mut resumed, second) =
+            server_reader("206 Partial Content", "bytes 42-99/100", vec![7; 58], 100);
+        resumed.seek(SeekFrom::Start(42)).unwrap();
+        let mut bytes = [0; 16];
+        resumed.read_exact(&mut bytes).unwrap();
+        assert_eq!(bytes, [7; 16]);
+        assert!(resumed.fault().lock().unwrap().is_none());
+        assert!(
+            second
+                .join()
+                .unwrap()
+                .to_lowercase()
+                .contains("range: bytes=42-99")
+        );
+    }
+    #[test]
     fn seek_bounds_eof_and_cancellation() {
         let mut r = reader();
         assert!(r.seek(SeekFrom::Current(-1)).is_err());

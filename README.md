@@ -10,7 +10,8 @@ Broader playback feasibility and account access remain deferred.
 - Search automatically after a 350 ms pause in typing. A single worker replaces
   pending searches and discards obsolete results immediately when the query changes.
 - Play a result to replace the queue; use its menu to append or play next.
-  Duplicate video IDs are rejected. Queue menus move or remove tracks.
+  Play/add all search results with the batch controls. Duplicate video IDs are
+  rejected. Queue menus move or remove tracks.
 - Resume, pause, seek, change volume, advance, shuffle upcoming songs, or repeat
   one song/the queue. Completion advances through your queue; no recommendation
   radio is requested. Removing the current song stops playback.
@@ -99,6 +100,22 @@ cargo run -p octave-desktop --locked -- --smoke-test
 Tests use synthetic data and local HTTP fixtures; CI needs no YouTube account.
 The graphical smoke test opens a native window and closes after three frames.
 Startup requires no network connection, account or audio device.
+
+The opt-in full-track alpha test searches a reference song, plays briefly, closes
+and restores its isolated database, verifies no autoplay, explicitly resumes and
+waits for completion. It uses muted output, still requires an audio device, and
+takes about four minutes. Set `OCTAVE_TEST_DIR` to an external QA directory to
+keep its temporary database there (otherwise it uses the OS temporary directory):
+
+```text
+cargo test -p octave-desktop --locked live_full_track_restart_and_intentional_resume -- --ignored --nocapture
+```
+
+Run this test separately from rebuilds on Windows, where a running executable
+cannot be replaced. Deterministic tests cover restart restoration, transactional
+rollback, queue/repeat/shuffle behavior, stale search results, bounded retry
+scheduling and reconnecting HTTP ranges. A real network-loss session remains a
+separate manual acceptance check.
 
 Optional live probes (service responses can change):
 
