@@ -14,6 +14,7 @@ pub fn install(ctx: &egui::Context) {
     style.visuals.override_text_color = Some(TEXT);
     style.visuals.selection.bg_fill = Color32::from_rgb(60, 83, 64);
     style.visuals.selection.stroke = egui::Stroke::new(1.0, ACCENT);
+    style.visuals.handle_shape = egui::style::HandleShape::Circle;
     style.visuals.widgets.inactive.bg_fill = CARD;
     style.visuals.widgets.inactive.weak_bg_fill = CARD;
     style.visuals.widgets.hovered.bg_fill = Color32::from_rgb(50, 63, 59);

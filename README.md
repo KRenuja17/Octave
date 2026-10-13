@@ -1,9 +1,13 @@
 # Octave
 
-A native desktop music client in Rust. This early playback preview supports
-YouTube Music search and experimental unsigned playback of direct AAC streams.
-It includes play, pause, resume, seek, stop and retry. Track coverage varies;
-requests requiring sign-in or a cipher resolver show an explicit error.
+A native desktop music client in Rust. The default app is now the **native
+experience prototype**: an offline sample library with Home, Search, albums,
+playlists, queue editing, a persistent player and a sample lyrics view.
+
+The prototype simulates playback silently. Likes, queue, position and volume
+are session-only; they reset on restart. It never contacts YouTube or reads an
+account. The earlier experimental live playback build remains available with
+`--live-preview`; its feasibility work is deferred.
 
 ## Build
 
@@ -19,6 +23,45 @@ cargo run -p octave-desktop --locked
 For another machine, install the GNU toolchain, put GCC's `bin` directory on the
 process PATH, select `1.99.0-x86_64-pc-windows-gnu`, and set `CARGO_TARGET_DIR` to
 an external build directory. No global PATH changes are required.
+
+## Explore the prototype
+
+- Browse the six original collections, search 10,000 sample tracks, or filter likes.
+- Use row menus to add songs, play next, reorder or remove queue entries.
+- The player simulates play/pause, previous/next, seek, shuffle, repeat and volume.
+  In compact windows, volume/shuffle/repeat are inside the **Demo** menu.
+- Open **Preview states** for loading, empty, error, offline and signed-out scenes.
+  Their recovery buttons restore fixture content; no network request is made.
+- **Ctrl+K** focuses search. **Tab / Shift+Tab** move focus; **Enter** activates
+  focused controls. **Space** toggles transport outside the search field;
+  **Alt+Left / Alt+Right** move between tracks.
+- Native display scaling is respected. Narrow/short windows use compact navigation;
+  page content scrolls while the player stays visible.
+
+```text
+cargo run -p octave-desktop --locked -- --compact
+cargo run -p octave-desktop --locked -- --page album --collection 5
+cargo run -p octave-desktop --locked -- --live-preview
+```
+
+The last collection includes Japanese, Korean, Greek, Cyrillic and long-title
+fixtures. Windows-installed Segoe UI, MS Gothic and Malgun Gothic are loaded as
+available; OS fonts are never redistributed. Other systems use egui fallbacks.
+
+For repeatable visual QA, use `--page home|search|library|album|playlist|queue|lyrics`,
+`--query TEXT`, `--state loading|empty|error|offline|signed-out`, `--scale 1|1.5|2`,
+and `--capture ABSOLUTE_PATH.png`. Captures wait for all artwork, save outside the
+repository, then close the window. `--capture-scroll` exercises a short page's
+scrolling before capture. Scale overrides are for QA; omit them for native DPI.
+
+Original PNG artwork is embedded in the binary. One background worker decodes
+and resizes it, with a two-result channel and a six-texture cache (about 2.4 MiB
+of RGBA payload). Regenerate the art with the Rust `generate_artwork` example.
+Track lists virtualize rows instead of drawing all 10,000 songs each frame.
+
+Keyboard, accessible labels and input flows have automated egui coverage. A full
+Narrator/NVDA listening audit and full bidirectional/complex-script support are
+release-level work; the prototype is not a claim of complete accessibility.
 
 ## Verify
 
@@ -54,7 +97,7 @@ Probes do not save media, signed URLs, credentials or raw service responses.
 - `octave-core`: application models and redacted diagnostics.
 - `octave-provider`: unsigned search/resolution and seekable HTTP ranges.
 - `octave-player`: one decode worker and a bounded PCM queue feeding rodio.
-- `octave-desktop`: egui search results and playback controls.
+- `octave-desktop`: native fixture UI, asynchronous artwork, input/layout tests, and the separate live playback preview.
 
 Network and decoding work stays off the UI and audio callback. The transport
 retains one 256 KiB payload block, independent of track duration. Playback queues
@@ -63,7 +106,7 @@ callback reads PCM only. New commands replace pending work; generation checks
 reject stale audio and results. In-flight HTTP work may take up to its 12-second
 timeout to relinquish the worker, while stop silences queued audio immediately.
 
-## Preview limitations
+## Live playback preview limitations
 
 Only direct AAC/MP4 streams (itag 140) are supported. No account login, Premium
 validation, cipher/JavaScript resolver, live-stream support, automatic retries,

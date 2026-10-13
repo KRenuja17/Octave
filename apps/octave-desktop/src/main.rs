@@ -3,6 +3,8 @@ mod live;
 mod model;
 mod prototype;
 mod theme;
+#[cfg(test)]
+mod ui_tests;
 use eframe::egui;
 use model::{Page, ViewState};
 use prototype::Prototype;
@@ -19,8 +21,7 @@ fn main() -> eframe::Result {
     let capture = argument("--capture");
     let scale = argument("--scale")
         .and_then(|v| v.parse::<f32>().ok())
-        .unwrap_or(1.0)
-        .clamp(1.0, 2.0);
+        .map(|scale| scale.clamp(1.0, 2.0));
     let smoke = std::env::args().any(|s| s == "--smoke-test");
     eframe::run_native(
         "Octave",
@@ -29,18 +30,25 @@ fn main() -> eframe::Result {
                 .with_inner_size(if compact {
                     [560.0, 720.0]
                 } else {
-                    [1280.0, 900.0]
+                    [1180.0, 760.0]
                 })
                 .with_min_inner_size([480.0, 480.0]),
             ..Default::default()
         },
         Box::new(move |cc| {
             let mut prototype = Prototype::new(&cc.egui_ctx);
-            cc.egui_ctx.set_pixels_per_point(scale);
+            if let Some(scale) = scale {
+                cc.egui_ctx.set_pixels_per_point(scale);
+            }
             prototype.page = match argument("--page").as_deref() {
                 Some("search") => Page::Search,
                 Some("library") => Page::Library,
-                Some("album") => Page::Collection(0),
+                Some("album") => Page::Collection(
+                    argument("--collection")
+                        .and_then(|v| v.parse::<usize>().ok())
+                        .filter(|i| *i < 6)
+                        .unwrap_or(0),
+                ),
                 Some("playlist") => Page::Collection(1),
                 Some("queue") => Page::Queue,
                 Some("lyrics") => Page::Lyrics,
@@ -63,6 +71,7 @@ fn main() -> eframe::Result {
                 frames: 0,
                 capture,
                 screenshot_requested: false,
+                capture_scroll: std::env::args().any(|s| s == "--capture-scroll"),
                 smoke,
             }))
         }),
@@ -73,9 +82,25 @@ struct Application {
     frames: u32,
     capture: Option<String>,
     screenshot_requested: bool,
+    capture_scroll: bool,
     smoke: bool,
 }
 impl eframe::App for Application {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        if self.capture.is_some() && self.capture_scroll && (25..32).contains(&self.frames) {
+            let rect = input.screen_rect.unwrap_or(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(350.0, 450.0),
+            ));
+            input.events.push(egui::Event::PointerMoved(rect.center()));
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -100.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.prototype.render(ui);
         self.frames += 1;
@@ -113,7 +138,7 @@ impl eframe::App for Application {
                 }
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if self.frames >= 20 && !self.screenshot_requested {
+            if self.frames >= 60 && self.prototype.artwork_ready() && !self.screenshot_requested {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
                 self.screenshot_requested = true;

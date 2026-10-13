@@ -14,6 +14,9 @@ pub struct Artwork {
     results: Receiver<(usize, ColorImage)>,
 }
 impl Artwork {
+    pub fn ready(&self) -> bool {
+        self.textures.iter().all(Option::is_some)
+    }
     pub fn new(ctx: egui::Context) -> Self {
         let (tx, results) = mpsc::sync_channel(2);
         std::thread::spawn(move || {
