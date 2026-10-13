@@ -1,5 +1,16 @@
-//! Playback boundary. Foundation startup opens no audio device.
+//! One playback worker, bounded PCM queue, and generation-based cancellation.
 use octave_core::TrackId;
+use octave_provider::{Provider, range::RangeReader};
+use rodio::{Decoder, Source, buffer::SamplesBuffer};
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum PlaybackState {
     #[default]
@@ -7,4 +18,362 @@ pub enum PlaybackState {
     Loading(TrackId),
     Playing(TrackId),
     Paused(TrackId),
+    Ended(TrackId),
+    Failed(TrackId, String),
+}
+#[derive(Clone, Debug, Default)]
+pub struct Snapshot {
+    pub state: PlaybackState,
+    pub position: Duration,
+    pub duration: Duration,
+}
+#[derive(Clone)]
+struct Request {
+    id: TrackId,
+    offset: Duration,
+    generation: u64,
+}
+#[derive(Default)]
+struct Shared {
+    generation: Arc<AtomicU64>,
+    pending: Mutex<Option<Request>>,
+    paused: AtomicBool,
+    closed: AtomicBool,
+    snapshot: Mutex<Snapshot>,
+    output: Mutex<Option<Arc<rodio::Player>>>,
+}
+/// Dropping this handle cancels work. Networking has a bounded timeout and never blocks the UI.
+pub struct Player {
+    shared: Arc<Shared>,
+}
+impl Default for Player {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+impl Player {
+    pub fn new() -> Self {
+        let shared = Arc::new(Shared::default());
+        let worker = shared.clone();
+        thread::spawn(move || work(worker));
+        Self { shared }
+    }
+    pub fn play(&self, id: TrackId) {
+        self.request(id, Duration::ZERO, false, Duration::ZERO);
+    }
+    pub fn seek(&self, offset: Duration) {
+        let snapshot = self.snapshot();
+        let id = match snapshot.state {
+            PlaybackState::Playing(id) | PlaybackState::Paused(id) | PlaybackState::Ended(id) => id,
+            PlaybackState::Loading(id) if !snapshot.duration.is_zero() => id,
+            _ => return,
+        };
+        self.request(
+            id,
+            offset.min(snapshot.duration.saturating_sub(Duration::from_millis(100))),
+            self.shared.paused.load(Ordering::Acquire),
+            snapshot.duration,
+        );
+    }
+    fn request(&self, id: TrackId, offset: Duration, paused: bool, duration: Duration) {
+        let mut pending = self.shared.pending.lock().unwrap();
+        let generation = self.shared.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
+            output.stop();
+        }
+        self.shared.paused.store(paused, Ordering::Release);
+        *self.shared.snapshot.lock().unwrap() = Snapshot {
+            state: PlaybackState::Loading(id.clone()),
+            position: offset,
+            duration,
+        };
+        *pending = Some(Request {
+            id,
+            offset,
+            generation,
+        });
+    }
+    pub fn toggle_pause(&self) {
+        let paused = !self.shared.paused.fetch_xor(true, Ordering::AcqRel);
+        if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
+            if paused {
+                output.pause();
+            } else {
+                output.play();
+            }
+        }
+    }
+    pub fn stop(&self) {
+        let mut pending = self.shared.pending.lock().unwrap();
+        self.shared.generation.fetch_add(1, Ordering::AcqRel);
+        *pending = None;
+        if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
+            output.stop();
+        }
+        *self.shared.snapshot.lock().unwrap() = Snapshot::default();
+    }
+    pub fn snapshot(&self) -> Snapshot {
+        self.shared.snapshot.lock().unwrap().clone()
+    }
+}
+impl Drop for Player {
+    fn drop(&mut self) {
+        self.stop();
+        self.shared.closed.store(true, Ordering::Release);
+    }
+}
+fn current(shared: &Shared, request: &Request) -> bool {
+    shared.generation.load(Ordering::Acquire) == request.generation
+        && !shared.closed.load(Ordering::Acquire)
+}
+fn publish(shared: &Shared, request: &Request, snapshot: Snapshot) {
+    let mut state = shared.snapshot.lock().unwrap();
+    if current(shared, request) {
+        *state = snapshot;
+    }
+}
+fn work(shared: Arc<Shared>) {
+    while !shared.closed.load(Ordering::Acquire) {
+        let request = shared.pending.lock().unwrap().take();
+        if let Some(request) = request {
+            if let Err(message) = play_request(&shared, &request) {
+                publish(
+                    &shared,
+                    &request,
+                    Snapshot {
+                        state: PlaybackState::Failed(request.id.clone(), message),
+                        ..Default::default()
+                    },
+                );
+            }
+            *shared.output.lock().unwrap() = None;
+        } else {
+            thread::sleep(Duration::from_millis(15));
+        }
+    }
+}
+fn play_request(shared: &Shared, request: &Request) -> Result<(), String> {
+    let provider = Provider::new().map_err(|e| e.to_string())?;
+    let stream = provider
+        .resolve_cancellable(&request.id, || !current(shared, request))
+        .map_err(|e| e.to_string())?;
+    if !current(shared, request) {
+        return Ok(());
+    }
+    let duration = stream.duration;
+    let length = stream.content_length;
+    let reader = RangeReader::new(
+        provider,
+        stream,
+        shared.generation.clone(),
+        request.generation,
+    );
+    let fault = reader.fault();
+    let mut decoder = Decoder::builder()
+        .with_data(reader)
+        .with_byte_len(length)
+        .with_seekable(true)
+        .with_hint("m4a")
+        .build()
+        .map_err(|_| transport_error(&fault, "Audio decoder could not open this stream."))?;
+    if !request.offset.is_zero() {
+        decoder
+            .try_seek(request.offset)
+            .map_err(|_| transport_error(&fault, "Seeking this stream failed."))?;
+    }
+    if !current(shared, request) {
+        return Ok(());
+    }
+    let device_failed = Arc::new(AtomicBool::new(false));
+    let callback_failed = device_failed.clone();
+    let mut device = rodio::DeviceSinkBuilder::from_default_device()
+        .map_err(|_| "No usable audio output device is available.".to_owned())?
+        .with_error_callback(move |_| {
+            callback_failed.store(true, Ordering::Release);
+        })
+        .open_sink_or_fallback()
+        .map_err(|_| "No usable audio output device is available.".to_owned())?;
+    device.log_on_drop(false);
+    let output = Arc::new(rodio::Player::connect_new(device.mixer()));
+    output.set_volume(0.7);
+    *shared.output.lock().unwrap() = Some(output.clone());
+    let channels = decoder.channels();
+    let rate = decoder.sample_rate();
+    if channels.get() > 8 || rate.get() > 192000 {
+        return Err("Unsupported audio channel count or sample rate.".into());
+    }
+    let count = (rate.get() as usize / 10) * channels.get() as usize;
+    let consumed = Arc::new(AtomicU64::new(0));
+    let mut ended = false;
+    while current(shared, request) {
+        if device_failed.load(Ordering::Acquire) {
+            return Err(
+                "The audio output device disconnected or failed. Select an output and retry."
+                    .into(),
+            );
+        }
+        let paused = shared.paused.load(Ordering::Acquire);
+        if paused {
+            output.pause();
+        } else {
+            output.play();
+        }
+        let position = request.offset
+            + Duration::from_secs_f64(
+                consumed.load(Ordering::Relaxed) as f64
+                    / f64::from(rate.get())
+                    / f64::from(channels.get()),
+            );
+        // The decoder iterator hides codec errors, so reject an early EOF after
+        // all queued PCM has drained rather than reporting a successful finish.
+        if ended && output.empty() && position + Duration::from_secs(2) < duration {
+            return Err("Audio ended before the advertised duration. Retry playback.".into());
+        }
+        let state = if ended && output.empty() {
+            PlaybackState::Ended(request.id.clone())
+        } else if paused {
+            PlaybackState::Paused(request.id.clone())
+        } else {
+            PlaybackState::Playing(request.id.clone())
+        };
+        publish(
+            shared,
+            request,
+            Snapshot {
+                state,
+                position: position.min(duration),
+                duration,
+            },
+        );
+        if ended && output.empty() {
+            break;
+        }
+        if paused || output.len() >= 3 || ended {
+            thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+        let samples: Vec<f32> = decoder.by_ref().take(count).collect();
+        if let Some(error) = *fault.lock().unwrap() {
+            return Err(error.to_string());
+        }
+        if samples.is_empty() {
+            ended = true;
+        } else if current(shared, request) {
+            output.append(Gated {
+                inner: SamplesBuffer::new(channels, rate, samples),
+                generation: shared.generation.clone(),
+                expected: request.generation,
+                consumed: consumed.clone(),
+            });
+        }
+    }
+    output.stop();
+    drop(device);
+    Ok(())
+}
+fn transport_error(fault: &Arc<Mutex<Option<octave_provider::Error>>>, fallback: &str) -> String {
+    fault
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| fallback.to_owned())
+}
+/// The audio callback consumes PCM only; a stale generation becomes silent immediately.
+struct Gated {
+    inner: SamplesBuffer,
+    generation: Arc<AtomicU64>,
+    expected: u64,
+    consumed: Arc<AtomicU64>,
+}
+impl Iterator for Gated {
+    type Item = f32;
+    fn next(&mut self) -> Option<f32> {
+        if self.generation.load(Ordering::Acquire) != self.expected {
+            return None;
+        }
+        let sample = self.inner.next()?;
+        self.consumed.fetch_add(1, Ordering::Relaxed);
+        Some(sample)
+    }
+}
+impl Source for Gated {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+    fn channels(&self) -> rodio::ChannelCount {
+        self.inner.channels()
+    }
+    fn sample_rate(&self) -> rodio::SampleRate {
+        self.inner.sample_rate()
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rapid_requests_keep_latest_seek_and_reject_old_results() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        let id = TrackId("abcdefghijk".into());
+        player.play(id.clone());
+        let old = player.shared.pending.lock().unwrap().clone().unwrap();
+        *player.shared.snapshot.lock().unwrap() = Snapshot {
+            state: PlaybackState::Playing(id),
+            duration: Duration::from_secs(200),
+            position: Duration::ZERO,
+        };
+        player.seek(Duration::from_secs(60));
+        player.seek(Duration::from_secs(5));
+        assert_eq!(
+            player
+                .shared
+                .pending
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .offset,
+            Duration::from_secs(5)
+        );
+        publish(
+            &player.shared,
+            &old,
+            Snapshot {
+                state: PlaybackState::Failed(old.id.clone(), "old error".into()),
+                ..Default::default()
+            },
+        );
+        assert!(matches!(player.snapshot().state, PlaybackState::Loading(_)));
+        player.stop();
+        assert!(player.shared.pending.lock().unwrap().is_none());
+        publish(
+            &player.shared,
+            &old,
+            Snapshot {
+                state: PlaybackState::Playing(old.id.clone()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(player.snapshot().state, PlaybackState::Idle);
+    }
+    #[test]
+    fn stale_audio_stops_without_consuming_more_samples() {
+        let generation = Arc::new(AtomicU64::new(1));
+        let consumed = Arc::new(AtomicU64::new(0));
+        let mut source = Gated {
+            inner: SamplesBuffer::new(rodio::nz!(1), rodio::nz!(8000), vec![0.5; 8]),
+            generation: generation.clone(),
+            expected: 1,
+            consumed: consumed.clone(),
+        };
+        assert_eq!(source.next(), Some(0.5));
+        generation.store(2, Ordering::Release);
+        assert_eq!(source.next(), None);
+        assert_eq!(consumed.load(Ordering::Relaxed), 1);
+    }
 }
