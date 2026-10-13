@@ -9,5 +9,7 @@ octave-core.workspace = true
 octave-provider.workspace = true
 octave-player.workspace = true
 eframe.workspace = true
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 [lints]
 workspace = true
+

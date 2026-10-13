@@ -2506,6 +2506,7 @@ name = "octave-desktop"
 version = "0.1.0"
 dependencies = [
  "eframe",
+ "image",
  "octave-core",
  "octave-player",
  "octave-provider",
