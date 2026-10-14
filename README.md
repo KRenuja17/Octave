@@ -45,9 +45,9 @@ Using the configured GNU environment, build outside the repo:
 .\packaging\Build-Package.ps1 -OutputDir D:\Octave-Research\packages
 ```
 
-The ZIP contains a portable executable, GNU runtime DLLs, dependency inventory,
+The ZIP contains a portable executable, any required GNU runtime DLLs, dependency inventory,
 checksums, and per-user `Install.ps1`/`Uninstall.ps1` scripts. Extract it, then run
-the executable directly or run `powershell -NoProfile -File .\Install.ps1` from
+the executable directly or run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1` from
 that directory. Installation targets `%LOCALAPPDATA%\Programs\Octave`, adds a
 Start menu shortcut and a Windows uninstall entry, and requires no administrator
 rights. Uninstall removes only listed package files and preserves listening data.
