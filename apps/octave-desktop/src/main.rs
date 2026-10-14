@@ -1,7 +1,15 @@
+#![cfg_attr(
+    all(target_os = "windows", not(debug_assertions)),
+    windows_subsystem = "windows"
+)]
+
+mod account_ui;
 mod alpha;
 mod artwork;
+mod desktop;
 mod listening;
 mod live;
+mod lyrics_ui;
 mod model;
 mod prototype;
 mod search;

@@ -1,4 +1,6 @@
 //! Experimental unsigned YouTube Music access. No cookies or account state are read.
+pub mod account;
+pub mod lyrics;
 pub mod range;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
 use reqwest::blocking::Client;
@@ -117,6 +119,7 @@ impl Provider {
    json!({"context":{"client":{"clientName":"WEB_REMIX","clientVersion":version,"hl":"en"}},"query":query}), "67", version, WEB_UA)?;
         let mut tracks = Vec::new();
         collect_tracks(&value, &mut tracks);
+        tracks.truncate(40);
         Ok(tracks)
     }
     pub fn resolve(&self, id: &TrackId) -> Result<ResolvedStream, Error> {
@@ -199,7 +202,7 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
     })
 }
 fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
-    if out.len() >= 40 {
+    if out.len() >= 2000 {
         return;
     }
     // Search often puts the best match in a card rather than a list row.

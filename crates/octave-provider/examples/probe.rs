@@ -14,6 +14,18 @@ fn main() {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let provider = Provider::new()?;
     let argument = std::env::args().nth(1);
+    if argument.as_deref() == Some("--lyrics") {
+        let id = TrackId(std::env::args().nth(2).ok_or("Supply a video ID")?);
+        match provider.lyrics(&id)? {
+            Some(lyrics) => println!(
+                "lyrics_available=true characters={} source_present={}",
+                lyrics.text.chars().count(),
+                !lyrics.source.is_empty()
+            ),
+            None => println!("lyrics_available=false"),
+        }
+        return Ok(());
+    }
     if argument.as_deref() == Some("--search") {
         let query = std::env::args().nth(2).ok_or("Supply a search query")?;
         let tracks = provider.search(&query)?;

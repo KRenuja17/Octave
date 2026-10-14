@@ -45,12 +45,20 @@ pub fn run() -> eframe::Result {
             if let Some(scale) = crate::argument("--scale").and_then(|s| s.parse::<f32>().ok()) {
                 cc.egui_ctx.set_pixels_per_point(scale.clamp(1.0, 2.0));
             }
-            Ok(Box::new(Alpha::new(path)))
+            let mut app = Alpha::new(path);
+            app.account_page = crate::argument("--page").as_deref() == Some("account");
+            app.desktop = Some(crate::desktop::Desktop::new(cc));
+            Ok(Box::new(app))
         }),
     )
 }
 
 struct Alpha {
+    lyrics: crate::lyrics_ui::LyricsUi,
+    account: crate::account_ui::AccountUi,
+    account_page: bool,
+    desktop: Option<crate::desktop::Desktop>,
+    quitting: bool,
     session: Session,
     player: Player,
     store: Store,
@@ -78,6 +86,11 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            lyrics: crate::lyrics_ui::LyricsUi::default(),
+            account: crate::account_ui::AccountUi::default(),
+            account_page: false,
+            desktop: None,
+            quitting: false,
             session: Session::default(),
             player: Player::new(),
             store: Store::open(path),
@@ -152,6 +165,7 @@ impl Alpha {
         .into();
     }
     fn poll(&mut self) {
+        self.account.poll();
         while let Ok(event) = self.store.events.try_recv() {
             match event {
                 storage::Event::Loaded(session) => {
@@ -373,30 +387,78 @@ impl Alpha {
     fn content(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.heading("Octave");
-            ui.weak("LISTENING ALPHA");
-            if ui.selectable_label(!self.queue_page, "Search").clicked() {
+            ui.weak("DESKTOP BETA PREVIEW");
+            if ui
+                .selectable_label(!self.queue_page && !self.account_page, "Search")
+                .clicked()
+            {
+                self.account_page = false;
                 self.queue_page = false;
             }
             if ui
                 .selectable_label(
-                    self.queue_page,
+                    self.queue_page && !self.account_page,
                     format!("Queue · {}", self.session.queue.len()),
                 )
                 .clicked()
             {
+                self.account_page = false;
                 self.queue_page = true;
+            }
+            if ui.selectable_label(self.account_page, "Account").clicked() {
+                self.account_page = true;
             }
         });
         ui.weak("Unsigned access · some songs require sign-in and cannot play in this alpha.");
+        if let Some(desktop) = &mut self.desktop {
+            egui::CollapsingHeader::new("Desktop settings")
+                .default_open(crate::argument("--page").as_deref() == Some("desktop"))
+                .show(ui, |ui| {
+                    ui.weak(&desktop.status);
+                    ui.add_enabled(
+                        desktop.can_hide(),
+                        egui::Checkbox::new(
+                            &mut desktop.close_to_tray,
+                            "Keep playing in tray when closing this window",
+                        ),
+                    );
+                    ui.weak(
+                    "This setting lasts until Quit. Use the tray menu to show the window again.",
+                );
+                    if ui.button("Quit Octave").clicked() {
+                        self.quitting = true;
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+        }
         if !self.loaded {
             ui.spinner();
             ui.label("Restoring your queue…");
+            return;
+        }
+        if self.account_page {
+            let action = egui::ScrollArea::vertical()
+                .id_salt("account-page")
+                .show(ui, |ui| self.account.render(ui, self.session.current()))
+                .inner;
+            if let Some(action) = action {
+                match action {
+                    crate::account_ui::Action::Play(track) => {
+                        self.session.queue = vec![track];
+                        self.session.select(0);
+                        self.start(true);
+                    }
+                    crate::account_ui::Action::Append(track) => self.add(track, false),
+                }
+            }
             return;
         }
         if self.storage_failed {
             ui.colored_label(egui::Color32::LIGHT_RED, "Local storage is unavailable. This session may not survive restart; existing data has been left intact.");
         }
         ui.add_space(12.0);
+        self.lyrics
+            .render(ui, self.session.current().map(|t| &t.id));
         if self.queue_page {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("Up next");
@@ -610,6 +672,23 @@ impl Drop for Alpha {
 impl eframe::App for Alpha {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll();
+        let commands = self.desktop.as_ref().map(|d| d.drain()).unwrap_or_default();
+        for command in commands {
+            self.desktop_command(command, ui.ctx());
+        }
+        if let Some(desktop) = &mut self.desktop {
+            desktop.update(self.session.current(), &self.player.snapshot());
+            if !self.quitting
+                && desktop.close_to_tray
+                && desktop.can_hide()
+                && ui.input(|i| i.viewport().close_requested())
+            {
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                ui.ctx()
+                    .send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            }
+        }
         if !ui.ctx().egui_wants_keyboard_input() && self.loaded {
             if ui.input(|i| i.key_pressed(egui::Key::Space)) {
                 self.toggle();
@@ -622,6 +701,7 @@ impl eframe::App for Alpha {
             }
         }
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
+            self.account_page = false;
             self.queue_page = false;
         }
         egui::Panel::bottom("listening-player").show(ui, |ui| self.transport(ui));
@@ -662,6 +742,40 @@ impl eframe::App for Alpha {
             }
         }
         ui.ctx().request_repaint_after(Duration::from_millis(50));
+    }
+}
+
+impl Alpha {
+    fn desktop_command(&mut self, command: crate::desktop::Command, ctx: &egui::Context) {
+        use crate::desktop::Command;
+        match command {
+            Command::Show => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
+            Command::Quit => {
+                self.quitting = true;
+                self.halt();
+                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            _ if !self.loaded => (),
+            Command::Play => match self.player.snapshot().state {
+                PlaybackState::Playing(_) | PlaybackState::Loading(_) => (),
+                PlaybackState::Paused(_) => self.player.toggle_pause(),
+                _ => self.start(true),
+            },
+            Command::Pause => {
+                if matches!(self.player.snapshot().state, PlaybackState::Playing(_)) {
+                    self.player.toggle_pause();
+                }
+            }
+            Command::Toggle => self.toggle(),
+            Command::Next => self.next(false),
+            Command::Previous => self.previous(),
+            Command::Stop => self.halt(),
+            Command::Seek(position) => self.player.seek(position),
+        }
     }
 }
 

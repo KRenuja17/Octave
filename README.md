@@ -1,9 +1,63 @@
 # Octave
 
-A native desktop music client in Rust. The default app is the **listening alpha**:
-live search, supported unsigned AAC playback, and a local persistent queue.
+A native desktop music client in Rust. The default app is the **desktop beta
+preview**: live search, supported unsigned AAC playback, a persistent queue,
+Windows media/tray integration and an experimental account library connection.
 The earlier silent native experience prototype is available with `--prototype`.
-Broader playback feasibility and account access remain deferred.
+Broader playback feasibility and authenticated playback remain deferred.
+
+## Account and desktop beta preview
+
+Open **Account** to connect a YouTube Music browser session. The on-screen
+instructions use an explicitly pasted Cookie header value and account index;
+Octave never reads browser databases or asks for a Google password. This advanced
+connection is memory-only: quit or Disconnect forgets the session. You must
+connect again after restarting. No credential is saved to SQLite or a file.
+An already-running HTTP request can take up to its timeout to release its copy;
+late results after disconnect are ignored. Your browser stays signed in.
+
+Library songs, liked songs, albums and playlists have explicit Load more controls,
+deduplication and repeated-cursor protection. Open a collection to load its songs.
+Account Like/Unlike buttons change the actual account only when clicked; visible
+state changes only after YouTube confirms success. Refresh after an uncertain
+network outcome. Expired/rejected sessions prompt reconnection. These unofficial
+account endpoints have fixture coverage but still need validation with a real
+user-initiated session. Account connection does **not** enable authenticated or
+Premium playback; that feasibility work remains deferred.
+
+On Windows, media keys/system media controls share the same player commands as
+the window. Track title, artist, duration and playback progress are published to
+Windows. The tray offers Show, Play/pause, Previous, Next, Stop and Quit. In
+**Desktop settings**, opt into closing the window to the tray for that run;
+otherwise closing quits normally. Tray failure always leaves normal close-to-quit
+behavior. Quit stops playback and saves listening state.
+
+**Lyrics → Load lyrics** fetches optional plain lyrics/source from YouTube Music
+on a separate worker. Missing lyrics or request failure never controls playback.
+Lyrics are not saved and are not synchronized to playback in this preview.
+
+## Local Windows package
+
+Using the configured GNU environment, build outside the repo:
+
+```powershell
+. 'D:\Octave-Research\Enter-Octave.ps1'
+.\packaging\Build-Package.ps1 -OutputDir D:\Octave-Research\packages
+```
+
+The ZIP contains a portable executable, GNU runtime DLLs, dependency inventory,
+checksums, and per-user `Install.ps1`/`Uninstall.ps1` scripts. Extract it, then run
+the executable directly or run `powershell -NoProfile -File .\Install.ps1` from
+that directory. Installation targets `%LOCALAPPDATA%\Programs\Octave`, adds a
+Start menu shortcut and a Windows uninstall entry, and requires no administrator
+rights. Uninstall removes only listed package files and preserves listening data.
+Quit before upgrading/uninstalling. `-NoRegistration` and an explicit
+`-InstallDir ...\Octave` support isolated packaging QA without registry changes.
+
+Packages are unsigned local evaluation builds. A fresh-machine installation,
+live-account acceptance, distribution licensing/notices and signing remain open
+release gates. The checksum manifest detects accidental damage, not an untrusted
+publisher. No updater is included.
 
 ## Listening alpha
 
