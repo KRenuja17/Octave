@@ -57,7 +57,7 @@ Quit before upgrading/uninstalling. `-NoRegistration` and an explicit
 Packages are unsigned local evaluation builds. A fresh-machine installation,
 live-account acceptance, distribution licensing/notices and signing remain open
 release gates. The checksum manifest detects accidental damage, not an untrusted
-publisher. No updater is included.
+publisher. Signed update verification groundwork and recovery instructions are documented in [RELEASE.md](RELEASE.md); automatic updates are not enabled.
 
 ## Listening alpha
 
@@ -210,8 +210,8 @@ device-switch recovery is implemented. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
 is reported and needs a manual retry. Brief network stalls can exhaust the small
 PCM queue and cause silence before recovery. An in-flight search cannot be
-interrupted until its bounded HTTP request returns. This is an alpha, not a
-release candidate. The original `--live-preview` remains a minimal diagnostic
+interrupted until its bounded HTTP request returns. Release hardening does not
+remove these limitations. The original `--live-preview` remains a minimal diagnostic
 window without the alpha's persistence or automatic recovery.
 
 The unsigned client profile is a compatibility experiment informed by
@@ -219,7 +219,7 @@ The unsigned client profile is a compatibility experiment informed by
 contract. Provider changes remain isolated here. Sensitive values redact Debug
 output, but explicit secret access must never be passed to a logger.
 
-Windows x64 is the initial target. Licensing and any JavaScript resolver remain
-decisions to settle before adopting those dependencies or distributing a release.
+Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
+obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
 repository in `D:\Octave-Research`.
