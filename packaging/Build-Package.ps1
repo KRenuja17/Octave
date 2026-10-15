@@ -56,7 +56,12 @@ try {
     foreach ($dependency in $dependencies) {
         [void]$notices.AppendLine("`n===== $($dependency.name) $($dependency.version) | $($dependency.license) | $($dependency.repository) =====")
         $root = Split-Path $dependency.manifest_path -Parent
-        $licenses = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|OFL|UFL)([._-]|$)' -or ($dependency.license_file -and $_.FullName -eq (Join-Path $root $dependency.license_file)) } | Sort-Object FullName -Unique)
+        $licenses = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object {
+            $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|OFL|UFL)([._-]|$)' -or
+            $_.Name -match '[-_](license|licence|copyright)([._-]|$)' -or
+            ($_.Extension -eq '.txt' -and (Test-Path -LiteralPath ([IO.Path]::ChangeExtension($_.FullName, '.ttf')) -PathType Leaf)) -or
+            ($dependency.license_file -and $_.FullName -eq (Join-Path $root $dependency.license_file))
+        } | Sort-Object FullName -Unique)
         if (-not $licenses.Count) {
             $supplement = @($supplements | Where-Object { $_.name -eq $dependency.name -and $_.version -eq $dependency.version })
             if ($supplement.Count -ne 1 -or -not $supplement[0].files.Count) { $missing += "$($dependency.name) $($dependency.version)" }
