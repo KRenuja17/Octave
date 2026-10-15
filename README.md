@@ -6,6 +6,24 @@ Windows media/tray integration and an experimental account library connection.
 The earlier silent native experience prototype is available with `--prototype`.
 Broader playback feasibility and authenticated playback remain deferred.
 
+## Expansion: audio output selection
+
+Open **Audio output**, choose **Refresh outputs**, select a device, then **Use
+selected output**. Playback stops, the queue and current position remain, and
+**Resume** starts on the selected output. Selection lasts until Quit; startup
+uses **System default**. This does not change Windows settings. Enumeration runs
+on a background worker and is capped at 64 devices. Refresh resets the dropdown
+to System default but does not apply it until you click the apply button.
+
+An explicitly selected device is never silently replaced with a different device.
+If it disconnects, refresh/select another output and resume. Automatic hot-plug
+handoff, remembered device preferences and EQ are not implemented yet.
+
+The diagnostic example supports `--list-outputs` and
+`VIDEO_ID --muted-output --output-index 0` for a muted pause/seek/resume and
+selected-output-to-default switch check. Indices apply to the current device
+enumeration, not stable saved device identifiers.
+
 ## Account and desktop beta preview
 
 Open **Account** to connect a YouTube Music browser session. The on-screen

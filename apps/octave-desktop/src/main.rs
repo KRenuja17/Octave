@@ -11,6 +11,7 @@ mod listening;
 mod live;
 mod lyrics_ui;
 mod model;
+mod output_ui;
 mod prototype;
 mod search;
 mod storage;

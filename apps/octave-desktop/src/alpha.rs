@@ -54,6 +54,7 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    output_ui: crate::output_ui::OutputUi,
     lyrics: crate::lyrics_ui::LyricsUi,
     account: crate::account_ui::AccountUi,
     account_page: bool,
@@ -86,6 +87,7 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            output_ui: crate::output_ui::OutputUi::default(),
             lyrics: crate::lyrics_ui::LyricsUi::default(),
             account: crate::account_ui::AccountUi::default(),
             account_page: false,
@@ -137,6 +139,18 @@ impl Alpha {
         self.retry_at = None;
         self.failure_seen = false;
         self.seek = None;
+    }
+    fn change_output(&mut self, device: Option<octave_player::OutputDevice>) {
+        let snapshot = self.player.snapshot();
+        if matches!(
+            snapshot.state,
+            PlaybackState::Playing(_) | PlaybackState::Paused(_)
+        ) {
+            self.session.position = snapshot.position.as_secs_f64();
+        }
+        self.halt();
+        self.player.set_output_device(device);
+        self.message = "Output selected. Press Resume to continue from your saved position.".into();
     }
     fn toggle(&mut self) {
         match self.player.snapshot().state {
@@ -435,6 +449,14 @@ impl Alpha {
             ui.spinner();
             ui.label("Restoring your queue…");
             return;
+        }
+        let selected_output = egui::CollapsingHeader::new("Audio output")
+            .default_open(crate::argument("--page").as_deref() == Some("output"))
+            .show(ui, |ui| self.output_ui.render(ui))
+            .body_returned
+            .flatten();
+        if let Some(device) = selected_output {
+            self.change_output(device);
         }
         if self.account_page {
             let action = egui::ScrollArea::vertical()
@@ -878,6 +900,30 @@ mod tests {
         assert!(app.queue_page);
         click(&ctx, &mut app, "Clear queue");
         assert!(app.session.queue.is_empty());
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn output_selection_keeps_queue_position_and_cancels_retry() {
+        let path = path("output-selection");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.session.position = 42.0;
+        app.retry_at = Some(Instant::now() + Duration::from_secs(10));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Audio output");
+        // Settle the collapsing-header animation before locating the button.
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        click(&ctx, &mut app, "Use selected output");
+        assert_eq!(app.session.queue.len(), 1);
+        assert_eq!(app.session.position, 42.0);
+        assert!(app.retry_at.is_none());
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
         drop(app);
         std::fs::remove_file(path).unwrap();

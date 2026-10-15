@@ -1,4 +1,6 @@
 //! One playback worker, bounded PCM queue, and generation-based cancellation.
+mod devices;
+pub use devices::{OutputDevice, output_devices};
 use octave_core::TrackId;
 use octave_provider::{Provider, range::RangeReader};
 use rodio::{Decoder, Source, buffer::SamplesBuffer};
@@ -56,6 +58,7 @@ struct Request {
     id: TrackId,
     offset: Duration,
     generation: u64,
+    device: Option<OutputDevice>,
 }
 #[derive(Default)]
 struct Shared {
@@ -66,6 +69,7 @@ struct Shared {
     snapshot: Mutex<Snapshot>,
     output: Mutex<Option<Arc<rodio::Player>>>,
     volume: AtomicU32,
+    device: Mutex<Option<OutputDevice>>,
 }
 /// Dropping this handle cancels work. Networking has a bounded timeout and never blocks the UI.
 pub struct Player {
@@ -86,6 +90,12 @@ impl Player {
     }
     pub fn play(&self, id: TrackId) {
         self.request(id, Duration::ZERO, false, Duration::ZERO);
+    }
+    /// Stops current/pending playback. Selection is used by the next explicit play.
+    /// None follows the system default at the time the next stream is opened.
+    pub fn set_output_device(&self, device: Option<OutputDevice>) {
+        self.stop();
+        *self.shared.device.lock().unwrap() = device;
     }
     /// Explicit resume only; constructing a player never starts audio.
     pub fn play_at(&self, id: TrackId, offset: Duration) {
@@ -135,6 +145,7 @@ impl Player {
             id,
             offset,
             generation,
+            device: self.shared.device.lock().unwrap().clone(),
         });
     }
     pub fn toggle_pause(&self) {
@@ -229,7 +240,11 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), Failure> {
     }
     let device_failed = Arc::new(AtomicBool::new(false));
     let callback_failed = device_failed.clone();
-    let mut device = rodio::DeviceSinkBuilder::from_default_device()
+    let builder = match &request.device {
+        Some(selected) => rodio::DeviceSinkBuilder::from_device(selected.device.clone()),
+        None => rodio::DeviceSinkBuilder::from_default_device(),
+    };
+    let mut device = builder
         .map_err(|_| Failure::Audio("No usable audio output device is available."))?
         .with_error_callback(move |_| {
             callback_failed.store(true, Ordering::Release);
@@ -385,6 +400,30 @@ mod tests {
             assert!(!Failure::Provider(error).retryable());
         }
         assert!(!Failure::Audio("Device disconnected").retryable());
+    }
+    #[test]
+    fn changing_output_cancels_pending_work_without_autoplay() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        player.play_at(TrackId("abcdefghijk".into()), Duration::from_secs(42));
+        let old = player.shared.pending.lock().unwrap().clone().unwrap();
+        player.set_output_device(None);
+        assert!(player.shared.pending.lock().unwrap().is_none());
+        assert!(!current(&player.shared, &old));
+        publish(
+            &player.shared,
+            &old,
+            Snapshot {
+                state: PlaybackState::Playing(old.id.clone()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(player.snapshot().state, PlaybackState::Idle);
+        player.play_at(old.id, Duration::from_secs(42));
+        let next = player.shared.pending.lock().unwrap().clone().unwrap();
+        assert!(next.device.is_none());
+        assert_eq!(next.offset, Duration::from_secs(42));
     }
     #[test]
     fn resume_offset_and_volume_are_explicit_and_bounded() {

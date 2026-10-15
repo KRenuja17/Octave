@@ -13,6 +13,17 @@ fn main() {
     }
 }
 fn run() -> Result<(), String> {
+    let args: Vec<_> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--list-outputs") {
+        for (index, device) in octave_player::output_devices()
+            .map_err(|e| e.to_string())?
+            .iter()
+            .enumerate()
+        {
+            println!("output_index={index} name={}", device.name());
+        }
+        return Ok(());
+    }
     let id = std::env::args()
         .nth(1)
         .ok_or("Usage: decode VIDEO_ID [--output]")?;
@@ -63,8 +74,23 @@ fn run() -> Result<(), String> {
         }
         println!("seek_seconds={seconds} decoded_samples={}", samples.len());
     }
-    if std::env::args().any(|arg| arg == "--output") {
-        output_probe(id)?;
+    if args
+        .iter()
+        .any(|arg| arg == "--output" || arg == "--muted-output")
+    {
+        let device = if let Some(index) = args.windows(2).find(|pair| pair[0] == "--output-index") {
+            let index: usize = index[1].parse().map_err(|_| "Invalid output index")?;
+            Some(
+                octave_player::output_devices()
+                    .map_err(|e| e.to_string())?
+                    .into_iter()
+                    .nth(index)
+                    .ok_or("Output index is unavailable")?,
+            )
+        } else {
+            None
+        };
+        output_probe(id, device, args.iter().any(|arg| arg == "--muted-output"))?;
     }
     Ok(())
 }
@@ -87,10 +113,18 @@ fn wait_for(
         std::thread::sleep(Duration::from_millis(25));
     }
 }
-fn output_probe(id: String) -> Result<(), String> {
+fn output_probe(
+    id: String,
+    device: Option<octave_player::OutputDevice>,
+    muted: bool,
+) -> Result<(), String> {
     use octave_player::{PlaybackState, Player};
     let player = Player::new();
-    player.play(TrackId(id));
+    player.set_output_device(device);
+    if muted {
+        player.set_volume(0.0);
+    }
+    player.play(TrackId(id.clone()));
     wait_for(&player, |s| {
         matches!(s.state, PlaybackState::Playing(_)) && s.position >= Duration::from_secs(1)
     })?;
@@ -109,10 +143,20 @@ fn output_probe(id: String) -> Result<(), String> {
     wait_for(&player, |s| {
         matches!(s.state, PlaybackState::Playing(_)) && s.position >= Duration::from_secs(61)
     })?;
+    let position = player.snapshot().position;
+    player.set_output_device(None);
+    if !matches!(player.snapshot().state, PlaybackState::Idle) {
+        return Err("Output selection did not stop playback".into());
+    }
+    player.play_at(TrackId(id), position);
+    wait_for(&player, |s| {
+        matches!(s.state, PlaybackState::Playing(_))
+            && s.position > position + Duration::from_secs(1)
+    })?;
     player.stop();
     if !matches!(player.snapshot().state, PlaybackState::Idle) {
         return Err("Stop failed".into());
     }
-    println!("output_pause_seek_resume_stop=passed");
+    println!("output_pause_seek_resume_switch_stop=passed");
     Ok(())
 }
