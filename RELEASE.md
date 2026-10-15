@@ -51,7 +51,10 @@ only exact length and SHA-256 verified files are promoted from partial downloads
 - Production signing, update-key custody, hosting, license obligations (including
   bundled font and MPL dependency requirements), and tagged-source reproduction
   must be settled before distribution. The generated dependency inventory includes
-  a workspace superset; missing license texts are listed in `BUILD-INFO.json`.
+  a workspace superset. Packaging now requires notice texts for every listed crate,
+  with exact-revision, hash-checked supplements where archives omit them.
+  `MPL-SOURCES.zip` contains the unmodified locked MPL crate sources and license.
+  This closes the missing-text gap; it does not replace final distribution review.
 - Installer rollback covers caught file activation errors, not every interruption.
 
 ## Sanitized bug reports

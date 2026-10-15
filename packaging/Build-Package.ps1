@@ -51,17 +51,53 @@ try {
     [void]$notices.AppendLine('Octave third-party notices. Target-filtered workspace dependency superset, including test/build tools. SPDX alternatives are retained; this inventory is not a license clearance opinion.')
     [void]$notices.AppendLine('Octave fixture artwork is original project artwork under MIT. Windows system fonts are loaded from the OS and are not redistributed.')
     $missing = @()
+    $licenseRoot = Join-Path $PSScriptRoot 'licenses'
+    $supplements = Get-Content -LiteralPath (Join-Path $licenseRoot 'sources.json') -Raw | ConvertFrom-Json
     foreach ($dependency in $dependencies) {
         [void]$notices.AppendLine("`n===== $($dependency.name) $($dependency.version) | $($dependency.license) | $($dependency.repository) =====")
         $root = Split-Path $dependency.manifest_path -Parent
         $licenses = @(Get-ChildItem -LiteralPath $root -Recurse -File | Where-Object { $_.Name -match '^(LICENSE|LICENCE|COPYING|NOTICE|OFL|UFL)([._-]|$)' -or ($dependency.license_file -and $_.FullName -eq (Join-Path $root $dependency.license_file)) } | Sort-Object FullName -Unique)
-        if (-not $licenses.Count) { $missing += "$($dependency.name) $($dependency.version)"; [void]$notices.AppendLine('No packaged license text found; manual review required.') }
+        if (-not $licenses.Count) {
+            $supplement = @($supplements | Where-Object { $_.name -eq $dependency.name -and $_.version -eq $dependency.version })
+            if ($supplement.Count -ne 1 -or -not $supplement[0].files.Count) { $missing += "$($dependency.name) $($dependency.version)" }
+            else {
+                $vcs = Get-Content -LiteralPath (Join-Path $root '.cargo_vcs_info.json') -Raw | ConvertFrom-Json
+                if ($vcs.git.sha1 -ne $supplement[0].revision) { throw 'Supplemental notice revision does not match the locked crate.' }
+                foreach ($notice in $supplement[0].files) {
+                    if ($notice.file -ne [IO.Path]::GetFileName($notice.file) -or $notice.file -match '[\\/:]') { throw 'Invalid supplemental notice path.' }
+                    $noticePath = Join-Path $licenseRoot $notice.file
+                    if ((Get-FileHash -LiteralPath $noticePath).Hash -ne $notice.sha256) { throw 'Supplemental notice checksum mismatch.' }
+                    [void]$notices.AppendLine("--- Source: $($notice.url) | SHA-256: $($notice.sha256) ---")
+                    [void]$notices.AppendLine([IO.File]::ReadAllText($noticePath))
+                }
+            }
+        }
         foreach ($license in $licenses) {
             if ($license.Length -gt 1MB) { throw "License file needs manual review: $($dependency.name)" }
             [void]$notices.AppendLine("--- $($license.FullName.Substring($root.Length + 1)) ---")
             [void]$notices.AppendLine([IO.File]::ReadAllText($license.FullName))
         }
     }
+    if ($missing.Count) { throw "Missing dependency notices: $($missing -join ', '). Add exact-revision texts before packaging." }
+    # Include the unmodified MPL crate archives, verified against Cargo.lock.
+    $sourceStage = Join-Path $output ('mpl-sources-' + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Path $sourceStage | Out-Null
+    $lock = [IO.File]::ReadAllText((Join-Path $repo 'Cargo.lock'))
+    foreach ($dependency in $dependencies | Where-Object { $_.license -match 'MPL-2.0' }) {
+        $crateRoot = Split-Path $dependency.manifest_path -Parent
+        $registryRoot = Split-Path (Split-Path (Split-Path $crateRoot -Parent) -Parent) -Parent
+        $registry = Split-Path (Split-Path $crateRoot -Parent) -Leaf
+        $archiveName = "$($dependency.name)-$($dependency.version).crate"
+        $archive = Join-Path $registryRoot "cache\$registry\$archiveName"
+        $block = @($lock -split '\[\[package\]\]' | Where-Object { $_ -match ('(?m)^name = "' + [regex]::Escape($dependency.name) + '"\r?$') -and $_ -match ('(?m)^version = "' + [regex]::Escape($dependency.version) + '"\r?$') })
+        if ($block.Count -ne 1 -or $block[0] -notmatch '(?m)^checksum = "([a-f0-9]{64})"') { throw 'Cannot identify MPL source checksum.' }
+        $expected = $Matches[1]
+        if ((Get-FileHash -LiteralPath $archive).Hash -ne $expected) { throw 'MPL source archive checksum mismatch.' }
+        Copy-Item -LiteralPath $archive -Destination $sourceStage
+    }
+    Copy-Item -LiteralPath (Join-Path $licenseRoot 'pdeljanov-Symphonia-6d533f26-LICENSE') -Destination (Join-Path $sourceStage 'LICENSE-MPL-2.0')
+    Set-Content -LiteralPath (Join-Path $sourceStage 'README.txt') -Value 'Unmodified locked MPL-2.0 crate source archives (gzip tar .crate files), supplied with Octave. Each original archive is checked against Cargo.lock. Octave makes no changes to these dependencies. The corresponding license is included. Extract with a tar-compatible tool. Exact package versions are in dependencies.csv.'
+    Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath (Join-Path $package 'MPL-SOURCES.zip')
     [IO.File]::WriteAllText((Join-Path $package 'THIRD-PARTY-NOTICES.txt'), $notices.ToString())
     $rustVersion = rustc --version
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify Rust compiler.' }

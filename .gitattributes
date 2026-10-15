@@ -1,3 +1,6 @@
 * text=auto eol=lf
 *.png binary
 *.ico binary
+packaging/licenses/* -text
+packaging/licenses/*.json text eol=lf
+packaging/licenses/*.md text eol=lf
