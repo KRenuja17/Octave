@@ -318,6 +318,106 @@ mod tests {
         }
     }
     #[test]
+    fn resume_handles_range_ignored_wrong_range_redirect_and_oversize() {
+        use std::net::TcpListener;
+        let cases = [
+            (
+                "ignored",
+                "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\ngood",
+                None,
+            ),
+            (
+                "wrong-range",
+                "HTTP/1.1 206 Partial Content\r\nContent-Length: 2\r\nContent-Range: bytes 1-2/4\r\nConnection: close\r\n\r\nod",
+                Some(Error::Integrity),
+            ),
+            (
+                "redirect",
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:1/forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                Some(Error::Network),
+            ),
+            (
+                "oversize",
+                "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n5\r\ngood!\r\n0\r\n\r\n",
+                Some(Error::Integrity),
+            ),
+        ];
+        for (name, response, expected) in cases {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let address = listener.local_addr().unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let server = std::thread::spawn(move || {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let mut socket = loop {
+                    match listener.accept() {
+                        Ok((socket, _)) => break socket,
+                        Err(error)
+                            if error.kind() == std::io::ErrorKind::WouldBlock
+                                && std::time::Instant::now() < deadline =>
+                        {
+                            std::thread::sleep(Duration::from_millis(10))
+                        }
+                        Err(error) => panic!("Fixture request did not arrive: {error}"),
+                    }
+                };
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = Vec::new();
+                let mut byte = [0];
+                while !request.ends_with(b"\r\n\r\n") {
+                    socket.read_exact(&mut byte).unwrap();
+                    request.push(byte[0]);
+                }
+                assert!(
+                    String::from_utf8(request)
+                        .unwrap()
+                        .to_lowercase()
+                        .contains("range: bytes=2-")
+                );
+                socket.write_all(response.as_bytes()).unwrap();
+            });
+            let root = std::env::var_os("OCTAVE_TEST_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir)
+                .join(format!("octave-update-{name}-{}", std::process::id()));
+            fs::create_dir_all(&root).unwrap();
+            let sha256: [u8; 32] = ring::digest::digest(&SHA256, b"good")
+                .as_ref()
+                .try_into()
+                .unwrap();
+            let digest: String = sha256.iter().map(|b| format!("{b:02x}")).collect();
+            let archive = root.join(format!("Octave-2-{digest}.zip"));
+            let partial = archive.with_extension("zip.part");
+            fs::write(&partial, b"go").unwrap();
+            let release = VerifiedRelease {
+                version: "test".into(),
+                sequence: 2,
+                url: format!("http://{address}/test"),
+                length: 4,
+                sha256,
+            };
+            let result = release.download(&root);
+            server.join().unwrap();
+            if let Some(error) = expected {
+                assert_eq!(result.unwrap_err(), error);
+                assert!(!archive.exists());
+            } else {
+                assert_eq!(fs::read(result.unwrap()).unwrap(), b"good");
+                assert!(!partial.exists());
+                // A verified cached archive needs no network connection.
+                assert_eq!(release.download(&root).unwrap(), archive);
+            }
+            if partial.exists() {
+                fs::remove_file(partial).unwrap();
+            }
+            if archive.exists() {
+                fs::remove_file(archive).unwrap();
+            }
+            fs::remove_dir(root).unwrap();
+        }
+    }
+    #[test]
     fn tampered_download_is_deleted_without_promotion() {
         use std::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -59,6 +59,12 @@ only exact length and SHA-256 verified files are promoted from partial downloads
 
 ## Sanitized bug reports
 
+Maintainer package QA can be repeated with
+`packaging/Test-Package.ps1 -PackageDir CANDIDATE -PreviousPackageDir BETA -WorkDir EXTERNAL_DIRECTORY`.
+It verifies manifests, installs/upgrades in a unique isolated directory, launches
+with only Windows on PATH, and checks uninstall/profile preservation. It uses
+`-NoRegistration`; fresh-machine, shortcut and registry acceptance remain separate.
+
 Include package version, source commit from BUILD-INFO, Windows version, UI action,
 expected/actual behavior, and the visible error category. Reproduce with an isolated
 `--data-dir ABSOLUTE_DIRECTORY` when possible. Never attach cookies, authorization
