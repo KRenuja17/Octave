@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$PackageDir, [Parameter(Mandatory)][string]$PreviousPackageDir, [Parameter(Mandatory)][string]$WorkDir)
+param([Parameter(Mandatory)][string]$PackageDir, [Parameter(Mandatory)][string]$PreviousPackageDir, [Parameter(Mandatory)][string]$WorkDir, [string]$PlaylistFixture)
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $root = [IO.Path]::GetFullPath($WorkDir)
@@ -25,11 +25,18 @@ try {
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     & (Join-Path $PreviousPackageDir 'Install.ps1') -InstallDir $target -NoRegistration
     Invoke-Smoke (Join-Path $target 'octave-desktop.exe')
+    $playlistHash = $null
+    if ($PlaylistFixture) {
+        $playlistPath = Join-Path $profile 'listening.playlists.sqlite3'
+        Copy-Item -LiteralPath $PlaylistFixture -Destination $playlistPath
+        $playlistHash = (Get-FileHash -LiteralPath $playlistPath).Hash
+    }
     $database = Join-Path $profile 'listening.sqlite3'
     $before = (Get-FileHash -LiteralPath $database).Hash
     Set-Content -LiteralPath (Join-Path $target 'user-note.txt') -Value 'preserve'
     & (Join-Path $PackageDir 'Install.ps1') -InstallDir $target -NoRegistration
     if ((Get-FileHash -LiteralPath $database).Hash -ne $before) { throw 'Upgrade changed the profile.' }
+    if ($playlistHash -and (Get-FileHash -LiteralPath $playlistPath).Hash -ne $playlistHash) { throw 'Upgrade changed local playlists.' }
     $manifest = Get-Content -LiteralPath (Join-Path $PackageDir 'manifest.json') -Raw | ConvertFrom-Json
     foreach ($entry in $manifest.files) {
         if ((Get-FileHash -LiteralPath (Join-Path $target $entry.name)).Hash -ne $entry.sha256) { throw 'Installed payload differs from package.' }
@@ -40,7 +47,8 @@ try {
     if (Test-Path -LiteralPath (Join-Path $target 'octave-desktop.exe')) { throw 'Uninstall retained executable.' }
     if ((Get-FileHash -LiteralPath $database).Hash -ne $before -or (Get-Content -LiteralPath (Join-Path $target 'user-note.txt') -Raw).Trim() -ne 'preserve') { throw 'Uninstall changed preserved files.' }
     Invoke-Smoke (Join-Path $PackageDir 'octave-desktop.exe')
+    if ($playlistHash -and (Get-FileHash -LiteralPath $playlistPath).Hash -ne $playlistHash) { throw 'Launch or uninstall changed local playlists.' }
     $info = Get-Content -LiteralPath (Join-Path $PackageDir 'BUILD-INFO.json') -Raw | ConvertFrom-Json
-    @{ sourceCommit=$info.sourceCommit; version=$manifest.version; packageManifestSha256=(Get-FileHash -LiteralPath (Join-Path $PackageDir 'manifest.json')).Hash; previousManifestSha256=(Get-FileHash -LiteralPath (Join-Path $PreviousPackageDir 'manifest.json')).Hash; upgrade=$true; cleanPathLaunch=$true; portableLaunch=$true; profilePreservation=$true; unrelatedFilePreservation=$true; freshMachine=$false; registrationTested=$false } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
+    @{ sourceCommit=$info.sourceCommit; version=$manifest.version; packageManifestSha256=(Get-FileHash -LiteralPath (Join-Path $PackageDir 'manifest.json')).Hash; previousManifestSha256=(Get-FileHash -LiteralPath (Join-Path $PreviousPackageDir 'manifest.json')).Hash; upgrade=$true; cleanPathLaunch=$true; portableLaunch=$true; profilePreservation=$true; playlistsChecked=[bool]$playlistHash; unrelatedFilePreservation=$true; freshMachine=$false; registrationTested=$false } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
     Write-Output "package_acceptance=passed evidence=$root"
 } finally { $env:PATH = $savedPath }
