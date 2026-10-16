@@ -54,6 +54,8 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    playlists: Option<crate::playlist_ui::PlaylistsUi>,
+    playlists_path: PathBuf,
     output_ui: crate::output_ui::OutputUi,
     lyrics: crate::lyrics_ui::LyricsUi,
     account: crate::account_ui::AccountUi,
@@ -87,6 +89,8 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            playlists: None,
+            playlists_path: path.with_extension("playlists.sqlite3"),
             output_ui: crate::output_ui::OutputUi::default(),
             lyrics: crate::lyrics_ui::LyricsUi::default(),
             account: crate::account_ui::AccountUi::default(),
@@ -458,9 +462,30 @@ impl Alpha {
         if let Some(device) = selected_output {
             self.change_output(device);
         }
+        let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
+            .default_open(crate::argument("--page").as_deref() == Some("playlists"))
+            .show(ui, |ui| {
+                self.playlists
+                    .get_or_insert_with(|| {
+                        crate::playlist_ui::PlaylistsUi::new(self.playlists_path.clone())
+                    })
+                    .render(ui, &self.session.queue)
+            })
+            .body_returned
+            .flatten();
+        if let Some(tracks) = loaded_playlist {
+            self.halt();
+            self.session.queue = tracks;
+            self.session.cursor = 0;
+            self.session.position = 0.0;
+            self.queue_page = true;
+            self.account_page = false;
+            self.message = "Playlist loaded. Press Resume to start listening.".into();
+        }
         if self.account_page {
             let action = egui::ScrollArea::vertical()
                 .id_salt("account-page")
+                .max_height(ui.clip_rect().height().max(80.0))
                 .show(ui, |ui| self.account.render(ui, self.session.current()))
                 .inner;
             if let Some(action) = action {
@@ -594,6 +619,7 @@ impl Alpha {
         let mut action = None;
         egui::ScrollArea::vertical()
             .id_salt("alpha-tracks")
+            .max_height(ui.clip_rect().height().max(80.0))
             .show_rows(ui, 64.0, len, |ui, range| {
                 for index in range {
                     let track = if self.queue_page {
@@ -692,6 +718,24 @@ impl Drop for Alpha {
     }
 }
 impl eframe::App for Alpha {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
+        if crate::argument("--capture").is_some()
+            && std::env::args().any(|s| s == "--capture-scroll")
+            && (25..32).contains(&self.frames)
+        {
+            let rect = input.screen_rect.unwrap_or(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(560.0, 720.0),
+            ));
+            input.events.push(egui::Event::PointerMoved(rect.center()));
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: egui::vec2(0.0, -100.0),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll();
         let commands = self.desktop.as_ref().map(|d| d.drain()).unwrap_or_default();
@@ -727,7 +771,11 @@ impl eframe::App for Alpha {
             self.queue_page = false;
         }
         egui::Panel::bottom("listening-player").show(ui, |ui| self.transport(ui));
-        egui::CentralPanel::default().show(ui, |ui| self.content(ui));
+        egui::CentralPanel::default().show(ui, |ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("listening-content")
+                .show(ui, |ui| self.content(ui));
+        });
         self.frames += 1;
         if std::env::args().any(|s| s == "--smoke-test") && self.loaded && self.frames >= 3 {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);

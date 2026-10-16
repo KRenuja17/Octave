@@ -6,6 +6,21 @@ Windows media/tray integration and an experimental account library connection.
 The earlier silent native experience prototype is available with `--prototype`.
 Broader playback feasibility and authenticated playback remain deferred.
 
+## Expansion: local playlists
+
+Open **Local playlists**, enter a name, and **Save queue as new playlist**.
+Select a saved playlist and **Load into queue** to replace the queue without
+autoplay. Reorder, remove or add songs with the existing Queue controls, then
+**Replace with queue** to save the edits. Rename uses the name field; deletion
+has a separate confirmation. Up to 20 playlists of 500 unique tracks are stored.
+
+These playlists stay on this computer and do not modify your YouTube Music
+account. A separate `listening.playlists.sqlite3` database sits beside the listening
+database in the selected data directory. Writes run on a worker and commit
+atomically; the UI only accepts changes after saving succeeds. Duplicate names
+(ASCII case-insensitive) and duplicate track IDs are rejected without losing the
+previous snapshot. Backup this database along with your listening database.
+
 ## Expansion: audio output selection
 
 Open **Audio output**, choose **Refresh outputs**, select a device, then **Use

@@ -12,6 +12,8 @@ mod live;
 mod lyrics_ui;
 mod model;
 mod output_ui;
+mod playlist_ui;
+mod playlists;
 mod prototype;
 mod search;
 mod storage;
