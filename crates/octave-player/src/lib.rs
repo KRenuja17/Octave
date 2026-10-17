@@ -328,6 +328,7 @@ mod tests {
             position: Duration::from_secs(10),
             ..Default::default()
         };
+        player.shared.paused.store(true, Ordering::Release);
         player.prepare_next(Some(TrackId("next".into())));
         {
             let mut p = player.shared.preparation.lock().unwrap();
@@ -336,6 +337,7 @@ mod tests {
         let old = player.shared.generation.load(Ordering::Acquire);
         player.prepare_next(Some(TrackId("replacement".into())));
         assert!(player.shared.generation.load(Ordering::Acquire) > old);
+        assert!(player.shared.paused.load(Ordering::Acquire));
         assert_eq!(
             player
                 .shared

@@ -508,7 +508,7 @@ impl Alpha {
                     self.player.set_crossfade(self.session.crossfade);
                     self.message = "Transition saved. Press Resume when ready.".into();
                 }
-                ui.weak("Next-track preparation is bounded. Unavailable tracks use normal queue recovery; different formats use a gapless join.");
+                ui.weak("If the next song is not ready, it starts normally. Songs with different audio formats join without a fade.");
                 ui.label("Three-band equalizer");
                 for (index,label) in ["Bass · 100 Hz", "Mid · 1 kHz", "Treble · 10 kHz"].into_iter().enumerate() {
                     ui.add(egui::Slider::new(&mut self.eq_draft.gains_db[index],-12.0..=12.0).suffix(" dB").text(label));
