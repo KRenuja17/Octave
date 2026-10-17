@@ -306,6 +306,9 @@ impl Alpha {
     }
     fn transport(&mut self, ui: &mut egui::Ui) {
         let snapshot = self.player.snapshot();
+        self.transport_snapshot(ui, snapshot);
+    }
+    fn transport_snapshot(&mut self, ui: &mut egui::Ui, snapshot: Snapshot) {
         ui.add_space(8.0);
         if let Some(track) = self.session.current() {
             ui.add(
@@ -401,6 +404,9 @@ impl Alpha {
             ));
         });
         let mut seconds = self.seek.unwrap_or(self.session.position);
+        if let Some(quality) = snapshot.quality {
+            ui.weak(quality.to_string()).on_hover_text("Selected unsigned AAC stream. Bitrate is reported by the service; sample rate and channels come from the decoder. Premium quality is not enabled.");
+        }
         let can_seek = !snapshot.duration.is_zero()
             && matches!(
                 snapshot.state,
@@ -1084,6 +1090,7 @@ mod tests {
         app.add(track(2), false);
         app.retry_count = 2;
         app.observe(Snapshot {
+            quality: None,
             sequence: 1,
             state: PlaybackState::Playing(track(2).id),
             position: Duration::from_millis(250),
@@ -1094,6 +1101,7 @@ mod tests {
         assert_eq!(app.session.position, 0.25);
         app.session.repeat = Repeat::One;
         app.observe(Snapshot {
+            quality: None,
             sequence: 2,
             state: PlaybackState::Paused(track(2).id),
             position: Duration::from_millis(100),
@@ -1102,6 +1110,7 @@ mod tests {
         assert_eq!(app.session.cursor, 1);
         assert_eq!(app.session.position, 0.1);
         app.observe(Snapshot {
+            quality: None,
             sequence: 0,
             state: PlaybackState::Loading(track(2).id),
             position: Duration::from_secs(15),
@@ -1153,6 +1162,7 @@ mod tests {
         app.add(track(2), false);
         let queue = app.session.queue.clone();
         let failed = Snapshot {
+            quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::Timeout)),
             position: Duration::from_secs(42),
@@ -1181,6 +1191,7 @@ mod tests {
         assert_eq!(app.session.position, 42.0);
         app.failure_seen = false;
         app.observe(Snapshot {
+            quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(2).id, Failure::Provider(Error::Timeout)),
             position: Duration::ZERO,
@@ -1193,6 +1204,7 @@ mod tests {
         app.retry_count = 0;
         app.failure_seen = false;
         app.observe(Snapshot {
+            quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::SignInRequired)),
             position: Duration::from_secs(42),
@@ -1220,12 +1232,31 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    egui::Panel::bottom("test-player").show(ui, |ui| app.transport(ui));
+                    egui::Panel::bottom("test-player").show(ui, |ui| {
+                        app.transport_snapshot(
+                            ui,
+                            Snapshot {
+                                quality: Some(octave_core::AudioQuality {
+                                    bitrate_bps: Some(129502),
+                                    sample_rate: 44100,
+                                    channels: 2,
+                                }),
+                                state: PlaybackState::Playing(track(1).id),
+                                duration: Duration::from_secs(213),
+                                ..Default::default()
+                            },
+                        )
+                    });
                     egui::CentralPanel::default().show(ui, |ui| app.content(ui));
                 },
             );
             output.textures_delta.clear();
             assert!(!output.shapes.is_empty());
+            let tree = output.platform_output.accesskit_update.unwrap();
+            assert!(tree.nodes.iter().any(|(_, node)| {
+                node.value()
+                    .is_some_and(|label| label.contains("129 kb/s reported"))
+            }));
         }
         ctx.memory_mut(|m| m.request_focus(egui::Id::new("alpha-search")));
         let old = app.search.generation;

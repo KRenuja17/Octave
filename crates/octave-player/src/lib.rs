@@ -53,6 +53,7 @@ impl std::fmt::Display for Failure {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    pub quality: Option<octave_core::AudioQuality>,
     /// Increments when prepared audio for another queue entry starts being consumed.
     pub sequence: u64,
     pub state: PlaybackState,
@@ -198,6 +199,7 @@ impl Player {
         }
         self.shared.paused.store(paused, Ordering::Release);
         *self.shared.snapshot.lock().unwrap() = Snapshot {
+            quality: None,
             sequence: 0,
             state: PlaybackState::Loading(id.clone()),
             position: offset,
@@ -439,6 +441,7 @@ mod tests {
         let old = player.shared.pending.lock().unwrap().clone().unwrap();
         *player.shared.snapshot.lock().unwrap() = Snapshot {
             sequence: 0,
+            quality: None,
             state: PlaybackState::Playing(id),
             duration: Duration::from_secs(200),
             position: Duration::ZERO,

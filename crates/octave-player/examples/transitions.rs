@@ -31,6 +31,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 return Err(error.to_string().into());
             }
             if snapshot.sequence == 1 && snapshot.position >= Duration::from_millis(100) {
+                let quality = snapshot
+                    .quality
+                    .ok_or("Incoming stream quality was missing")?;
+                println!("incoming_quality={quality}");
                 break;
             }
             if matches!(snapshot.state, PlaybackState::Ended(_)) {

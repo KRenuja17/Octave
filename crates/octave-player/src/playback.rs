@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use transition::Prepared;
 
 struct Clock {
+    quality: octave_core::AudioQuality,
     id: TrackId,
     sequence: u64,
     consumed: Arc<AtomicU64>,
@@ -14,6 +15,7 @@ struct Clock {
 impl Clock {
     fn new(audio: &Prepared, sequence: u64) -> Self {
         Self {
+            quality: audio.quality,
             id: audio.id.clone(),
             sequence,
             consumed: Arc::new(AtomicU64::new(0)),
@@ -25,6 +27,7 @@ impl Clock {
     }
     fn snapshot(&self, paused: bool, ended: bool) -> Snapshot {
         Snapshot {
+            quality: Some(self.quality),
             sequence: self.sequence,
             state: if ended {
                 PlaybackState::Ended(self.id.clone())
@@ -95,6 +98,14 @@ fn run(
     output: &rodio::Player,
     failed: &AtomicBool,
 ) -> Result<(), Failure> {
+    // Stop queued PCM on errors as well as cancellation/normal completion.
+    struct StopOnDrop<'a>(&'a rodio::Player);
+    impl Drop for StopOnDrop<'_> {
+        fn drop(&mut self) {
+            self.0.stop();
+        }
+    }
+    let _stop = StopOnDrop(output);
     let fade = shared
         .crossfade
         .load(Ordering::Acquire)
@@ -197,10 +208,130 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Account-free accelerated one-hour pipeline soak; run optimized, takes several minutes"]
+    fn one_hour_pipeline_soak() {
+        let shared = Arc::new(Shared::default());
+        shared.crossfade.store(5, Ordering::Release);
+        let request = Request {
+            id: TrackId("synthetic".into()),
+            offset: Duration::ZERO,
+            generation: 0,
+            equalizer: Equalizer {
+                gains_db: [6.0, -3.0, 2.0],
+            },
+            device: None,
+        };
+        let mut audio = fixture("synthetic", 0.0, 48000, 2);
+        audio.decoder = Box::new(rodio::source::Zero::new_samples(
+            audio.channels,
+            audio.rate,
+            48000 * 2 * 3600,
+        ));
+        audio.duration = Duration::from_secs(3600);
+        audio.eq = equalizer::Processor::new(request.equalizer, 48000, 2);
+        let (output, mut source) = rodio::Player::new();
+        let output = Arc::new(output);
+        let worker_shared = shared.clone();
+        let worker_output = output.clone();
+        let worker = thread::spawn(move || {
+            run(
+                &worker_shared,
+                &request,
+                audio,
+                &worker_output,
+                &AtomicBool::new(false),
+            )
+        });
+        let started = std::time::Instant::now();
+        let mut milestone = 600;
+        while !worker.is_finished() {
+            assert!(
+                started.elapsed() < Duration::from_secs(600),
+                "Pipeline soak timed out"
+            );
+            if !output.empty() {
+                assert!(source.by_ref().take(9600).all(|sample| sample == 0.0));
+            }
+            let position = shared.snapshot.lock().unwrap().position.as_secs();
+            if position >= milestone {
+                println!(
+                    "pipeline_seconds={position} elapsed_ms={}",
+                    started.elapsed().as_millis()
+                );
+                milestone += 600;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        worker.join().unwrap().unwrap();
+        let snapshot = shared.snapshot.lock().unwrap();
+        assert_eq!(snapshot.position, Duration::from_secs(3600));
+        assert_eq!(
+            snapshot.state,
+            PlaybackState::Ended(TrackId("synthetic".into()))
+        );
+        println!(
+            "pipeline_hour=passed samples=345600000 eq=true retained_tail_seconds=5 elapsed_ms={}",
+            started.elapsed().as_millis()
+        );
+    }
+    #[test]
+    fn transport_device_and_early_eof_failures_stop_queued_audio() {
+        for scenario in 0..3 {
+            let shared = Shared::default();
+            let request = Request {
+                id: TrackId("first".into()),
+                offset: Duration::ZERO,
+                generation: 0,
+                equalizer: Equalizer::default(),
+                device: None,
+            };
+            let mut audio = fixture("first", 0.5, 8000, 2);
+            let failed = AtomicBool::new(scenario == 1);
+            let expected = match scenario {
+                0 => {
+                    *audio.fault.lock().unwrap() = Some(octave_provider::Error::Http(403));
+                    Failure::Provider(octave_provider::Error::Http(403))
+                }
+                1 => Failure::Audio(
+                    "The audio output device disconnected or failed. Select an output and retry.",
+                ),
+                _ => {
+                    audio.decoder = Box::new(SamplesBuffer::new(
+                        audio.channels,
+                        audio.rate,
+                        Vec::<f32>::new(),
+                    ));
+                    audio.duration = Duration::from_secs(10);
+                    Failure::Audio("Audio ended before the advertised duration. Retry playback.")
+                }
+            };
+            let (output, mut source) = rodio::Player::new();
+            output.append(SamplesBuffer::new(
+                rodio::nz!(2),
+                rodio::nz!(8000),
+                vec![0.9; 800],
+            ));
+            assert_eq!(
+                run(&shared, &request, audio, &output, &failed),
+                Err(expected)
+            );
+            assert!(source.by_ref().take(800).all(|sample| sample == 0.0));
+            assert!(!matches!(
+                shared.snapshot.lock().unwrap().state,
+                PlaybackState::Ended(_)
+            ));
+        }
+    }
     fn fixture(id: &str, value: f32, rate: u32, channels: u16) -> Prepared {
         let rate = rodio::SampleRate::new(rate).unwrap();
         let channels = rodio::ChannelCount::new(channels).unwrap();
         Prepared {
+            quality: octave_core::AudioQuality {
+                bitrate_bps: Some(128000),
+                sample_rate: rate.get(),
+                channels: channels.get(),
+            },
             id: TrackId(id.into()),
             decoder: Box::new(SamplesBuffer::new(
                 channels,
@@ -308,5 +439,6 @@ mod tests {
         assert!(samples[..16000].iter().all(|s| *s == 0.5));
         assert!(samples[16000..48000].iter().all(|s| *s == -0.5));
         assert_eq!(snapshot.sequence, 1);
+        assert_eq!(snapshot.quality.unwrap().sample_rate, 16000);
     }
 }

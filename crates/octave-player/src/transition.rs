@@ -30,6 +30,7 @@ impl Preparation {
     }
 }
 pub(crate) struct Prepared {
+    pub quality: octave_core::AudioQuality,
     pub id: TrackId,
     pub decoder: Box<dyn Source<Item = f32> + Send>,
     pub fault: Arc<Mutex<Option<octave_provider::Error>>>,
@@ -48,6 +49,7 @@ impl Prepared {
             .resolve_cancellable(&request.id, || !current(shared, request))
             .map_err(Failure::Provider)?;
         let duration = stream.duration;
+        let bitrate_bps = stream.bitrate_bps;
         let length = stream.content_length;
         let reader = RangeReader::new(
             provider,
@@ -79,6 +81,11 @@ impl Prepared {
             ));
         }
         Ok(Self {
+            quality: octave_core::AudioQuality {
+                bitrate_bps,
+                sample_rate: rate.get(),
+                channels: channels.get(),
+            },
             id: request.id.clone(),
             decoder: Box::new(decoder),
             fault,

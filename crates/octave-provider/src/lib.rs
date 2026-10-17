@@ -50,6 +50,7 @@ fn network(error: reqwest::Error) -> Error {
 }
 #[derive(Debug)]
 pub struct ResolvedStream {
+    pub bitrate_bps: Option<u32>,
     pub track_id: TrackId,
     pub url: Sensitive<String>,
     pub content_length: u64,
@@ -178,6 +179,15 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
         .iter()
         .find(|v| v["itag"] == 140 && v["url"].is_string())
         .ok_or(Error::UnsupportedStream)?;
+    let mime = audio["mimeType"].as_str().ok_or(Error::UnsupportedStream)?;
+    if mime.split(';').next().map(str::trim) != Some("audio/mp4")
+        || !mime
+            .split(';')
+            .skip(1)
+            .any(|part| part.trim() == "codecs=\"mp4a.40.2\"")
+    {
+        return Err(Error::UnsupportedStream);
+    }
     let url = audio["url"].as_str().ok_or(Error::UnsupportedStream)?;
     let parsed = reqwest::Url::parse(url).map_err(|_| Error::InvalidResponse)?;
     if parsed.scheme() != "https"
@@ -195,6 +205,11 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
             .ok_or(Error::InvalidResponse)
     };
     Ok(ResolvedStream {
+        bitrate_bps: audio["averageBitrate"]
+            .as_u64()
+            .or_else(|| audio["bitrate"].as_u64())
+            .filter(|n| (1000..=1_000_000).contains(n))
+            .map(|n| n as u32),
         track_id: id.clone(),
         url: Sensitive::new(url.to_owned()),
         content_length: number("contentLength")?,
@@ -288,6 +303,24 @@ fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
 mod tests {
     use super::*;
     #[test]
+    fn selected_quality_uses_reported_values_and_rejects_unexpected_codecs() {
+        let id = TrackId("abcdefghijk".into());
+        let mut value = json!({"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","url":"https://r1.googlevideo.com/videoplayback?token=secret","contentLength":"1024","approxDurationMs":"5000","averageBitrate":129450,"bitrate":140000}]}});
+        assert_eq!(parse_stream(&id, &value).unwrap().bitrate_bps, Some(129450));
+        let audio = &mut value["streamingData"]["adaptiveFormats"][0];
+        audio.as_object_mut().unwrap().remove("averageBitrate");
+        assert_eq!(parse_stream(&id, &value).unwrap().bitrate_bps, Some(140000));
+        value["streamingData"]["adaptiveFormats"][0]["bitrate"] = json!(u64::MAX);
+        assert_eq!(parse_stream(&id, &value).unwrap().bitrate_bps, None);
+        value["streamingData"]["adaptiveFormats"][0]["mimeType"] =
+            json!("audio/webm; codecs=\"opus\"");
+        assert_eq!(
+            parse_stream(&id, &value).unwrap_err(),
+            Error::UnsupportedStream
+        );
+        assert!(!format!("{:?}", parse_stream(&id, &value)).contains("secret"));
+    }
+    #[test]
     fn search_includes_top_result_cards() {
         let card = json!({"musicCardShelfRenderer":{"title":{"runs":[{"text":"Best match","navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}]}}});
         let mut out = Vec::new();
@@ -311,7 +344,7 @@ mod tests {
     #[test]
     fn stream_debug_redacts_url_and_rejects_foreign_hosts() {
         let id = TrackId("abcdefghijk".into());
-        let mut value = json!({"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[{"itag":140,"url":"https://r1.googlevideo.com/videoplayback?token=secret","contentLength":"1024","approxDurationMs":"5000"}]}});
+        let mut value = json!({"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[{"itag":140,"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","url":"https://r1.googlevideo.com/videoplayback?token=secret","contentLength":"1024","approxDurationMs":"5000"}]}});
         assert!(!format!("{:?}", parse_stream(&id, &value).unwrap()).contains("secret"));
         value["streamingData"]["adaptiveFormats"][0]["url"] =
             json!("https://googlevideo.com.attacker.test/audio");

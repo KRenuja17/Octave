@@ -257,6 +257,7 @@ mod tests {
     }
     fn reader() -> RangeReader {
         let stream = ResolvedStream {
+            bitrate_bps: None,
             track_id: TrackId("abcdefghijk".into()),
             url: Sensitive::new("https://unused.googlevideo.com".into()),
             content_length: 100,

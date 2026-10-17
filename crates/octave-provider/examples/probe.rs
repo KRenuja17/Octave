@@ -51,9 +51,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let stream = provider.resolve(&id)?;
     println!(
-        "resolved_bytes={} duration_seconds={}",
+        "resolved_bytes={} duration_seconds={} reported_bitrate_bps={:?}",
         stream.content_length,
-        stream.duration.as_secs()
+        stream.duration.as_secs(),
+        stream.bitrate_bps
     );
     let mut reader = RangeReader::new(provider, stream, Arc::new(AtomicU64::new(1)), 1);
     let mut bytes = [0; 4096];
