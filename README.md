@@ -292,6 +292,14 @@ missing preparation, queue edits, repeat state and preference migration.
 
 ## Playback limitations
 
+During playback, the transport shows **AAC**, the service-reported bitrate (or
+“bitrate not reported”), and the decoder's sample rate/channel count. These values
+follow the active track across gapless/crossfade transitions, and clear during a
+new load or Stop. They describe the selected unsigned stream; they do not imply
+Premium access, lossless audio, a measured bitrate, or the hardware output format.
+The resolver accepts only direct itag 140 audio/MP4 with the AAC-LC codec declared
+in its MIME type. Unexpected codecs are reported as unsupported.
+
 Only direct AAC/MP4 streams (itag 140) are supported. No account login, Premium
 validation, cipher/JavaScript resolver, live-stream support or automatic
 device-switch recovery is implemented. Retry re-resolves the
@@ -311,3 +319,11 @@ Windows x64 is the initial target. Octave is MIT licensed. Third-party distribut
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
 repository in `D:\Octave-Research`.
+
+For a repeatable account-free pipeline workload, build optimized player tests
+with `cargo test -p octave-player --release --no-run --locked`, then pass the
+reported test executable to `packaging/Measure-Playback.ps1 -TestExecutable PATH
+-OutputDir EXTERNAL_DIRECTORY`. This runs the ignored `one_hour_pipeline_soak`
+test with generated 48 kHz stereo PCM, EQ, a five-second retained tail, and the
+real playback worker/output queue. It records process memory and CPU. Execution
+is accelerated and emits no audio; real-time network AAC acceptance remains separate.

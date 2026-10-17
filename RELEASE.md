@@ -46,6 +46,17 @@ only exact length and SHA-256 verified files are promoted from partial downloads
 
 ## Limitations and remaining release gates
 
+The implemented playback contract is deliberately narrow: unsigned direct AAC-LC
+itag 140 streams only, with typed failures for restricted/ciphered/unavailable
+responses. Reported quality is shown in the transport. No embedded JavaScript
+resolver has been adopted; broader service compatibility is an unresolved
+feasibility decision, not an implied capability of the Rust-only implementation.
+
+Account-free evidence includes controlled range failures, queue recovery, exact
+transition PCM tests, generated long-media checks, and active fixture browsing.
+Injected transport/device failures verify error handling without disconnecting
+the host network or hardware. These checks complement the physical/live gates below.
+
 - Authenticated playback and broader playback feasibility remain deferred. Account
   endpoints need a real user-initiated session test; credentials stay in memory.
 - Physical media keys/tray interaction, output-device changes, actual network
