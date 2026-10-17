@@ -78,7 +78,7 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 1 {
+    if version > 2 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
@@ -86,6 +86,11 @@ fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
         tx.execute_batch("CREATE TABLE queue (slot INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, title TEXT NOT NULL, artists TEXT NOT NULL);
             CREATE TABLE session (singleton INTEGER PRIMARY KEY CHECK(singleton=1), cursor INTEGER NOT NULL, position REAL NOT NULL, volume REAL NOT NULL, repeat INTEGER NOT NULL);
             PRAGMA user_version=1;")?;
+        tx.commit()?;
+    }
+    if version < 2 {
+        let tx = db.transaction()?;
+        tx.execute_batch("CREATE TABLE preferences (singleton INTEGER PRIMARY KEY CHECK(singleton=1), bass REAL NOT NULL, mid REAL NOT NULL, treble REAL NOT NULL, appearance INTEGER NOT NULL); PRAGMA user_version=2;")?;
         tx.commit()?;
     }
     Ok(())
@@ -117,6 +122,11 @@ fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
             }
         ],
     )?;
+    let gains = s.equalizer.sanitized().gains_db;
+    tx.execute(
+        "INSERT OR REPLACE INTO preferences VALUES (1,?1,?2,?3,?4)",
+        params![gains[0], gains[1], gains[2], s.appearance.min(2)],
+    )?;
     tx.commit()
 }
 fn load(db: &Connection) -> rusqlite::Result<Session> {
@@ -146,6 +156,16 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
             _ => Repeat::Off,
         };
     }
+    let mut stmt =
+        db.prepare("SELECT bass,mid,treble,appearance FROM preferences WHERE singleton=1")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        s.equalizer = octave_player::Equalizer {
+            gains_db: [row.get(0)?, row.get(1)?, row.get(2)?],
+        }
+        .sanitized();
+        s.appearance = row.get::<_, i64>(3)?.clamp(0, 2) as u8;
+    }
     Ok(s)
 }
 #[cfg(test)]
@@ -162,13 +182,29 @@ mod tests {
         s.position = 42.5;
         s.volume = 0.25;
         s.repeat = Repeat::All;
+        s.equalizer = octave_player::Equalizer {
+            gains_db: [6.0, -3.0, 2.0],
+        };
+        s.appearance = 2;
         save(&mut db, &s).unwrap();
         assert_eq!(load(&db).unwrap(), s);
         assert_eq!(
             db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            1
+            2
         );
+    }
+    #[test]
+    fn version_one_migration_preserves_old_listening_state() {
+        let mut db = Connection::open_in_memory().unwrap();
+        db.execute_batch("CREATE TABLE queue (slot INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, title TEXT NOT NULL, artists TEXT NOT NULL); CREATE TABLE session (singleton INTEGER PRIMARY KEY CHECK(singleton=1), cursor INTEGER NOT NULL, position REAL NOT NULL, volume REAL NOT NULL, repeat INTEGER NOT NULL); PRAGMA user_version=1; INSERT INTO queue VALUES (0,'abcdefghijk','Old queue','[]'); INSERT INTO session VALUES (1,0,42.0,0.25,1);").unwrap();
+        migrate(&mut db).unwrap();
+        let state = load(&db).unwrap();
+        assert_eq!(state.queue[0].title, "Old queue");
+        assert_eq!(state.position, 42.0);
+        assert_eq!(state.volume, 0.25);
+        assert_eq!(state.equalizer, octave_player::Equalizer::default());
+        assert_eq!(state.appearance, 0);
     }
     #[test]
     fn failed_snapshot_rolls_back_queue_and_settings() {

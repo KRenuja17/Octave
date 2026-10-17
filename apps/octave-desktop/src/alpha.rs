@@ -16,16 +16,7 @@ use std::{
 pub fn run() -> eframe::Result {
     let path = crate::argument("--data-dir")
         .map(PathBuf::from)
-        .or_else(|| {
-            std::env::var_os("LOCALAPPDATA")
-                .map(PathBuf::from)
-                .map(|p| p.join("Octave"))
-        })
-        .or_else(|| {
-            std::env::var_os("HOME")
-                .map(PathBuf::from)
-                .map(|p| p.join(".local/share/octave"))
-        })
+        .or_else(crate::paths::data_directory)
         .expect("Provide --data-dir when no user data directory is available")
         .join("listening.sqlite3");
     eframe::run_native(
@@ -54,6 +45,8 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    eq_draft: octave_player::Equalizer,
+    applied_appearance: Option<u8>,
     playlists: Option<crate::playlist_ui::PlaylistsUi>,
     playlists_path: PathBuf,
     output_ui: crate::output_ui::OutputUi,
@@ -89,6 +82,8 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            eq_draft: octave_player::Equalizer::default(),
+            applied_appearance: None,
             playlists: None,
             playlists_path: path.with_extension("playlists.sqlite3"),
             output_ui: crate::output_ui::OutputUi::default(),
@@ -145,6 +140,11 @@ impl Alpha {
         self.seek = None;
     }
     fn change_output(&mut self, device: Option<octave_player::OutputDevice>) {
+        self.halt_at_current_position();
+        self.player.set_output_device(device);
+        self.message = "Output selected. Press Resume to continue from your saved position.".into();
+    }
+    fn halt_at_current_position(&mut self) {
         let snapshot = self.player.snapshot();
         if matches!(
             snapshot.state,
@@ -153,8 +153,6 @@ impl Alpha {
             self.session.position = snapshot.position.as_secs_f64();
         }
         self.halt();
-        self.player.set_output_device(device);
-        self.message = "Output selected. Press Resume to continue from your saved position.".into();
     }
     fn toggle(&mut self) {
         match self.player.snapshot().state {
@@ -188,6 +186,8 @@ impl Alpha {
             match event {
                 storage::Event::Loaded(session) => {
                     self.session = session;
+                    self.eq_draft = self.session.equalizer;
+                    self.player.set_equalizer(self.session.equalizer);
                     self.saved = self.session.clone();
                     self.player.set_volume(self.session.volume);
                     self.loaded = true;
@@ -461,6 +461,32 @@ impl Alpha {
             .flatten();
         if let Some(device) = selected_output {
             self.change_output(device);
+        }
+        egui::CollapsingHeader::new("Sound and appearance")
+            .default_open(crate::argument("--page").as_deref()==Some("settings"))
+            .show(ui, |ui| {
+                ui.label("Three-band equalizer");
+                for (index,label) in ["Bass · 100 Hz", "Mid · 1 kHz", "Treble · 10 kHz"].into_iter().enumerate() {
+                    ui.add(egui::Slider::new(&mut self.eq_draft.gains_db[index],-12.0..=12.0).suffix(" dB").text(label));
+                }
+                ui.weak(format!("Automatic headroom: {:.0} dB. Apply stops playback; Resume uses the new sound.",self.eq_draft.headroom_db()));
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Flat EQ").clicked() { self.eq_draft=octave_player::Equalizer::default(); }
+                    if ui.button("Apply equalizer").clicked() {
+                        self.halt_at_current_position();
+                        self.session.equalizer=self.eq_draft.sanitized();
+                        self.player.set_equalizer(self.session.equalizer);
+                        self.message="Equalizer applied. Press Resume when ready.".into();
+                    }
+                });
+                egui::ComboBox::from_label("Appearance").selected_text(["Dark","Light","High contrast"][usize::from(self.session.appearance.min(2))]).show_ui(ui,|ui| {
+                    for (index,label) in ["Dark","Light","High contrast"].into_iter().enumerate() { ui.selectable_value(&mut self.session.appearance,index as u8,label); }
+                });
+                ui.weak("EQ and appearance are saved with your listening settings.");
+            });
+        if self.applied_appearance != Some(self.session.appearance) {
+            theme::apply(ui.ctx(), self.session.appearance);
+            self.applied_appearance = Some(self.session.appearance);
         }
         let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
             .default_open(crate::argument("--page").as_deref() == Some("playlists"))
@@ -950,6 +976,36 @@ mod tests {
         assert!(app.session.queue.is_empty());
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
         drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn equalizer_apply_preserves_queue_and_preferences_survive_restart() {
+        let path = path("equalizer");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.session.position = 42.0;
+        app.eq_draft = octave_player::Equalizer {
+            gains_db: [6.0, -4.0, 2.0],
+        };
+        app.session.appearance = 1;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Sound and appearance");
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        click(&ctx, &mut app, "Apply equalizer");
+        assert_eq!(app.session.equalizer, app.eq_draft);
+        assert_eq!(app.session.position, 42.0);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        let restored = loaded(path.clone());
+        assert_eq!(restored.session.equalizer.gains_db, [6.0, -4.0, 2.0]);
+        assert_eq!(restored.session.appearance, 1);
+        assert_eq!(restored.player.snapshot().state, PlaybackState::Idle);
+        drop(restored);
         std::fs::remove_file(path).unwrap();
     }
     #[test]

@@ -18,3 +18,24 @@ jobs:
       - name: Installer integrity and rollback fixtures
         shell: pwsh
         run: ./packaging/Test-Installer.ps1 -WorkDir "${{ runner.temp }}/octave-installer-tests"
+  portability:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      OCTAVE_TEST_DIR: ${{ runner.temp }}/octave-tests
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux native build libraries
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxi-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev
+      - name: Install Rust
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt --component clippy
+      - name: External test directory
+        run: mkdir -p "$OCTAVE_TEST_DIR"
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      - run: cargo build -p octave-desktop --release --locked

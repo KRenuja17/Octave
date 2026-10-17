@@ -1,6 +1,8 @@
 //! One playback worker, bounded PCM queue, and generation-based cancellation.
 mod devices;
+mod equalizer;
 pub use devices::{OutputDevice, output_devices};
+pub use equalizer::Equalizer;
 use octave_core::TrackId;
 use octave_provider::{Provider, range::RangeReader};
 use rodio::{Decoder, Source, buffer::SamplesBuffer};
@@ -55,6 +57,7 @@ pub struct Snapshot {
 }
 #[derive(Clone)]
 struct Request {
+    equalizer: Equalizer,
     id: TrackId,
     offset: Duration,
     generation: u64,
@@ -62,6 +65,7 @@ struct Request {
 }
 #[derive(Default)]
 struct Shared {
+    equalizer: Mutex<Equalizer>,
     generation: Arc<AtomicU64>,
     pending: Mutex<Option<Request>>,
     paused: AtomicBool,
@@ -90,6 +94,11 @@ impl Player {
     }
     pub fn play(&self, id: TrackId) {
         self.request(id, Duration::ZERO, false, Duration::ZERO);
+    }
+    /// Apply on the next explicit play; cancel old PCM to avoid abrupt filter changes.
+    pub fn set_equalizer(&self, settings: Equalizer) {
+        self.stop();
+        *self.shared.equalizer.lock().unwrap() = settings.sanitized();
     }
     /// Stops current/pending playback. Selection is used by the next explicit play.
     /// None follows the system default at the time the next stream is opened.
@@ -142,6 +151,7 @@ impl Player {
             duration,
         };
         *pending = Some(Request {
+            equalizer: *self.shared.equalizer.lock().unwrap(),
             id,
             offset,
             generation,
@@ -266,6 +276,8 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), Failure> {
         ));
     }
     let count = (rate.get() as usize / 10) * channels.get() as usize;
+    let mut equalizer =
+        equalizer::Processor::new(request.equalizer, rate.get(), channels.get() as usize);
     let consumed = Arc::new(AtomicU64::new(0));
     let mut ended = false;
     while current(shared, request) {
@@ -316,7 +328,8 @@ fn play_request(shared: &Shared, request: &Request) -> Result<(), Failure> {
             thread::sleep(Duration::from_millis(10));
             continue;
         }
-        let samples: Vec<f32> = decoder.by_ref().take(count).collect();
+        let mut samples: Vec<f32> = decoder.by_ref().take(count).collect();
+        equalizer.process(&mut samples);
         if let Some(error) = *fault.lock().unwrap() {
             return Err(Failure::Provider(error));
         }

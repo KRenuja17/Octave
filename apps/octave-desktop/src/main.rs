@@ -12,6 +12,7 @@ mod live;
 mod lyrics_ui;
 mod model;
 mod output_ui;
+mod paths;
 mod playlist_ui;
 mod playlists;
 mod prototype;
@@ -91,11 +92,17 @@ fn main() -> eframe::Result {
                 screenshot_requested: false,
                 capture_scroll: std::env::args().any(|s| s == "--capture-scroll"),
                 smoke,
+                stress_seconds: argument("--stress-seconds")
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .map(|s| s.clamp(1, 3600)),
+                started: std::time::Instant::now(),
             }))
         }),
     )
 }
 struct Application {
+    stress_seconds: Option<u64>,
+    started: std::time::Instant,
     prototype: Prototype,
     frames: u32,
     capture: Option<String>,
@@ -105,7 +112,9 @@ struct Application {
 }
 impl eframe::App for Application {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
-        if self.capture.is_some() && self.capture_scroll && (25..32).contains(&self.frames) {
+        if self.stress_seconds.is_some()
+            || (self.capture.is_some() && self.capture_scroll && (25..32).contains(&self.frames))
+        {
             let rect = input.screen_rect.unwrap_or(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(350.0, 450.0),
@@ -120,6 +129,19 @@ impl eframe::App for Application {
         }
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if let Some(seconds) = self.stress_seconds {
+            self.prototype.page = match (self.started.elapsed().as_secs() / 5) % 9 {
+                0 => Page::Home,
+                1 => Page::Library,
+                2 => Page::Search,
+                value => Page::Collection((value - 3) as usize),
+            };
+            if self.started.elapsed().as_secs() >= seconds {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+            }
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(16));
+        }
         self.prototype.render(ui);
         self.frames += 1;
         if self.frames == 1 {

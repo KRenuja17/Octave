@@ -6,6 +6,10 @@ pub const TEXT: Color32 = Color32::from_rgb(235, 239, 229);
 pub const MUTED: Color32 = Color32::from_rgb(159, 174, 174);
 pub const ACCENT: Color32 = Color32::from_rgb(198, 236, 163);
 pub fn install(ctx: &egui::Context) {
+    apply(ctx, 0);
+    install_fonts(ctx);
+}
+pub fn apply(ctx: &egui::Context, appearance: u8) {
     let mut style = (*ctx.style_of(egui::Theme::Dark)).clone();
     style.visuals = egui::Visuals::dark();
     style.visuals.panel_fill = BG;
@@ -38,8 +42,29 @@ pub fn install(ctx: &egui::Context) {
         TextStyle::Small,
         FontId::new(12.0, FontFamily::Proportional),
     );
-    ctx.set_theme(egui::Theme::Dark);
-    ctx.set_style_of(egui::Theme::Dark, style);
+    let theme = if appearance == 1 {
+        egui::Theme::Light
+    } else {
+        egui::Theme::Dark
+    };
+    if appearance == 1 {
+        style.visuals = egui::Visuals::light();
+        style.visuals.panel_fill = Color32::from_rgb(244, 246, 240);
+        style.visuals.override_text_color = Some(Color32::from_rgb(24, 31, 26));
+        style.visuals.selection.bg_fill = Color32::from_rgb(178, 207, 159);
+    } else if appearance == 2 {
+        style.visuals.panel_fill = Color32::BLACK;
+        style.visuals.window_fill = Color32::BLACK;
+        style.visuals.extreme_bg_color = Color32::BLACK;
+        style.visuals.override_text_color = Some(Color32::WHITE);
+        style.visuals.weak_text_color = Some(Color32::from_gray(220));
+        style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
+        style.visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, Color32::WHITE);
+    }
+    ctx.set_theme(theme);
+    ctx.set_style_of(theme, style);
+}
+fn install_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
     // Read installed Windows fonts; never redistribute operating-system font files.
     for (name, path, primary) in [

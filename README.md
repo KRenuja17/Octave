@@ -32,7 +32,20 @@ to System default but does not apply it until you click the apply button.
 
 An explicitly selected device is never silently replaced with a different device.
 If it disconnects, refresh/select another output and resume. Automatic hot-plug
-handoff, remembered device preferences and EQ are not implemented yet.
+handoff and remembered device preferences are not implemented yet.
+
+## Expansion: sound and appearance
+
+Open **Sound and appearance** to adjust the 100 Hz, 1 kHz and 10 kHz EQ bands
+between -12 and +12 dB. **Apply equalizer** retains the position and stops
+playback; Resume applies the new settings. Positive gains automatically reduce
+input gain for headroom. Flat EQ bypasses processing. Filtering runs on the
+decode worker, with independent state for each channel.
+
+Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
+alongside listening state. This upgrades the listening database from schema 1 to
+2 transactionally. Back up the profile before upgrading if you may need an older
+binary: older versions cannot read schema 2 and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
 `VIDEO_ID --muted-output --output-index 0` for a muted pause/seek/resume and
@@ -117,6 +130,10 @@ the location with `--data-dir ABSOLUTE_DIRECTORY` (also useful for QA profiles).
 The database stores track metadata and settings, never signed stream URLs,
 credentials, or audio. Newer unknown database versions are left untouched.
 Storage failures are shown in the window; do not assume changes were saved then.
+On macOS the default directory is `~/Library/Application Support/Octave`; on
+Linux it is `$XDG_DATA_HOME/octave` (when absolute), or `~/.local/share/octave`.
+Linux/macOS CI build jobs are prepared; builds and native integration on those
+platforms still require verification.
 
 ## Build
 
@@ -219,6 +236,14 @@ probe checks AAC decoding and forward/backward seeks, including 20 minutes when
 the track is long enough. `--output` additionally emits a brief audio sample and
 checks pause, paused seeking, resume and stop on the default output device.
 Probes do not save media, signed URLs, credentials or raw service responses.
+
+The decoder probe also accepts `--eq-test` for the muted output checks and
+`--full-decode` for unpaced decoding of an accessible full track. Run
+`cargo run -p octave-player --example long_stream --release --locked` for an
+account-free synthetic one-hour PCM decode. It generates input on demand and
+checks sample count and bounded read requests; it does not validate one hour of
+network AAC playback or physical output. `packaging/Measure-Release.ps1 -Active`
+rotates fixture pages and scrolls for repeatable artwork/browsing measurements.
 
 ## Code boundaries
 

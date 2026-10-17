@@ -20,6 +20,8 @@ impl Repeat {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
+    pub equalizer: octave_player::Equalizer,
+    pub appearance: u8,
     pub queue: Vec<Track>,
     pub cursor: usize,
     pub position: f64,
@@ -29,6 +31,8 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self {
+            equalizer: octave_player::Equalizer::default(),
+            appearance: 0,
             queue: Vec::new(),
             cursor: 0,
             position: 0.0,

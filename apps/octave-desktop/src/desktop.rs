@@ -3,6 +3,7 @@ use octave_core::Track;
 use octave_player::{PlaybackState, Snapshot};
 use std::time::Duration;
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))] // Only the Windows backend currently constructs native commands.
 pub enum Command {
     Play,
     Pause,
