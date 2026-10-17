@@ -203,6 +203,30 @@ mod tests {
     }
 
     #[test]
+    fn large_virtual_media_reads_only_one_block_near_end() {
+        let length = 1024 * 1024 * 1024_u64;
+        let offset = length - BLOCK;
+        let header = format!("bytes {offset}-{}/{length}", length - 1);
+        let (mut reader, server) = server_reader(
+            "206 Partial Content",
+            &header,
+            vec![7; BLOCK as usize],
+            length,
+        );
+        reader.seek(SeekFrom::Start(offset)).unwrap();
+        let mut sample = [0; 4096];
+        reader.read_exact(&mut sample).unwrap();
+        assert_eq!(sample, [7; 4096]);
+        assert_eq!(reader.bytes.len(), BLOCK as usize);
+        assert!(
+            server
+                .join()
+                .unwrap()
+                .to_lowercase()
+                .contains(&format!("range: bytes={offset}-{}", length - 1))
+        );
+    }
+    #[test]
     fn rejects_full_download_wrong_ranges_and_truncation() {
         for (status, header, body, expected) in [
             (

@@ -57,6 +57,37 @@ fn run() -> Result<(), String> {
         channels,
         duration.as_secs()
     );
+    if args.iter().any(|arg| arg == "--full-decode") {
+        let mut samples = 0_u64;
+        let deadline = Instant::now() + Duration::from_secs(900);
+        for sample in decoder.by_ref() {
+            if !sample.is_finite() {
+                return Err("Non-finite PCM".into());
+            }
+            samples += 1;
+            if samples.is_multiple_of(u64::from(rate) * u64::from(channels) * 60) {
+                println!(
+                    "decoded_seconds={}",
+                    samples / u64::from(rate) / u64::from(channels)
+                );
+                if Instant::now() > deadline {
+                    return Err("Full decode exceeded 15-minute workload limit".into());
+                }
+            }
+        }
+        if let Some(error) = *fault.lock().unwrap() {
+            return Err(error.to_string());
+        }
+        let seconds = samples / u64::from(rate) / u64::from(channels);
+        if seconds + 2 < duration.as_secs() {
+            return Err("Early decoder EOF".into());
+        }
+        println!(
+            "full_decode=passed decoded_seconds={seconds} elapsed_ms={}",
+            start.elapsed().as_millis()
+        );
+        return Ok(());
+    }
     for seconds in [0, 60, 5, 1200, 5] {
         if seconds >= duration.as_secs() {
             continue;
@@ -90,7 +121,12 @@ fn run() -> Result<(), String> {
         } else {
             None
         };
-        output_probe(id, device, args.iter().any(|arg| arg == "--muted-output"))?;
+        output_probe(
+            id,
+            device,
+            args.iter().any(|arg| arg == "--muted-output"),
+            args.iter().any(|arg| arg == "--eq-test"),
+        )?;
     }
     Ok(())
 }
@@ -117,16 +153,30 @@ fn output_probe(
     id: String,
     device: Option<octave_player::OutputDevice>,
     muted: bool,
+    eq_test: bool,
 ) -> Result<(), String> {
     use octave_player::{PlaybackState, Player};
     let player = Player::new();
     player.set_output_device(device);
+    if eq_test {
+        player.set_equalizer(octave_player::Equalizer {
+            gains_db: [6.0, -3.0, 2.0],
+        });
+    }
     if muted {
         player.set_volume(0.0);
     }
     player.play(TrackId(id.clone()));
     wait_for(&player, |s| {
         matches!(s.state, PlaybackState::Playing(_)) && s.position >= Duration::from_secs(1)
+    })?;
+    for seconds in [60, 5, 120, 10, 5] {
+        player.seek(Duration::from_secs(seconds));
+    }
+    wait_for(&player, |s| {
+        matches!(s.state, PlaybackState::Playing(_))
+            && s.position >= Duration::from_secs(6)
+            && s.position < Duration::from_secs(10)
     })?;
     player.toggle_pause();
     wait_for(&player, |s| matches!(s.state, PlaybackState::Paused(_)))?;
