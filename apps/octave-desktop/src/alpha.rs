@@ -45,6 +45,8 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    transition_sequence: u64,
+    crossfade_draft: u8,
     eq_draft: octave_player::Equalizer,
     applied_appearance: Option<u8>,
     playlists: Option<crate::playlist_ui::PlaylistsUi>,
@@ -82,6 +84,8 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            transition_sequence: 0,
+            crossfade_draft: 0,
             eq_draft: octave_player::Equalizer::default(),
             applied_appearance: None,
             playlists: None,
@@ -118,6 +122,7 @@ impl Alpha {
         }
     }
     fn start(&mut self, reset_retry: bool) {
+        self.transition_sequence = 0;
         if let Some(track) = self.session.current() {
             self.player.play_at(
                 track.id.clone(),
@@ -188,6 +193,8 @@ impl Alpha {
                     self.session = session;
                     self.eq_draft = self.session.equalizer;
                     self.player.set_equalizer(self.session.equalizer);
+                    self.crossfade_draft = self.session.crossfade;
+                    self.player.set_crossfade(self.session.crossfade);
                     self.saved = self.session.clone();
                     self.player.set_volume(self.session.volume);
                     self.loaded = true;
@@ -229,6 +236,8 @@ impl Alpha {
         }
         let snapshot = self.player.snapshot();
         self.observe(snapshot);
+        self.player
+            .prepare_next(self.session.upcoming().map(|t| t.id.clone()));
         if self.retry_at.is_some_and(|t| Instant::now() >= t) {
             self.start(false);
         }
@@ -241,6 +250,32 @@ impl Alpha {
         }
     }
     fn observe(&mut self, snapshot: Snapshot) {
+        if snapshot.sequence > self.transition_sequence {
+            let id = match &snapshot.state {
+                PlaybackState::Playing(id)
+                | PlaybackState::Paused(id)
+                | PlaybackState::Ended(id)
+                | PlaybackState::Failed(id, _) => Some(id),
+                _ => None,
+            };
+            if let Some(cursor) =
+                id.and_then(|id| self.session.queue.iter().position(|t| &t.id == id))
+            {
+                self.session.cursor = cursor;
+                self.transition_sequence = snapshot.sequence;
+                self.retry_count = 0;
+                self.retry_at = None;
+                self.failure_seen = false;
+                self.ended_seen = false;
+                self.seek = None;
+            } else {
+                self.halt();
+                return;
+            }
+        } else if snapshot.sequence == 0 {
+            // Explicit seek starts a fresh playback generation.
+            self.transition_sequence = 0;
+        }
         let same_track = match &snapshot.state {
             PlaybackState::Idle => false,
             PlaybackState::Loading(id)
@@ -465,6 +500,15 @@ impl Alpha {
         egui::CollapsingHeader::new("Sound and appearance")
             .default_open(crate::argument("--page").as_deref()==Some("settings"))
             .show(ui, |ui| {
+                ui.label("Track transitions");
+                ui.add(egui::Slider::new(&mut self.crossfade_draft, 0..=5).suffix(" s").text("Crossfade (0 = gapless)"));
+                if ui.button("Apply transition").clicked() {
+                    self.halt_at_current_position();
+                    self.session.crossfade = self.crossfade_draft.min(5);
+                    self.player.set_crossfade(self.session.crossfade);
+                    self.message = "Transition saved. Press Resume when ready.".into();
+                }
+                ui.weak("Next-track preparation is bounded. Unavailable tracks use normal queue recovery; different formats use a gapless join.");
                 ui.label("Three-band equalizer");
                 for (index,label) in ["Bass · 100 Hz", "Mid · 1 kHz", "Treble · 10 kHz"].into_iter().enumerate() {
                     ui.add(egui::Slider::new(&mut self.eq_draft.gains_db[index],-12.0..=12.0).suffix(" dB").text(label));
@@ -1033,6 +1077,57 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
     #[test]
+    fn transition_updates_queue_once_and_repeated_track_resets_recovery() {
+        let path = path("transitions");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.add(track(2), false);
+        app.retry_count = 2;
+        app.observe(Snapshot {
+            sequence: 1,
+            state: PlaybackState::Playing(track(2).id),
+            position: Duration::from_millis(250),
+            duration: Duration::from_secs(180),
+        });
+        assert_eq!(app.session.cursor, 1);
+        assert_eq!(app.retry_count, 0);
+        assert_eq!(app.session.position, 0.25);
+        app.session.repeat = Repeat::One;
+        app.observe(Snapshot {
+            sequence: 2,
+            state: PlaybackState::Paused(track(2).id),
+            position: Duration::from_millis(100),
+            duration: Duration::from_secs(180),
+        });
+        assert_eq!(app.session.cursor, 1);
+        assert_eq!(app.session.position, 0.1);
+        app.observe(Snapshot {
+            sequence: 0,
+            state: PlaybackState::Loading(track(2).id),
+            position: Duration::from_secs(15),
+            duration: Duration::from_secs(180),
+        });
+        assert_eq!(app.transition_sequence, 0);
+        app.crossfade_draft = 3;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Sound and appearance");
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        click(&ctx, &mut app, "Apply transition");
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        assert_eq!(app.session.crossfade, 3);
+        drop(app);
+        let restored = loaded(path.clone());
+        assert_eq!(restored.session.crossfade, 3);
+        assert_eq!(restored.player.snapshot().state, PlaybackState::Idle);
+        drop(restored);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn restart_restores_queue_position_and_volume_without_audio() {
         let path = path("restart");
         let mut app = loaded(path.clone());
@@ -1058,6 +1153,7 @@ mod tests {
         app.add(track(2), false);
         let queue = app.session.queue.clone();
         let failed = Snapshot {
+            sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::Timeout)),
             position: Duration::from_secs(42),
             duration: Duration::from_secs(180),
@@ -1085,6 +1181,7 @@ mod tests {
         assert_eq!(app.session.position, 42.0);
         app.failure_seen = false;
         app.observe(Snapshot {
+            sequence: 0,
             state: PlaybackState::Failed(track(2).id, Failure::Provider(Error::Timeout)),
             position: Duration::ZERO,
             duration: Duration::ZERO,
@@ -1096,6 +1193,7 @@ mod tests {
         app.retry_count = 0;
         app.failure_seen = false;
         app.observe(Snapshot {
+            sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::SignInRequired)),
             position: Duration::from_secs(42),
             duration: Duration::ZERO,

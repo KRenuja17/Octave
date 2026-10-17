@@ -20,6 +20,7 @@ impl Repeat {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
+    pub crossfade: u8,
     pub equalizer: octave_player::Equalizer,
     pub appearance: u8,
     pub queue: Vec<Track>,
@@ -31,6 +32,7 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self {
+            crossfade: 0,
             equalizer: octave_player::Equalizer::default(),
             appearance: 0,
             queue: Vec::new(),
@@ -42,6 +44,18 @@ impl Default for Session {
     }
 }
 impl Session {
+    /// The entry that automatic completion would select, without changing the cursor.
+    pub fn upcoming(&self) -> Option<&Track> {
+        if self.repeat == Repeat::One {
+            self.current()
+        } else {
+            self.queue.get(self.cursor + 1).or_else(|| {
+                (self.repeat == Repeat::All)
+                    .then(|| self.queue.first())
+                    .flatten()
+            })
+        }
+    }
     pub fn current(&self) -> Option<&Track> {
         self.queue.get(self.cursor)
     }
@@ -170,13 +184,16 @@ mod tests {
         s.append(track(1), false);
         s.append(track(2), false);
         s.repeat = Repeat::One;
+        assert_eq!(s.upcoming(), Some(&track(1)));
         assert!(s.advance(true));
         assert_eq!(s.cursor, 0);
         assert!(s.advance(false));
         assert_eq!(s.cursor, 1);
         s.repeat = Repeat::Off;
+        assert_eq!(s.upcoming(), None);
         assert!(!s.advance(true));
         s.repeat = Repeat::All;
+        assert_eq!(s.upcoming(), Some(&track(1)));
         assert!(s.advance(true));
         assert_eq!(s.cursor, 0);
     }

@@ -36,6 +36,27 @@ handoff and remembered device preferences are not implemented yet.
 
 ## Expansion: sound and appearance
 
+**Sound and appearance → Track transitions** defaults to gapless playback.
+Set Crossfade to 1–5 seconds and choose **Apply transition** to save it. Applying
+stops playback and retains position; Resume uses the new setting. Automatic queue
+advance and repeat use prepared audio on the same output device. Manual skip and
+seek remain immediate cancellation/restart actions.
+
+A second worker prepares only the upcoming track, including at most 5.1 seconds
+of PCM. The playback worker retains at most five seconds of outgoing audio for a
+linear crossfade. Short tracks overlap by at most half their length. Gains sum to
+one to avoid boosting identical signals. The incoming track becomes current when
+its first samples are consumed, including the overlap; its position includes that
+overlap. Different sample rates/channel counts use a continuous queued join
+without a fade. If preparation is unavailable or fails, the outgoing track plays
+fully and normal queue advance/retry handles the next track. Source-encoded silence
+and network underruns can still be audible; this is not silence removal.
+
+Queue edits invalidate obsolete preparation. If a transition was already queued
+but has not become current, changing its target restarts the current track at the
+retained position to retract obsolete audio. Pausing freezes both sides of a fade;
+Stop, seek, output changes and EQ changes cancel pending transitions.
+
 Open **Sound and appearance** to adjust the 100 Hz, 1 kHz and 10 kHz EQ bands
 between -12 and +12 dB. **Apply equalizer** retains the position and stops
 playback; Resume applies the new settings. Positive gains automatically reduce
@@ -43,9 +64,10 @@ input gain for headroom. Flat EQ bypasses processing. Filtering runs on the
 decode worker, with independent state for each channel.
 
 Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
-alongside listening state. This upgrades the listening database from schema 1 to
-2 transactionally. Back up the profile before upgrading if you may need an older
-binary: older versions cannot read schema 2 and database downgrade is unsupported.
+alongside listening state. Transition settings upgrade the listening database to
+schema 3, preserving earlier sound/theme settings. Back up the profile before
+upgrading if you may need an older binary: older versions cannot read schema 3
+and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
 `VIDEO_ID --muted-output --output-index 0` for a muted pause/seek/resume and
@@ -249,16 +271,24 @@ rotates fixture pages and scrolls for repeatable artwork/browsing measurements.
 
 - `octave-core`: application models and redacted diagnostics.
 - `octave-provider`: unsigned search/resolution and seekable HTTP ranges.
-- `octave-player`: one decode worker and a bounded PCM queue feeding rodio.
+- `octave-player`: playback and next-track preparation workers with bounded PCM feeding rodio.
 - `octave-desktop`: native listening UI, queue state, SQLite worker, debounced
   search worker, and the separate fixture prototype and feasibility preview.
 
-Network and decoding work stays off the UI and audio callback. The transport
-retains one 256 KiB payload block, independent of track duration. Playback queues
-at most three roughly 100 ms PCM blocks plus one block being decoded. The audio
+Network and decoding work stays off the UI and audio callback. Each of the active
+and upcoming transports retains one 256 KiB payload block, independent of track
+duration. Ordinary playback queues three roughly 100 ms PCM blocks. Transitions
+add bounded outgoing tail, incoming head and mixed PCM buffers of up to five
+seconds each (plus a 100 ms block), never whole tracks. The audio
 callback reads PCM only. New commands replace pending work; generation checks
 reject stale audio and results. In-flight HTTP work may take up to its 12-second
 timeout to relinquish the worker, while stop silences queued audio immediately.
+
+`cargo run -p octave-player --example transitions --release --locked -- VIDEO_ID`
+runs an opt-in muted gapless/crossfade probe by repeating an accessible track from
+near its end. It also checks pause, paused seek and stop after transition. Offline
+tests verify exact PCM joins, fade curves, short-track bounds, format fallback,
+missing preparation, queue edits, repeat state and preference migration.
 
 ## Playback limitations
 

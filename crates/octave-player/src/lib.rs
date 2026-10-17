@@ -1,6 +1,8 @@
-//! One playback worker, bounded PCM queue, and generation-based cancellation.
+//! Playback and next-track preparation workers, bounded PCM, and generation cancellation.
 mod devices;
 mod equalizer;
+mod playback;
+mod transition;
 pub use devices::{OutputDevice, output_devices};
 pub use equalizer::Equalizer;
 use octave_core::TrackId;
@@ -51,6 +53,8 @@ impl std::fmt::Display for Failure {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    /// Increments when prepared audio for another queue entry starts being consumed.
+    pub sequence: u64,
     pub state: PlaybackState,
     pub position: Duration,
     pub duration: Duration,
@@ -65,6 +69,8 @@ struct Request {
 }
 #[derive(Default)]
 struct Shared {
+    preparation: Mutex<transition::Preparation>,
+    crossfade: AtomicU32,
     equalizer: Mutex<Equalizer>,
     generation: Arc<AtomicU64>,
     pending: Mutex<Option<Request>>,
@@ -90,10 +96,55 @@ impl Player {
         shared.volume.store(0.7_f32.to_bits(), Ordering::Release);
         let worker = shared.clone();
         thread::spawn(move || work(worker));
+        let worker = shared.clone();
+        thread::spawn(move || transition::work(worker));
         Self { shared }
     }
     pub fn play(&self, id: TrackId) {
         self.request(id, Duration::ZERO, false, Duration::ZERO);
+    }
+    /// Zero selects gapless; 1..=5 selects a linear crossfade. Apply stops playback.
+    pub fn set_crossfade(&self, seconds: u8) {
+        self.stop();
+        self.shared.crossfade.store(
+            u32::from(seconds.min(transition::MAX_FADE)),
+            Ordering::Release,
+        );
+    }
+    /// Queue owner supplies the next entry, including repeat semantics. No autoplay from Idle.
+    pub fn prepare_next(&self, next: Option<TrackId>) {
+        let snapshot = self.snapshot();
+        let active = matches!(
+            snapshot.state,
+            PlaybackState::Loading(_) | PlaybackState::Playing(_) | PlaybackState::Paused(_)
+        );
+        let plan = next.filter(|_| active).map(|next| transition::Plan {
+            generation: self.shared.generation.load(Ordering::Acquire),
+            sequence: snapshot.sequence,
+            next,
+            seconds: self.shared.crossfade.load(Ordering::Acquire) as u8,
+        });
+        let mut preparation = self.shared.preparation.lock().unwrap();
+        let retract = preparation.committed.as_ref().is_some_and(|committed| {
+            committed.sequence == snapshot.sequence && Some(committed) != plan.as_ref()
+        });
+        if retract {
+            drop(preparation);
+            if let PlaybackState::Playing(id) | PlaybackState::Paused(id) = snapshot.state {
+                self.request(
+                    id,
+                    snapshot.position,
+                    self.shared.paused.load(Ordering::Acquire),
+                    snapshot.duration,
+                );
+            }
+        } else {
+            preparation.set(plan);
+        }
+    }
+    /// A preparation failure never interrupts current audio; queue advance retries normally.
+    pub fn preparation_failure(&self) -> Option<Failure> {
+        self.shared.preparation.lock().unwrap().failure.clone()
     }
     /// Apply on the next explicit play; cancel old PCM to avoid abrupt filter changes.
     pub fn set_equalizer(&self, settings: Equalizer) {
@@ -141,11 +192,13 @@ impl Player {
     fn request(&self, id: TrackId, offset: Duration, paused: bool, duration: Duration) {
         let mut pending = self.shared.pending.lock().unwrap();
         let generation = self.shared.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        self.shared.preparation.lock().unwrap().set(None);
         if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
             output.stop();
         }
         self.shared.paused.store(paused, Ordering::Release);
         *self.shared.snapshot.lock().unwrap() = Snapshot {
+            sequence: 0,
             state: PlaybackState::Loading(id.clone()),
             position: offset,
             duration,
@@ -171,6 +224,7 @@ impl Player {
     pub fn stop(&self) {
         let mut pending = self.shared.pending.lock().unwrap();
         self.shared.generation.fetch_add(1, Ordering::AcqRel);
+        self.shared.preparation.lock().unwrap().set(None);
         *pending = None;
         if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
             output.stop();
@@ -201,10 +255,14 @@ fn work(shared: Arc<Shared>) {
     while !shared.closed.load(Ordering::Acquire) {
         let request = shared.pending.lock().unwrap().take();
         if let Some(request) = request {
-            if let Err(message) = play_request(&shared, &request) {
+            if let Err(message) = playback::play(&shared, &request) {
                 let mut snapshot = shared.snapshot.lock().unwrap();
                 if current(&shared, &request) {
-                    snapshot.state = PlaybackState::Failed(request.id.clone(), message);
+                    let id = match &snapshot.state {
+                        PlaybackState::Playing(id) | PlaybackState::Paused(id) => id.clone(),
+                        _ => request.id.clone(),
+                    };
+                    snapshot.state = PlaybackState::Failed(id, message);
                 }
             }
             *shared.output.lock().unwrap() = None;
@@ -212,141 +270,6 @@ fn work(shared: Arc<Shared>) {
             thread::sleep(Duration::from_millis(15));
         }
     }
-}
-fn play_request(shared: &Shared, request: &Request) -> Result<(), Failure> {
-    let provider = Provider::new().map_err(Failure::Provider)?;
-    let stream = provider
-        .resolve_cancellable(&request.id, || !current(shared, request))
-        .map_err(Failure::Provider)?;
-    if !current(shared, request) {
-        return Ok(());
-    }
-    let duration = stream.duration;
-    let length = stream.content_length;
-    let reader = RangeReader::new(
-        provider,
-        stream,
-        shared.generation.clone(),
-        request.generation,
-    );
-    let fault = reader.fault();
-    let mut decoder = Decoder::builder()
-        .with_data(reader)
-        .with_byte_len(length)
-        .with_seekable(true)
-        .with_hint("m4a")
-        .build()
-        .map_err(|_| transport_error(&fault, "Audio decoder could not open this stream."))?;
-    let offset = request
-        .offset
-        .min(duration.saturating_sub(Duration::from_millis(100)));
-    if !offset.is_zero() {
-        decoder
-            .try_seek(offset)
-            .map_err(|_| transport_error(&fault, "Seeking this stream failed."))?;
-    }
-    if !current(shared, request) {
-        return Ok(());
-    }
-    let device_failed = Arc::new(AtomicBool::new(false));
-    let callback_failed = device_failed.clone();
-    let builder = match &request.device {
-        Some(selected) => rodio::DeviceSinkBuilder::from_device(selected.device.clone()),
-        None => rodio::DeviceSinkBuilder::from_default_device(),
-    };
-    let mut device = builder
-        .map_err(|_| Failure::Audio("No usable audio output device is available."))?
-        .with_error_callback(move |_| {
-            callback_failed.store(true, Ordering::Release);
-        })
-        .open_sink_or_fallback()
-        .map_err(|_| Failure::Audio("No usable audio output device is available."))?;
-    device.log_on_drop(false);
-    let output = Arc::new(rodio::Player::connect_new(device.mixer()));
-    {
-        let mut active = shared.output.lock().unwrap();
-        output.set_volume(f32::from_bits(shared.volume.load(Ordering::Acquire)));
-        *active = Some(output.clone());
-    }
-    let channels = decoder.channels();
-    let rate = decoder.sample_rate();
-    if channels.get() > 8 || rate.get() > 192000 {
-        return Err(Failure::Audio(
-            "Unsupported audio channel count or sample rate.",
-        ));
-    }
-    let count = (rate.get() as usize / 10) * channels.get() as usize;
-    let mut equalizer =
-        equalizer::Processor::new(request.equalizer, rate.get(), channels.get() as usize);
-    let consumed = Arc::new(AtomicU64::new(0));
-    let mut ended = false;
-    while current(shared, request) {
-        if device_failed.load(Ordering::Acquire) {
-            return Err(Failure::Audio(
-                "The audio output device disconnected or failed. Select an output and retry.",
-            ));
-        }
-        let paused = shared.paused.load(Ordering::Acquire);
-        if paused {
-            output.pause();
-        } else {
-            output.play();
-        }
-        let position = offset
-            + Duration::from_secs_f64(
-                consumed.load(Ordering::Relaxed) as f64
-                    / f64::from(rate.get())
-                    / f64::from(channels.get()),
-            );
-        // The decoder iterator hides codec errors, so reject an early EOF after
-        // all queued PCM has drained rather than reporting a successful finish.
-        if ended && output.empty() && position + Duration::from_secs(2) < duration {
-            return Err(Failure::Audio(
-                "Audio ended before the advertised duration. Retry playback.",
-            ));
-        }
-        let state = if ended && output.empty() {
-            PlaybackState::Ended(request.id.clone())
-        } else if paused {
-            PlaybackState::Paused(request.id.clone())
-        } else {
-            PlaybackState::Playing(request.id.clone())
-        };
-        publish(
-            shared,
-            request,
-            Snapshot {
-                state,
-                position: position.min(duration),
-                duration,
-            },
-        );
-        if ended && output.empty() {
-            break;
-        }
-        if paused || output.len() >= 3 || ended {
-            thread::sleep(Duration::from_millis(10));
-            continue;
-        }
-        let mut samples: Vec<f32> = decoder.by_ref().take(count).collect();
-        equalizer.process(&mut samples);
-        if let Some(error) = *fault.lock().unwrap() {
-            return Err(Failure::Provider(error));
-        }
-        if samples.is_empty() {
-            ended = true;
-        } else if current(shared, request) {
-            output.append(Gated {
-                inner: SamplesBuffer::new(channels, rate, samples),
-                generation: shared.generation.clone(),
-                expected: request.generation,
-                consumed: consumed.clone(),
-            });
-        }
-    }
-    output.stop();
-    drop(device);
-    Ok(())
 }
 fn transport_error(
     fault: &Arc<Mutex<Option<octave_provider::Error>>>,
@@ -393,6 +316,43 @@ impl Source for Gated {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn queue_edits_retract_committed_audio_and_stop_cancels_preparation() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        let id = TrackId("abcdefghijk".into());
+        player.play(id.clone());
+        *player.shared.snapshot.lock().unwrap() = Snapshot {
+            state: PlaybackState::Paused(id),
+            position: Duration::from_secs(10),
+            ..Default::default()
+        };
+        player.prepare_next(Some(TrackId("next".into())));
+        {
+            let mut p = player.shared.preparation.lock().unwrap();
+            p.committed = p.plan.clone();
+        }
+        let old = player.shared.generation.load(Ordering::Acquire);
+        player.prepare_next(Some(TrackId("replacement".into())));
+        assert!(player.shared.generation.load(Ordering::Acquire) > old);
+        assert_eq!(
+            player
+                .shared
+                .pending
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .offset,
+            Duration::from_secs(10)
+        );
+        player.prepare_next(Some(TrackId("replacement".into())));
+        player.stop();
+        assert!(player.shared.preparation.lock().unwrap().plan.is_none());
+        player.prepare_next(Some(TrackId("not autoplay".into())));
+        assert!(player.shared.preparation.lock().unwrap().plan.is_none());
+    }
     #[test]
     fn recovery_only_retries_transient_provider_failures() {
         use octave_provider::Error;
@@ -476,6 +436,7 @@ mod tests {
         player.play(id.clone());
         let old = player.shared.pending.lock().unwrap().clone().unwrap();
         *player.shared.snapshot.lock().unwrap() = Snapshot {
+            sequence: 0,
             state: PlaybackState::Playing(id),
             duration: Duration::from_secs(200),
             position: Duration::ZERO,

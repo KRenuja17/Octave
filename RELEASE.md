@@ -21,9 +21,9 @@ aside and rename the retained backup to `Octave`; rerun its installer from a
 separate extracted copy if shortcut/uninstall registration needs repair. Keep
 backups until the upgraded application has been tested. Never remove your listening
 profile as part of application rollback. Database downgrades are not implemented.
-The sound/theme update migrates listening schema 1 to 2. Back up the profile
+The transition update migrates listening schemas 1/2 to 3. Back up the profile
 before upgrading if rollback to an older binary may be needed; those binaries
-reject schema 2. Local playlists retain their separate database and format.
+reject schema 3. Local playlists retain their separate database and format.
 
 ## Signed update groundwork
 
