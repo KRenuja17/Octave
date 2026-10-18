@@ -45,6 +45,8 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    settings_page: bool,
+    playlists_page: bool,
     transition_sequence: u64,
     crossfade_draft: u8,
     eq_draft: octave_player::Equalizer,
@@ -84,6 +86,11 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            settings_page: matches!(
+                crate::argument("--page").as_deref(),
+                Some("settings" | "output" | "desktop")
+            ),
+            playlists_page: crate::argument("--page").as_deref() == Some("playlists"),
             transition_sequence: 0,
             crossfade_draft: 0,
             eq_draft: octave_player::Equalizer::default(),
@@ -109,7 +116,7 @@ impl Alpha {
             debounce: None,
             searching: false,
             search_message: String::new(),
-            queue_page: false,
+            queue_page: crate::argument("--page").as_deref() == Some("queue"),
             video_id: String::new(),
             message: String::new(),
             retry_at: None,
@@ -310,14 +317,25 @@ impl Alpha {
     }
     fn transport_snapshot(&mut self, ui: &mut egui::Ui, snapshot: Snapshot) {
         ui.add_space(8.0);
-        if let Some(track) = self.session.current() {
-            ui.add(
-                egui::Label::new(egui::RichText::new(&track.title).strong().size(18.0)).truncate(),
-            )
-            .on_hover_text(&track.title);
-            ui.weak(track.artists.join(" · "));
-        } else {
-            ui.strong("Your next listen starts here");
+        ui.horizontal(|ui| {
+            theme::record(ui, 46.0);
+            ui.add_space(8.0);
+            ui.vertical(|ui| {
+                if let Some(track) = self.session.current() {
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&track.title).strong().size(18.0))
+                            .truncate(),
+                    )
+                    .on_hover_text(&track.title);
+                    ui.weak(track.artists.join(" · "));
+                } else {
+                    ui.strong("Nothing playing yet");
+                    ui.weak("Your next listen starts with a search.");
+                }
+            });
+        });
+        if self.session.current().is_none() {
+            return;
         }
         ui.horizontal_wrapped(|ui| {
             if ui
@@ -446,11 +464,21 @@ impl Alpha {
     fn content(&mut self, ui: &mut egui::Ui) {
         ui.horizontal_wrapped(|ui| {
             ui.heading("Octave");
-            ui.weak("DESKTOP BETA PREVIEW");
+            if ui.available_width() > 700.0 {
+                ui.weak("Your listening room");
+            }
             if ui
-                .selectable_label(!self.queue_page && !self.account_page, "Search")
+                .selectable_label(
+                    !self.queue_page
+                        && !self.account_page
+                        && !self.settings_page
+                        && !self.playlists_page,
+                    "Search",
+                )
                 .clicked()
             {
+                self.settings_page = false;
+                self.playlists_page = false;
                 self.account_page = false;
                 self.queue_page = false;
             }
@@ -461,49 +489,87 @@ impl Alpha {
                 )
                 .clicked()
             {
+                self.settings_page = false;
+                self.playlists_page = false;
                 self.account_page = false;
                 self.queue_page = true;
             }
             if ui.selectable_label(self.account_page, "Account").clicked() {
+                self.settings_page = false;
+                self.playlists_page = false;
                 self.account_page = true;
             }
+            if ui
+                .selectable_label(self.playlists_page, "Playlists")
+                .clicked()
+            {
+                self.playlists_page = true;
+                self.settings_page = false;
+                self.account_page = false;
+                self.queue_page = false;
+            }
+            if ui
+                .selectable_label(self.settings_page, "Settings")
+                .clicked()
+            {
+                self.settings_page = true;
+                self.playlists_page = false;
+                self.account_page = false;
+                self.queue_page = false;
+            }
         });
-        ui.weak("Unsigned access · some songs require sign-in and cannot play in this alpha.");
-        if let Some(desktop) = &mut self.desktop {
-            egui::CollapsingHeader::new("Desktop settings")
-                .default_open(crate::argument("--page").as_deref() == Some("desktop"))
-                .show(ui, |ui| {
-                    ui.weak(&desktop.status);
-                    ui.add_enabled(
-                        desktop.can_hide(),
-                        egui::Checkbox::new(
-                            &mut desktop.close_to_tray,
-                            "Keep playing in tray when closing this window",
-                        ),
-                    );
-                    ui.weak(
+        ui.add_space(14.0);
+        ui.separator();
+        ui.add_space(16.0);
+        if self.applied_appearance != Some(self.session.appearance) {
+            theme::apply(ui.ctx(), self.session.appearance);
+            self.applied_appearance = Some(self.session.appearance);
+        }
+        if self.storage_failed {
+            ui.colored_label(
+                egui::Color32::LIGHT_RED,
+                "Local storage is unavailable. Changes may not be saved.",
+            );
+        }
+        if self.settings_page {
+            ui.heading("Make it yours.");
+            ui.weak("Sound, appearance and desktop preferences.");
+            ui.add_space(18.0);
+            if let Some(desktop) = &mut self.desktop {
+                egui::CollapsingHeader::new("Desktop settings")
+                    .default_open(crate::argument("--page").as_deref() == Some("desktop"))
+                    .show(ui, |ui| {
+                        ui.weak(&desktop.status);
+                        ui.add_enabled(
+                            desktop.can_hide(),
+                            egui::Checkbox::new(
+                                &mut desktop.close_to_tray,
+                                "Keep playing in tray when closing this window",
+                            ),
+                        );
+                        ui.weak(
                     "This setting lasts until Quit. Use the tray menu to show the window again.",
                 );
-                    if ui.button("Quit Octave").clicked() {
-                        self.quitting = true;
-                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                    }
-                });
-        }
-        if !self.loaded {
-            ui.spinner();
-            ui.label("Restoring your queue…");
-            return;
-        }
-        let selected_output = egui::CollapsingHeader::new("Audio output")
-            .default_open(crate::argument("--page").as_deref() == Some("output"))
-            .show(ui, |ui| self.output_ui.render(ui))
-            .body_returned
-            .flatten();
-        if let Some(device) = selected_output {
-            self.change_output(device);
-        }
-        egui::CollapsingHeader::new("Sound and appearance")
+                        if ui.button("Quit Octave").clicked() {
+                            self.quitting = true;
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    });
+            }
+            if !self.loaded {
+                ui.spinner();
+                ui.label("Restoring your queue…");
+                return;
+            }
+            let selected_output = egui::CollapsingHeader::new("Audio output")
+                .default_open(crate::argument("--page").as_deref() == Some("output"))
+                .show(ui, |ui| self.output_ui.render(ui))
+                .body_returned
+                .flatten();
+            if let Some(device) = selected_output {
+                self.change_output(device);
+            }
+            egui::CollapsingHeader::new("Sound and appearance")
             .default_open(crate::argument("--page").as_deref()==Some("settings"))
             .show(ui, |ui| {
                 ui.label("Track transitions");
@@ -534,29 +600,46 @@ impl Alpha {
                 });
                 ui.weak("EQ and appearance are saved with your listening settings.");
             });
-        if self.applied_appearance != Some(self.session.appearance) {
-            theme::apply(ui.ctx(), self.session.appearance);
-            self.applied_appearance = Some(self.session.appearance);
+            if self.applied_appearance != Some(self.session.appearance) {
+                theme::apply(ui.ctx(), self.session.appearance);
+                self.applied_appearance = Some(self.session.appearance);
+            }
+            if !self.message.is_empty() {
+                ui.weak(&self.message);
+            }
+            return;
         }
-        let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
-            .default_open(crate::argument("--page").as_deref() == Some("playlists"))
-            .show(ui, |ui| {
-                self.playlists
-                    .get_or_insert_with(|| {
-                        crate::playlist_ui::PlaylistsUi::new(self.playlists_path.clone())
-                    })
-                    .render(ui, &self.session.queue)
-            })
-            .body_returned
-            .flatten();
-        if let Some(tracks) = loaded_playlist {
-            self.halt();
-            self.session.queue = tracks;
-            self.session.cursor = 0;
-            self.session.position = 0.0;
-            self.queue_page = true;
-            self.account_page = false;
-            self.message = "Playlist loaded. Press Resume to start listening.".into();
+        if !self.loaded {
+            ui.spinner();
+            ui.label("Restoring your queue…");
+            return;
+        }
+        if self.playlists_page {
+            ui.heading("Collected for later.");
+            ui.weak("Your playlists, saved on this computer.");
+            ui.add_space(16.0);
+            let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
+                .default_open(true)
+                .show(ui, |ui| {
+                    self.playlists
+                        .get_or_insert_with(|| {
+                            crate::playlist_ui::PlaylistsUi::new(self.playlists_path.clone())
+                        })
+                        .render(ui, &self.session.queue)
+                })
+                .body_returned
+                .flatten();
+            if let Some(tracks) = loaded_playlist {
+                self.halt();
+                self.session.queue = tracks;
+                self.session.cursor = 0;
+                self.session.position = 0.0;
+                self.queue_page = true;
+                self.account_page = false;
+                self.message = "Playlist loaded. Press Resume to start listening.".into();
+                self.playlists_page = false;
+            }
+            return;
         }
         if self.account_page {
             let action = egui::ScrollArea::vertical()
@@ -580,8 +663,10 @@ impl Alpha {
             ui.colored_label(egui::Color32::LIGHT_RED, "Local storage is unavailable. This session may not survive restart; existing data has been left intact.");
         }
         ui.add_space(12.0);
-        self.lyrics
-            .render(ui, self.session.current().map(|t| &t.id));
+        if self.queue_page {
+            self.lyrics
+                .render(ui, self.session.current().map(|t| &t.id));
+        }
         if self.queue_page {
             ui.horizontal_wrapped(|ui| {
                 ui.heading("Up next");
@@ -594,12 +679,16 @@ impl Alpha {
                 ui.weak("Queue order and position are saved on this device.");
             });
         } else {
-            ui.heading("Find something to get lost in.");
+            ui.heading("Find your next obsession.");
+            ui.weak("Songs you know. Something new to love.");
+            ui.add_space(14.0);
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.query)
                     .id(egui::Id::new("alpha-search"))
                     .hint_text("Search YouTube Music")
                     .char_limit(512)
+                    .background_color(ui.visuals().widgets.inactive.bg_fill)
+                    .margin(egui::vec2(14.0, 12.0))
                     .desired_width(f32::INFINITY),
             );
             input.widget_info(|| {
@@ -686,10 +775,33 @@ impl Alpha {
         };
         if len == 0 {
             ui.add_space(24.0);
-            ui.label(if self.queue_page {
-                "Your queue is empty. Search for a song to begin."
-            } else {
-                "Search for songs, then play a result or build your queue."
+            ui.horizontal(|ui| {
+                theme::record(
+                    ui,
+                    if ui.available_width() > 700.0 {
+                        150.0
+                    } else {
+                        80.0
+                    },
+                );
+                ui.add_space(18.0);
+                ui.vertical(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(
+                        egui::RichText::new(if self.queue_page {
+                            "A little room for more."
+                        } else {
+                            "Start with a song."
+                        })
+                        .size(23.0),
+                    );
+                    ui.weak(if self.queue_page {
+                        "Search for a song and add it to your queue."
+                    } else {
+                        "Search an artist, a song, or a sound you love."
+                    });
+                    ui.weak("Ctrl+K to search");
+                });
             });
         }
         let mut action = None;
@@ -843,15 +955,29 @@ impl eframe::App for Alpha {
             }
         }
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
+            self.settings_page = false;
+            self.playlists_page = false;
             self.account_page = false;
             self.queue_page = false;
         }
-        egui::Panel::bottom("listening-player").show(ui, |ui| self.transport(ui));
-        egui::CentralPanel::default().show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("listening-content")
-                .show(ui, |ui| self.content(ui));
-        });
+        egui::Panel::bottom("listening-player")
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().window_fill)
+                    .inner_margin(egui::Margin::symmetric(24, 14)),
+            )
+            .show(ui, |ui| self.transport(ui));
+        egui::CentralPanel::default()
+            .frame(
+                egui::Frame::new()
+                    .fill(ui.visuals().panel_fill)
+                    .inner_margin(egui::Margin::symmetric(28, 20)),
+            )
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("listening-content")
+                    .show(ui, |ui| self.content(ui));
+            });
         self.frames += 1;
         if std::env::args().any(|s| s == "--smoke-test") && self.loaded && self.frames >= 3 {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1042,6 +1168,7 @@ mod tests {
         theme::install(&ctx);
         ctx.enable_accesskit();
         content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Settings");
         click(&ctx, &mut app, "Sound and appearance");
         for _ in 0..20 {
             content_frame(&ctx, &mut app, vec![]);
@@ -1069,6 +1196,7 @@ mod tests {
         theme::install(&ctx);
         ctx.enable_accesskit();
         content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Settings");
         click(&ctx, &mut app, "Audio output");
         // Settle the collapsing-header animation before locating the button.
         for _ in 0..20 {
@@ -1122,6 +1250,7 @@ mod tests {
         theme::install(&ctx);
         ctx.enable_accesskit();
         content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Settings");
         click(&ctx, &mut app, "Sound and appearance");
         for _ in 0..20 {
             content_frame(&ctx, &mut app, vec![]);
@@ -1219,6 +1348,7 @@ mod tests {
     fn listening_layout_and_text_input_work_at_narrow_sizes() {
         let path = path("layout");
         let mut app = loaded(path.clone());
+        app.add(track(1), false);
         let ctx = egui::Context::default();
         theme::install(&ctx);
         ctx.enable_accesskit();

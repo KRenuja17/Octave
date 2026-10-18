@@ -6,9 +6,15 @@ Windows media/tray integration and an experimental account library connection.
 The earlier silent native experience prototype is available with `--prototype`.
 Broader playback feasibility and authenticated playback remain deferred.
 
+The listening UI uses a blue-slate and brass palette, original vector record
+marks, and dedicated Search, Queue, Account, Playlists and Settings destinations.
+Dark, Light and High contrast remain available in Settings. Installed Georgia
+provides display headings on Windows, with bundled-font fallbacks elsewhere;
+operating-system font files are never redistributed.
+
 ## Expansion: local playlists
 
-Open **Local playlists**, enter a name, and **Save queue as new playlist**.
+Open **Playlists → Local playlists**, enter a name, and **Save queue as new playlist**.
 Select a saved playlist and **Load into queue** to replace the queue without
 autoplay. Reorder, remove or add songs with the existing Queue controls, then
 **Replace with queue** to save the edits. Rename uses the name field; deletion
@@ -23,7 +29,7 @@ previous snapshot. Backup this database along with your listening database.
 
 ## Expansion: audio output selection
 
-Open **Audio output**, choose **Refresh outputs**, select a device, then **Use
+Open **Settings → Audio output**, choose **Refresh outputs**, select a device, then **Use
 selected output**. Playback stops, the queue and current position remain, and
 **Resume** starts on the selected output. Selection lasts until Quit; startup
 uses **System default**. This does not change Windows settings. Enumeration runs
@@ -36,7 +42,7 @@ handoff and remembered device preferences are not implemented yet.
 
 ## Expansion: sound and appearance
 
-**Sound and appearance → Track transitions** defaults to gapless playback.
+**Settings → Sound and appearance → Track transitions** defaults to gapless playback.
 Set Crossfade to 1–5 seconds and choose **Apply transition** to save it. Applying
 stops playback and retains position; Resume uses the new setting. Automatic queue
 advance and repeat use prepared audio on the same output device. Manual skip and
