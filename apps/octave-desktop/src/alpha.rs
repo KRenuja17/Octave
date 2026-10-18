@@ -38,6 +38,10 @@ pub fn run() -> eframe::Result {
             }
             let mut app = Alpha::new(path);
             app.account_page = crate::argument("--page").as_deref() == Some("account");
+            if let Some(query) = crate::argument("--search") {
+                app.query = query.chars().take(512).collect();
+                app.debounce = Some(Instant::now());
+            }
             app.desktop = Some(crate::desktop::Desktop::new(cc));
             Ok(Box::new(app))
         }),
@@ -664,19 +668,13 @@ impl Alpha {
         }
         if self.playlists_page {
             ui.heading("Your playlists");
-            ui.weak("Your playlists, saved on this computer.");
             ui.add_space(16.0);
-            let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
-                .default_open(true)
-                .show(ui, |ui| {
-                    self.playlists
-                        .get_or_insert_with(|| {
-                            crate::playlist_ui::PlaylistsUi::new(self.playlists_path.clone())
-                        })
-                        .render(ui, &self.session.queue)
+            let loaded_playlist = self
+                .playlists
+                .get_or_insert_with(|| {
+                    crate::playlist_ui::PlaylistsUi::new(self.playlists_path.clone())
                 })
-                .body_returned
-                .flatten();
+                .render(ui, &self.session.queue);
             if let Some(tracks) = loaded_playlist {
                 self.halt();
                 self.session.queue = tracks;
@@ -735,7 +733,7 @@ impl Alpha {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.query)
                             .id(egui::Id::new("alpha-search"))
-                            .hint_text("Search songs, artists, albums")
+                            .hint_text("Search songs and artists")
                             .char_limit(512)
                             .background_color(ui.visuals().widgets.inactive.bg_fill)
                             .margin(egui::vec2(18.0, 12.0))
@@ -763,14 +761,104 @@ impl Alpha {
                 } else {
                     ui.weak(&self.search_message);
                 }
+                if !self.query.is_empty() && ui.button("Clear search").clicked() {
+                    self.query.clear();
+                    self.results.clear();
+                    self.search.invalidate();
+                    self.searching = false;
+                    self.search_message.clear();
+                    self.debounce = None;
+                }
                 if !self.query.trim().is_empty() && ui.button("Search again").clicked() {
                     self.search.invalidate();
                     self.search.submit(self.query.clone());
                     self.searching = true;
                     self.debounce = None;
                 }
+                ui.menu_button("Open a video ID", |ui| {
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.video_id)
+                                .hint_text("11-character video ID")
+                                .char_limit(11),
+                        );
+                        if ui.button("Add to queue").clicked() {
+                            let id = self.video_id.trim();
+                            if id.len() == 11
+                                && id
+                                    .bytes()
+                                    .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
+                            {
+                                self.add(
+                                    Track {
+                                        id: TrackId(id.to_owned()),
+                                        title: id.to_owned(),
+                                        artists: Vec::new(),
+                                    },
+                                    false,
+                                );
+                            } else {
+                                self.message = "Enter a valid 11-character video ID.".into();
+                            }
+                        }
+                    });
+                });
             });
-            if !self.results.is_empty() {
+            if let Some(track) = self.results.first().cloned() {
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new("Top result").strong().size(20.0));
+                egui::Frame::new()
+                    .fill(ui.visuals().window_fill)
+                    .corner_radius(12.0)
+                    .inner_margin(16.0)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            let size = if ui.available_width() > 600.0 {
+                                96.0
+                            } else {
+                                64.0
+                            };
+                            self.artwork.show(ui, &track.id.0, &track.title, size);
+                            ui.add_space(8.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(ui.available_width());
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&track.title).strong().size(20.0),
+                                    )
+                                    .truncate(),
+                                )
+                                .on_hover_text(&track.title);
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(if track.artists.is_empty() {
+                                            "Song".to_owned()
+                                        } else {
+                                            format!("Song · {}", track.artists.join(" · "))
+                                        })
+                                        .weak(),
+                                    )
+                                    .truncate(),
+                                );
+                                ui.horizontal_wrapped(|ui| {
+                                    if theme::primary(ui, "Play top result").clicked() {
+                                        self.session.queue = vec![track.clone()];
+                                        self.session.select(0);
+                                        self.start(true);
+                                    }
+                                    if ui.button("Queue top result").clicked() {
+                                        self.add(track.clone(), false);
+                                    }
+                                });
+                            });
+                        });
+                    });
+                ui.add_space(16.0);
+                ui.label(
+                    egui::RichText::new(format!("Songs · {}", self.results.len()))
+                        .strong()
+                        .size(22.0),
+                );
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Play results").clicked() {
                         self.session.queue = self.results.clone();
@@ -787,34 +875,6 @@ impl Alpha {
                     }
                 });
             }
-            ui.collapsing("Open a video ID", |ui| {
-                ui.horizontal(|ui| {
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.video_id)
-                            .hint_text("11-character video ID")
-                            .char_limit(11),
-                    );
-                    if ui.button("Add to queue").clicked() {
-                        let id = self.video_id.trim();
-                        if id.len() == 11
-                            && id
-                                .bytes()
-                                .all(|c| c.is_ascii_alphanumeric() || c == b'-' || c == b'_')
-                        {
-                            self.add(
-                                Track {
-                                    id: TrackId(id.to_owned()),
-                                    title: id.to_owned(),
-                                    artists: Vec::new(),
-                                },
-                                false,
-                            );
-                        } else {
-                            self.message = "Enter a valid 11-character video ID.".into();
-                        }
-                    }
-                });
-            });
         }
         if !self.message.is_empty() {
             ui.weak(&self.message);
@@ -836,14 +896,26 @@ impl Alpha {
                         egui::RichText::new(if self.queue_page {
                             "Your queue is empty"
                         } else {
-                            "Search your music"
+                            if self.searching {
+                                "Searching YouTube Music"
+                            } else if !self.query.trim().is_empty() {
+                                "No songs to show"
+                            } else {
+                                "Search your music"
+                            }
                         })
                         .size(23.0),
                     );
                     ui.weak(if self.queue_page {
                         "Search for a song and add it to your queue."
                     } else {
-                        "Find songs, artists and albums on YouTube Music."
+                        if self.searching {
+                            "Results will appear here."
+                        } else if !self.query.trim().is_empty() {
+                            "Try another song or artist, or search again."
+                        } else {
+                            "Find songs and artists on YouTube Music."
+                        }
                     });
                     ui.weak("Ctrl+K to search");
                 });
@@ -1066,7 +1138,11 @@ impl eframe::App for Alpha {
             }
             if self.loaded
                 && self.frames >= 30
-                && (self.artwork.settled() || self.frames >= 240)
+                && ((self.artwork.settled()
+                    && self.playlists.as_ref().is_none_or(|p| p.settled())
+                    && !self.searching
+                    && self.debounce.is_none())
+                    || self.frames >= 240)
                 && !self.capture_requested
             {
                 ui.ctx()
@@ -1202,10 +1278,21 @@ mod tests {
         theme::install(&ctx);
         ctx.enable_accesskit();
         app.results = vec![track(1), track(2)];
+        app.query = "test query".into();
         content_frame(&ctx, &mut app, vec![]);
+        click(&ctx, &mut app, "Queue top result");
+        assert_eq!(app.session.queue, vec![track(1)]);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
         click(&ctx, &mut app, "Add results to queue");
         assert_eq!(app.session.queue.len(), 2);
         click(&ctx, &mut app, "Add results to queue");
+        assert_eq!(app.session.queue.len(), 2);
+        let generation = app.search.generation;
+        app.debounce = Some(Instant::now());
+        click(&ctx, &mut app, "Clear search");
+        assert!(app.query.is_empty() && app.results.is_empty());
+        assert!(app.debounce.is_none() && !app.searching);
+        assert!(app.search.generation > generation);
         assert_eq!(app.session.queue.len(), 2);
         click(&ctx, &mut app, "Queue · 2");
         assert!(app.queue_page);

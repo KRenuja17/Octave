@@ -5,6 +5,7 @@ use std::path::PathBuf;
 
 pub struct PlaylistsUi {
     store: Store,
+    artwork: crate::song_artwork::SongArtwork,
     data: Vec<Playlist>,
     busy: bool,
     selected: usize,
@@ -17,6 +18,7 @@ impl PlaylistsUi {
     pub fn new(path: PathBuf) -> Self {
         Self {
             store: Store::open(path),
+            artwork: crate::song_artwork::SongArtwork::default(),
             data: Vec::new(),
             busy: true,
             selected: 0,
@@ -25,6 +27,9 @@ impl PlaylistsUi {
             message: String::new(),
             confirm_delete: false,
         }
+    }
+    pub fn settled(&self) -> bool {
+        !self.busy && self.artwork.settled()
     }
     fn submit(&mut self, data: Vec<Playlist>) {
         self.selection_after_save = None;
@@ -45,14 +50,16 @@ impl PlaylistsUi {
                 Ok(data) => {
                     self.data = data;
                     self.selected = selected.min(self.data.len().saturating_sub(1));
-                    self.message = "Saved playlists are up to date.".into();
+                    self.message.clear();
                 }
                 Err(()) => self.message="Could not load or save playlists. Check storage access and use a unique name; the previous saved data is unchanged.".into(),
             }
         }
-        ui.weak("Stored on this computer. Edit songs in Queue, then replace the selected playlist. Loading replaces the queue without starting playback.");
+        ui.weak("Local library · saved on this computer");
+        ui.add_space(6.0);
         let mut loaded = None;
         ui.add_enabled_ui(!self.busy, |ui| {
+            ui.horizontal_wrapped(|ui| {
             ui.add(
                 egui::TextEdit::singleline(&mut self.name)
                     .hint_text("Playlist name")
@@ -75,32 +82,56 @@ impl PlaylistsUi {
                     self.selection_after_save = Some(self.data.len());
                 }
             }
-            if !self.data.is_empty() {
-                egui::ComboBox::from_label("Saved playlist")
-                    .selected_text(&self.data[self.selected].name)
-                    .show_ui(ui, |ui| {
+            });
+            ui.add_space(10.0);
+            if self.data.is_empty() {
+                ui.heading("Create your first playlist");
+                ui.weak("Add songs to your queue, give the playlist a name, then save it here.");
+            } else {
+                let compact = ui.available_width() < 600.0;
+                let cover_size = if compact { 72.0 } else { 112.0 };
+                let card_width = if compact { 112.0 } else { 148.0 };
+                egui::ScrollArea::horizontal().id_salt("playlist-covers").show(ui, |ui| {
+                    ui.horizontal_top(|ui| {
                         for (index, playlist) in self.data.iter().enumerate() {
-                            if ui
-                                .selectable_value(&mut self.selected, index, &playlist.name)
-                                .changed()
-                            {
-                                self.confirm_delete = false;
-                            }
+                            ui.push_id(index, |ui| {
+                                ui.vertical(|ui| {
+                                    ui.set_width(card_width);
+                                    let cover = ui.scope(|ui| {
+                                    if let Some(track) = playlist.tracks.first() {
+                                        self.artwork.show(ui, &track.id.0, &playlist.name, cover_size);
+                                    } else { crate::theme::cover(ui, cover_size); }
+                                    });
+                                    let open = ui.interact(cover.response.rect, ui.id().with("open-cover"), egui::Sense::click()).on_hover_text(&playlist.name);
+                                    open.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Open playlist {}", playlist.name)));
+                                    if open.clicked() { self.selected = index; self.confirm_delete = false; }
+                                    if ui.add_sized([card_width, 34.0], egui::Button::new(
+                                        egui::RichText::new(&playlist.name).strong()).selected(self.selected == index).truncate())
+                                        .on_hover_text(&playlist.name).clicked() {
+                                        self.selected = index;
+                                        self.confirm_delete = false;
+                                    }
+                                    ui.weak(format!("{} songs", playlist.tracks.len()));
+                                });
+                            });
                         }
                     });
-                ui.label(format!(
-                    "{} songs · {} of {MAX_PLAYLISTS} playlists",
-                    self.data[self.selected].tracks.len(),
-                    self.data.len()
-                ));
+                });
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new(&self.data[self.selected].name).strong().size(24.0));
+                ui.weak(format!("Playlist · {} songs", self.data[self.selected].tracks.len()));
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Load into queue").clicked() {
+                    if crate::theme::primary(ui, "Load into queue").on_hover_text("Replace the queue without starting playback").clicked() {
                         loaded = Some(self.data[self.selected].tracks.clone());
                     }
+                    ui.menu_button("Edit playlist", |ui| {
                     if ui.button("Replace with queue").clicked() {
                         let mut data = self.data.clone();
                         data[self.selected].tracks = queue.to_vec();
                         self.submit(data);
+                        ui.close();
                     }
                     if ui
                         .add_enabled(
@@ -112,10 +143,13 @@ impl PlaylistsUi {
                         let mut data = self.data.clone();
                         data[self.selected].name = self.name.trim().into();
                         self.submit(data);
+                        ui.close();
                     }
                     if ui.button("Delete playlist…").clicked() {
                         self.confirm_delete = true;
+                        ui.close();
                     }
+                    });
                 });
                 if self.confirm_delete {
                     ui.label(format!(
@@ -133,6 +167,24 @@ impl PlaylistsUi {
                         }
                     });
                 }
+                ui.add_space(16.0);
+                let tracks = &self.data[self.selected].tracks;
+                if tracks.is_empty() { ui.weak("This playlist has no songs yet. Add songs to Queue, then use Replace with queue."); }
+                egui::ScrollArea::vertical().id_salt(("playlist-songs", self.selected))
+                    .max_height(320.0).show_rows(ui, 56.0, tracks.len(), |ui, range| {
+                    for index in range {
+                        let track = &tracks[index];
+                        ui.horizontal(|ui| {
+                            ui.weak(format!("{:02}", index + 1));
+                            self.artwork.show(ui, &track.id.0, &track.title, 40.0);
+                            ui.vertical(|ui| {
+                                ui.set_width(ui.available_width());
+                                ui.add(egui::Label::new(egui::RichText::new(&track.title).strong()).truncate()).on_hover_text(&track.title);
+                                ui.add(egui::Label::new(egui::RichText::new(track.artists.join(" · ")).weak()).truncate());
+                            });
+                        });
+                    }
+                });
             }
         });
         if self.busy {
@@ -226,6 +278,39 @@ mod tests {
         result
     }
     #[test]
+    fn cover_selection_previews_without_loading_and_resets_delete_confirmation() {
+        let path = std::env::var_os("OCTAVE_TEST_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(format!("playlist-cover-ui-{}.sqlite3", std::process::id()));
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let queue = vec![track(9)];
+        let mut app = PlaylistsUi::new(path.clone());
+        ready(&ctx, &mut app, &queue);
+        app.data = vec![
+            Playlist {
+                name: "First".into(),
+                tracks: vec![track(1)],
+            },
+            Playlist {
+                name: "Second".into(),
+                tracks: vec![track(2), track(3)],
+            },
+        ];
+        app.confirm_delete = true;
+        assert!(click(&ctx, &mut app, &queue, "Open playlist Second").is_none());
+        assert_eq!(app.selected, 1);
+        assert!(!app.confirm_delete);
+        assert_eq!(queue, vec![track(9)]);
+        assert_eq!(
+            click(&ctx, &mut app, &queue, "Load into queue"),
+            Some(vec![track(2), track(3)])
+        );
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn buttons_save_edit_reload_and_delete_durable_playlists() {
         let path = std::env::var_os("OCTAVE_TEST_DIR")
             .map(PathBuf::from)
@@ -241,9 +326,11 @@ mod tests {
         ready(&ctx, &mut app, &queue);
         assert_eq!(app.data[0].tracks, queue);
         app.name = "Renamed".into();
+        click(&ctx, &mut app, &queue, "Edit playlist");
         click(&ctx, &mut app, &queue, "Rename playlist");
         ready(&ctx, &mut app, &queue);
         let edited = vec![track(1)];
+        click(&ctx, &mut app, &edited, "Edit playlist");
         click(&ctx, &mut app, &edited, "Replace with queue");
         ready(&ctx, &mut app, &edited);
         drop(app);
@@ -254,9 +341,11 @@ mod tests {
             click(&ctx, &mut app, &[], "Load into queue").unwrap(),
             edited
         );
+        click(&ctx, &mut app, &[], "Edit playlist");
         click(&ctx, &mut app, &[], "Delete playlist…");
         click(&ctx, &mut app, &[], "Cancel deletion");
         assert_eq!(app.data.len(), 1);
+        click(&ctx, &mut app, &[], "Edit playlist");
         click(&ctx, &mut app, &[], "Delete playlist…");
         click(&ctx, &mut app, &[], "Confirm delete playlist");
         ready(&ctx, &mut app, &[]);

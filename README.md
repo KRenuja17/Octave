@@ -15,12 +15,18 @@ bounded memory-only cache and never sends account cookies. The player keeps
 previous/play/next and volume visible; its options menu holds stop, repeat and
 shuffle. Installed Windows fonts are loaded locally and never redistributed.
 
+Search shows a top-result card and an artwork-led Songs list. **Queue top result**
+adds a song without starting playback; **Clear search** cancels pending results.
+You can also launch with `--search "artist or song"` to open a search without autoplay.
+
 ## Expansion: local playlists
 
-Open **Playlists → Local playlists**, enter a name, and **Save queue as new playlist**.
+Open **Playlists**, enter a name, and **Save queue as new playlist**.
+Browse cover cards to preview a playlist and its songs without changing the queue.
 Select a saved playlist and **Load into queue** to replace the queue without
 autoplay. Reorder, remove or add songs with the existing Queue controls, then
-**Replace with queue** to save the edits. Rename uses the name field; deletion
+**Edit playlist → Replace with queue** to save the edits. Rename and delete
+also live in **Edit playlist**. Rename uses the name field; deletion
 has a separate confirmation. Up to 20 playlists of 500 unique tracks are stored.
 
 These playlists stay on this computer and do not modify your YouTube Music
