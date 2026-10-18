@@ -17,6 +17,7 @@ mod playlist_ui;
 mod playlists;
 mod prototype;
 mod search;
+mod song_artwork;
 mod storage;
 mod theme;
 #[cfg(test)]

@@ -61,6 +61,35 @@ pub struct Provider {
     client: Client,
 }
 impl Provider {
+    /// Public video artwork only; never sends account credentials.
+    pub fn thumbnail(&self, id: &TrackId) -> Result<Vec<u8>, Error> {
+        if id.0.len() != 11
+            || !id
+                .0
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+        {
+            return Err(Error::InvalidTrack);
+        }
+        let response = self
+            .client
+            .get(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", id.0))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .map_err(network)?;
+        if !response.status().is_success() {
+            return Err(Error::Http(response.status().as_u16()));
+        }
+        let mut bytes = Vec::new();
+        response
+            .take(512 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::Network)?;
+        if bytes.len() > 512 * 1024 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(bytes)
+    }
     pub fn new() -> Result<Self, Error> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))

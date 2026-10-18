@@ -126,3 +126,26 @@ pub fn nav(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>)
         ui.add(button)
     }
 }
+
+pub fn transport_button(
+    ui: &mut egui::Ui,
+    icon: &str,
+    label: &str,
+    enabled: bool,
+    primary: bool,
+) -> egui::Response {
+    let mut button = egui::Button::new(egui::RichText::new(icon).size(20.0).color(if primary {
+        BG
+    } else {
+        ui.visuals().text_color()
+    }))
+    .min_size(egui::vec2(40.0, 40.0))
+    .corner_radius(20.0)
+    .frame(primary);
+    if primary {
+        button = button.fill(ACCENT);
+    }
+    let response = ui.add_enabled(enabled, button).on_hover_text(label);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    response
+}

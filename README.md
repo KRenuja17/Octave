@@ -9,9 +9,11 @@ Broader playback feasibility and authenticated playback remain deferred.
 The listening UI follows YouTube Music's sidebar, search and persistent-player
 layout while keeping Octave's original charcoal and sage palette. Narrow windows
 use wrapped navigation. Search, Queue, Account, Playlists and Settings remain
-available, alongside Dark, Light and High contrast appearances. Track artwork
-placeholders are native vector graphics; installed Windows fonts are loaded
-locally and never redistributed.
+available, alongside Dark, Light and High contrast appearances. Visible songs and the current player load public YouTube thumbnails in the
+background, cropped to square covers with a neutral fallback. Artwork uses a
+bounded memory-only cache and never sends account cookies. The player keeps
+previous/play/next and volume visible; its options menu holds stop, repeat and
+shuffle. Installed Windows fonts are loaded locally and never redistributed.
 
 ## Expansion: local playlists
 

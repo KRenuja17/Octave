@@ -45,6 +45,7 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    artwork: crate::song_artwork::SongArtwork,
     settings_page: bool,
     playlists_page: bool,
     transition_sequence: u64,
@@ -86,6 +87,7 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            artwork: crate::song_artwork::SongArtwork::default(),
             settings_page: matches!(
                 crate::argument("--page").as_deref(),
                 Some("settings" | "output" | "desktop")
@@ -316,8 +318,41 @@ impl Alpha {
         self.transport_snapshot(ui, snapshot);
     }
     fn transport_snapshot(&mut self, ui: &mut egui::Ui, snapshot: Snapshot) {
+        if self.session.current().is_some() {
+            let mut seconds = self
+                .seek
+                .unwrap_or(self.session.position)
+                .min(snapshot.duration.as_secs_f64());
+            let can_seek = !snapshot.duration.is_zero()
+                && matches!(
+                    snapshot.state,
+                    PlaybackState::Playing(_) | PlaybackState::Paused(_)
+                );
+            ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(160.0);
+            let slider = ui
+                .scope(|ui| {
+                    ui.spacing_mut().interact_size.y = 14.0;
+                    ui.add_enabled(
+                        can_seek,
+                        egui::Slider::new(
+                            &mut seconds,
+                            0.0..=snapshot.duration.as_secs_f64().max(1.0),
+                        )
+                        .text("Position")
+                        .show_value(false),
+                    )
+                })
+                .inner;
+            if slider.dragged() {
+                self.seek = Some(seconds);
+            }
+            if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                self.player.seek(Duration::from_secs_f64(seconds));
+                self.seek = None;
+            }
+        }
         ui.add_space(8.0);
-        if ui.available_width() >= 1000.0 && self.session.current().is_some() {
+        if ui.available_width() >= 850.0 && self.session.current().is_some() {
             ui.horizontal(|ui| {
                 ui.allocate_ui(egui::vec2(260.0, 54.0), |ui| self.track_identity(ui));
                 ui.vertical(|ui| self.transport_controls(ui, &snapshot));
@@ -346,40 +381,13 @@ impl Alpha {
             PlaybackState::Ended(_) => "Finished",
             PlaybackState::Failed(_, _) => "Playback interrupted",
         };
-        ui.horizontal(|ui| {
-            ui.weak(state);
-            ui.weak(format!(
-                "{} / {}",
-                time(self.session.position),
-                time(snapshot.duration.as_secs_f64())
-            ));
-        });
-        let mut seconds = self
-            .seek
-            .unwrap_or(self.session.position)
-            .min(snapshot.duration.as_secs_f64());
+        ui.horizontal_wrapped(|ui| {
+            ui.small(state);
+            ui.small(format!("{} / {}", time(self.session.position), time(snapshot.duration.as_secs_f64())));
         if let Some(quality) = snapshot.quality {
             ui.weak(quality.to_string()).on_hover_text("Selected unsigned AAC stream. Bitrate is reported by the service; sample rate and channels come from the decoder. Premium quality is not enabled.");
         }
-        let can_seek = !snapshot.duration.is_zero()
-            && matches!(
-                snapshot.state,
-                PlaybackState::Playing(_) | PlaybackState::Paused(_)
-            );
-        ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(160.0);
-        let slider = ui.add_enabled(
-            can_seek,
-            egui::Slider::new(&mut seconds, 0.0..=snapshot.duration.as_secs_f64().max(1.0))
-                .text("Position")
-                .show_value(false),
-        );
-        if slider.dragged() {
-            self.seek = Some(seconds);
-        }
-        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
-            self.player.seek(Duration::from_secs_f64(seconds));
-            self.seek = None;
-        }
+        });
         if let PlaybackState::Failed(_, error) = &snapshot.state {
             ui.label(error.to_string());
             ui.horizontal_wrapped(|ui| {
@@ -398,9 +406,13 @@ impl Alpha {
         }
         ui.add_space(6.0);
     }
-    fn track_identity(&self, ui: &mut egui::Ui) {
+    fn track_identity(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
-            theme::cover(ui, 46.0);
+            if let Some(track) = self.session.current() {
+                self.artwork.show(ui, &track.id.0, &track.title, 48.0);
+            } else {
+                theme::cover(ui, 48.0);
+            }
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 if let Some(track) = self.session.current() {
@@ -419,65 +431,65 @@ impl Alpha {
     }
     fn transport_controls(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
         ui.horizontal_wrapped(|ui| {
-            if ui
-                .add_enabled(
-                    self.session.current().is_some(),
-                    egui::Button::new("Previous"),
-                )
-                .clicked()
-            {
+            if theme::transport_button(ui, "⏮", "Previous", true, false).clicked() {
                 self.previous();
             }
-            let label = match snapshot.state {
-                PlaybackState::Playing(_) => "Pause",
-                PlaybackState::Loading(_) => "Cancel",
-                _ => "Resume",
+            let (icon, label) = match snapshot.state {
+                PlaybackState::Playing(_) => ("Ⅱ", "Pause"),
+                PlaybackState::Loading(_) => ("×", "Cancel"),
+                _ => ("▶", "Resume"),
             };
-            if ui
-                .add_enabled(
-                    self.loaded && self.session.current().is_some(),
-                    egui::Button::new(egui::RichText::new(label).color(theme::BG))
-                        .fill(theme::ACCENT),
-                )
-                .clicked()
-            {
+            if theme::transport_button(ui, icon, label, self.loaded, true).clicked() {
                 self.toggle();
             }
-            if ui
-                .add_enabled(self.session.current().is_some(), egui::Button::new("Next"))
-                .clicked()
-            {
+            if theme::transport_button(ui, "⏭", "Next", true, false).clicked() {
                 self.next(false);
             }
-            if ui.button("Stop").clicked() {
-                self.halt();
-            }
-            if ui
-                .button(format!(
-                    "Repeat: {}",
-                    match self.session.repeat {
-                        Repeat::Off => "off",
-                        Repeat::All => "queue",
-                        Repeat::One => "song",
-                    }
-                ))
-                .clicked()
-            {
-                self.session.repeat = self.session.repeat.next();
-            }
-            if ui.button("Shuffle upcoming").clicked() {
-                self.session.shuffle(
-                    SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_nanos() as u64,
+            ui.add_space(10.0);
+            ui.scope(|ui| {
+                ui.spacing_mut().slider_width = 85.0;
+                ui.add(
+                    egui::Slider::new(&mut self.session.volume, 0.0..=1.0)
+                        .text("Volume")
+                        .show_value(false),
                 );
+            });
+            ui.menu_button("•••", |ui| {
+                if ui.button("Stop").clicked() {
+                    self.halt();
+                    ui.close();
+                }
+                if ui
+                    .button(format!(
+                        "Repeat: {}",
+                        match self.session.repeat {
+                            Repeat::Off => "off",
+                            Repeat::All => "queue",
+                            Repeat::One => "song",
+                        }
+                    ))
+                    .clicked()
+                {
+                    self.session.repeat = self.session.repeat.next();
+                }
+                if ui.button("Shuffle upcoming").clicked() {
+                    self.session.shuffle(
+                        SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_nanos() as u64,
+                    );
+                    ui.close();
+                }
+            })
+            .response
+            .on_hover_text("Playback options");
+            if ui.button("Queue").clicked() {
+                self.queue_page = true;
+                self.settings_page = false;
+                self.account_page = false;
+                self.playlists_page = false;
             }
-            ui.add(
-                egui::Slider::new(&mut self.session.volume, 0.0..=1.0)
-                    .text("Volume")
-                    .show_value(false),
-            );
         });
     }
     fn navigation(&mut self, ui: &mut egui::Ui) {
@@ -841,7 +853,7 @@ impl Alpha {
         egui::ScrollArea::vertical()
             .id_salt("alpha-tracks")
             .max_height(ui.clip_rect().height().max(80.0))
-            .show_rows(ui, 64.0, len, |ui, range| {
+            .show_rows(ui, 68.0, len, |ui, range| {
                 for index in range {
                     let track = if self.queue_page {
                         &self.session.queue[index]
@@ -849,59 +861,71 @@ impl Alpha {
                         &self.results[index]
                     };
                     ui.push_id(index, |ui| {
-                        ui.horizontal(|ui| {
-                            let play = ui
-                                .button(if self.queue_page && self.session.cursor == index {
-                                    "▶"
-                                } else {
-                                    "Play"
-                                })
-                                .on_hover_text(format!("Play {}", track.title));
-                            play.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    format!("Play {}", track.title),
-                                )
-                            });
-                            if play.clicked() {
-                                action = Some((index, 0));
-                            }
-                            ui.vertical(|ui| {
-                                ui.set_width((ui.available_width() - 60.0).max(120.0));
-                                ui.add(
-                                    egui::Label::new(egui::RichText::new(&track.title).strong())
-                                        .truncate(),
-                                )
-                                .on_hover_text(&track.title);
-                                ui.add(
-                                    egui::Label::new(
-                                        egui::RichText::new(track.artists.join(" · ")).weak(),
-                                    )
-                                    .truncate(),
-                                );
-                            });
-                            let menu = ui.menu_button("•••", |ui| {
-                                for (label, code) in if self.queue_page {
-                                    vec![("Move up", 3), ("Move down", 4), ("Remove", 5)]
-                                } else {
-                                    vec![("Play next", 1), ("Add to queue", 2)]
-                                } {
-                                    if ui.button(label).clicked() {
-                                        action = Some((index, code));
-                                        ui.close();
+                        let selected = self.queue_page && self.session.cursor == index;
+                        let fill = if selected {
+                            ui.visuals().selection.bg_fill
+                        } else {
+                            egui::Color32::TRANSPARENT
+                        };
+                        egui::Frame::new()
+                            .fill(fill)
+                            .corner_radius(4.0)
+                            .inner_margin(4.0)
+                            .show(ui, |ui| {
+                                ui.horizontal(|ui| {
+                                    self.artwork.show(ui, &track.id.0, &track.title, 48.0);
+                                    let play = ui
+                                        .button("▶")
+                                        .on_hover_text(format!("Play {}", track.title));
+                                    play.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Button,
+                                            true,
+                                            format!("Play {}", track.title),
+                                        )
+                                    });
+                                    if play.clicked() {
+                                        action = Some((index, 0));
                                     }
-                                }
+                                    ui.vertical(|ui| {
+                                        ui.set_width((ui.available_width() - 60.0).max(120.0));
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(&track.title).strong(),
+                                            )
+                                            .truncate(),
+                                        )
+                                        .on_hover_text(&track.title);
+                                        ui.add(
+                                            egui::Label::new(
+                                                egui::RichText::new(track.artists.join(" · "))
+                                                    .weak(),
+                                            )
+                                            .truncate(),
+                                        );
+                                    });
+                                    let menu = ui.menu_button("•••", |ui| {
+                                        for (label, code) in if self.queue_page {
+                                            vec![("Move up", 3), ("Move down", 4), ("Remove", 5)]
+                                        } else {
+                                            vec![("Play next", 1), ("Add to queue", 2)]
+                                        } {
+                                            if ui.button(label).clicked() {
+                                                action = Some((index, code));
+                                                ui.close();
+                                            }
+                                        }
+                                    });
+                                    menu.response.widget_info(|| {
+                                        egui::WidgetInfo::labeled(
+                                            egui::WidgetType::Button,
+                                            true,
+                                            format!("Actions for {}", track.title),
+                                        )
+                                    });
+                                });
                             });
-                            menu.response.widget_info(|| {
-                                egui::WidgetInfo::labeled(
-                                    egui::WidgetType::Button,
-                                    true,
-                                    format!("Actions for {}", track.title),
-                                )
-                            });
-                        });
-                        ui.separator();
+                        ui.add_space(3.0);
                     });
                 }
             });
@@ -1040,7 +1064,11 @@ impl eframe::App for Alpha {
                 }
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
-            if self.loaded && self.frames >= 30 && !self.capture_requested {
+            if self.loaded
+                && self.frames >= 30
+                && (self.artwork.settled() || self.frames >= 240)
+                && !self.capture_requested
+            {
                 ui.ctx()
                     .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
                 self.capture_requested = true;
@@ -1416,6 +1444,14 @@ mod tests {
             output.textures_delta.clear();
             assert!(!output.shapes.is_empty());
             let tree = output.platform_output.accesskit_update.unwrap();
+            for label in ["Previous", "Pause", "Next"] {
+                assert!(
+                    tree.nodes
+                        .iter()
+                        .any(|(_, node)| node.label() == Some(label)),
+                    "Missing accessible transport: {label}"
+                );
+            }
             assert!(tree.nodes.iter().any(|(_, node)| {
                 node.value()
                     .is_some_and(|label| label.contains("129 kb/s reported"))
