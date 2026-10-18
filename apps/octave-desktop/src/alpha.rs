@@ -317,8 +317,90 @@ impl Alpha {
     }
     fn transport_snapshot(&mut self, ui: &mut egui::Ui, snapshot: Snapshot) {
         ui.add_space(8.0);
+        if ui.available_width() >= 1000.0 && self.session.current().is_some() {
+            ui.horizontal(|ui| {
+                ui.allocate_ui(egui::vec2(260.0, 54.0), |ui| self.track_identity(ui));
+                ui.vertical(|ui| self.transport_controls(ui, &snapshot));
+            });
+        } else {
+            self.track_identity(ui);
+            if self.session.current().is_some() {
+                self.transport_controls(ui, &snapshot);
+            }
+        }
+        if self.session.current().is_none() {
+            return;
+        }
+        self.player.set_volume(self.session.volume);
+        let state = match &snapshot.state {
+            PlaybackState::Idle => {
+                if self.session.current().is_some() {
+                    "Ready · press Resume to listen"
+                } else {
+                    "Nothing queued"
+                }
+            }
+            PlaybackState::Loading(_) => "Connecting…",
+            PlaybackState::Playing(_) => "Playing",
+            PlaybackState::Paused(_) => "Paused",
+            PlaybackState::Ended(_) => "Finished",
+            PlaybackState::Failed(_, _) => "Playback interrupted",
+        };
         ui.horizontal(|ui| {
-            theme::record(ui, 46.0);
+            ui.weak(state);
+            ui.weak(format!(
+                "{} / {}",
+                time(self.session.position),
+                time(snapshot.duration.as_secs_f64())
+            ));
+        });
+        let mut seconds = self
+            .seek
+            .unwrap_or(self.session.position)
+            .min(snapshot.duration.as_secs_f64());
+        if let Some(quality) = snapshot.quality {
+            ui.weak(quality.to_string()).on_hover_text("Selected unsigned AAC stream. Bitrate is reported by the service; sample rate and channels come from the decoder. Premium quality is not enabled.");
+        }
+        let can_seek = !snapshot.duration.is_zero()
+            && matches!(
+                snapshot.state,
+                PlaybackState::Playing(_) | PlaybackState::Paused(_)
+            );
+        ui.spacing_mut().slider_width = (ui.available_width() - 85.0).max(160.0);
+        let slider = ui.add_enabled(
+            can_seek,
+            egui::Slider::new(&mut seconds, 0.0..=snapshot.duration.as_secs_f64().max(1.0))
+                .text("Position")
+                .show_value(false),
+        );
+        if slider.dragged() {
+            self.seek = Some(seconds);
+        }
+        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+            self.player.seek(Duration::from_secs_f64(seconds));
+            self.seek = None;
+        }
+        if let PlaybackState::Failed(_, error) = &snapshot.state {
+            ui.label(error.to_string());
+            ui.horizontal_wrapped(|ui| {
+                if self.retry_at.is_some() {
+                    ui.weak(format!("Reconnecting · attempt {} of 2", self.retry_count));
+                    if ui.button("Cancel retry").clicked() {
+                        self.retry_at = None;
+                    }
+                } else if ui.button("Retry from saved position").clicked() {
+                    self.start(true);
+                }
+                if ui.button("Skip song").clicked() {
+                    self.next(false);
+                }
+            });
+        }
+        ui.add_space(6.0);
+    }
+    fn track_identity(&self, ui: &mut egui::Ui) {
+        ui.horizontal(|ui| {
+            theme::cover(ui, 46.0);
             ui.add_space(8.0);
             ui.vertical(|ui| {
                 if let Some(track) = self.session.current() {
@@ -330,13 +412,12 @@ impl Alpha {
                     ui.weak(track.artists.join(" · "));
                 } else {
                     ui.strong("Nothing playing yet");
-                    ui.weak("Your next listen starts with a search.");
+                    ui.weak("Choose a song to start listening");
                 }
             });
         });
-        if self.session.current().is_none() {
-            return;
-        }
+    }
+    fn transport_controls(&mut self, ui: &mut egui::Ui, snapshot: &Snapshot) {
         ui.horizontal_wrapped(|ui| {
             if ui
                 .add_enabled(
@@ -398,129 +479,84 @@ impl Alpha {
                     .show_value(false),
             );
         });
-        self.player.set_volume(self.session.volume);
-        let state = match &snapshot.state {
-            PlaybackState::Idle => {
-                if self.session.current().is_some() {
-                    "Ready · press Resume to listen"
-                } else {
-                    "Nothing queued"
-                }
-            }
-            PlaybackState::Loading(_) => "Connecting…",
-            PlaybackState::Playing(_) => "Playing",
-            PlaybackState::Paused(_) => "Paused",
-            PlaybackState::Ended(_) => "Finished",
-            PlaybackState::Failed(_, _) => "Playback interrupted",
-        };
-        ui.horizontal(|ui| {
-            ui.weak(state);
-            ui.weak(format!(
-                "{} / {}",
-                time(self.session.position),
-                time(snapshot.duration.as_secs_f64())
-            ));
-        });
-        let mut seconds = self.seek.unwrap_or(self.session.position);
-        if let Some(quality) = snapshot.quality {
-            ui.weak(quality.to_string()).on_hover_text("Selected unsigned AAC stream. Bitrate is reported by the service; sample rate and channels come from the decoder. Premium quality is not enabled.");
+    }
+    fn navigation(&mut self, ui: &mut egui::Ui) {
+        if theme::nav(
+            ui,
+            !self.queue_page && !self.account_page && !self.settings_page && !self.playlists_page,
+            "Search",
+        )
+        .clicked()
+        {
+            self.settings_page = false;
+            self.playlists_page = false;
+            self.account_page = false;
+            self.queue_page = false;
         }
-        let can_seek = !snapshot.duration.is_zero()
-            && matches!(
-                snapshot.state,
-                PlaybackState::Playing(_) | PlaybackState::Paused(_)
-            );
-        let slider = ui.add_enabled(
-            can_seek,
-            egui::Slider::new(&mut seconds, 0.0..=snapshot.duration.as_secs_f64().max(1.0))
-                .text("Position")
-                .show_value(false),
-        );
-        if slider.dragged() {
-            self.seek = Some(seconds);
+        if theme::nav(
+            ui,
+            self.queue_page && !self.account_page,
+            format!("Queue · {}", self.session.queue.len()),
+        )
+        .clicked()
+        {
+            self.settings_page = false;
+            self.playlists_page = false;
+            self.account_page = false;
+            self.queue_page = true;
         }
-        if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
-            self.player.seek(Duration::from_secs_f64(seconds));
-            self.seek = None;
+        if theme::nav(ui, self.account_page, "Account").clicked() {
+            self.settings_page = false;
+            self.playlists_page = false;
+            self.account_page = true;
         }
-        if let PlaybackState::Failed(_, error) = &snapshot.state {
-            ui.label(error.to_string());
-            ui.horizontal_wrapped(|ui| {
-                if self.retry_at.is_some() {
-                    ui.weak(format!("Reconnecting · attempt {} of 2", self.retry_count));
-                    if ui.button("Cancel retry").clicked() {
-                        self.retry_at = None;
-                    }
-                } else if ui.button("Retry from saved position").clicked() {
-                    self.start(true);
-                }
-                if ui.button("Skip song").clicked() {
-                    self.next(false);
-                }
-            });
+        if theme::nav(ui, self.playlists_page, "Playlists").clicked() {
+            self.playlists_page = true;
+            self.settings_page = false;
+            self.account_page = false;
+            self.queue_page = false;
         }
-        ui.add_space(6.0);
+        if theme::nav(ui, self.settings_page, "Settings").clicked() {
+            self.settings_page = true;
+            self.playlists_page = false;
+            self.account_page = false;
+            self.queue_page = false;
+        }
     }
     fn content(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal_wrapped(|ui| {
+        if ui.available_width() >= 850.0 {
+            ui.horizontal_top(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(168.0, 0.0),
+                    egui::Layout::top_down(egui::Align::Min),
+                    |ui| {
+                        ui.heading("Octave");
+                        ui.add_space(24.0);
+                        ui.spacing_mut().item_spacing.y = 12.0;
+                        self.navigation(ui);
+                        ui.add_space(24.0);
+                        ui.separator();
+                        ui.weak("Your music, on desktop");
+                    },
+                );
+                ui.separator();
+                ui.add_space(20.0);
+                let width = ui.available_width();
+                ui.vertical(|ui| {
+                    ui.set_width(width);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    self.content_body(ui);
+                });
+            });
+        } else {
             ui.heading("Octave");
-            if ui.available_width() > 700.0 {
-                ui.weak("Your listening room");
-            }
-            if ui
-                .selectable_label(
-                    !self.queue_page
-                        && !self.account_page
-                        && !self.settings_page
-                        && !self.playlists_page,
-                    "Search",
-                )
-                .clicked()
-            {
-                self.settings_page = false;
-                self.playlists_page = false;
-                self.account_page = false;
-                self.queue_page = false;
-            }
-            if ui
-                .selectable_label(
-                    self.queue_page && !self.account_page,
-                    format!("Queue · {}", self.session.queue.len()),
-                )
-                .clicked()
-            {
-                self.settings_page = false;
-                self.playlists_page = false;
-                self.account_page = false;
-                self.queue_page = true;
-            }
-            if ui.selectable_label(self.account_page, "Account").clicked() {
-                self.settings_page = false;
-                self.playlists_page = false;
-                self.account_page = true;
-            }
-            if ui
-                .selectable_label(self.playlists_page, "Playlists")
-                .clicked()
-            {
-                self.playlists_page = true;
-                self.settings_page = false;
-                self.account_page = false;
-                self.queue_page = false;
-            }
-            if ui
-                .selectable_label(self.settings_page, "Settings")
-                .clicked()
-            {
-                self.settings_page = true;
-                self.playlists_page = false;
-                self.account_page = false;
-                self.queue_page = false;
-            }
-        });
-        ui.add_space(14.0);
-        ui.separator();
-        ui.add_space(16.0);
+            ui.horizontal_wrapped(|ui| self.navigation(ui));
+            ui.separator();
+            ui.add_space(12.0);
+            self.content_body(ui);
+        }
+    }
+    fn content_body(&mut self, ui: &mut egui::Ui) {
         if self.applied_appearance != Some(self.session.appearance) {
             theme::apply(ui.ctx(), self.session.appearance);
             self.applied_appearance = Some(self.session.appearance);
@@ -532,7 +568,7 @@ impl Alpha {
             );
         }
         if self.settings_page {
-            ui.heading("Make it yours.");
+            ui.heading("Settings");
             ui.weak("Sound, appearance and desktop preferences.");
             ui.add_space(18.0);
             if let Some(desktop) = &mut self.desktop {
@@ -615,7 +651,7 @@ impl Alpha {
             return;
         }
         if self.playlists_page {
-            ui.heading("Collected for later.");
+            ui.heading("Your playlists");
             ui.weak("Your playlists, saved on this computer.");
             ui.add_space(16.0);
             let loaded_playlist = egui::CollapsingHeader::new("Local playlists")
@@ -679,18 +715,22 @@ impl Alpha {
                 ui.weak("Queue order and position are saved on this device.");
             });
         } else {
-            ui.heading("Find your next obsession.");
-            ui.weak("Songs you know. Something new to love.");
-            ui.add_space(14.0);
-            let input = ui.add(
-                egui::TextEdit::singleline(&mut self.query)
-                    .id(egui::Id::new("alpha-search"))
-                    .hint_text("Search YouTube Music")
-                    .char_limit(512)
-                    .background_color(ui.visuals().widgets.inactive.bg_fill)
-                    .margin(egui::vec2(14.0, 12.0))
-                    .desired_width(f32::INFINITY),
-            );
+            let input = ui
+                .scope(|ui| {
+                    ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(24);
+                    ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(24);
+                    ui.visuals_mut().widgets.active.corner_radius = egui::CornerRadius::same(24);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.query)
+                            .id(egui::Id::new("alpha-search"))
+                            .hint_text("Search songs, artists, albums")
+                            .char_limit(512)
+                            .background_color(ui.visuals().widgets.inactive.bg_fill)
+                            .margin(egui::vec2(18.0, 12.0))
+                            .desired_width(f32::INFINITY),
+                    )
+                })
+                .inner;
             input.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search YouTube Music")
             });
@@ -776,29 +816,22 @@ impl Alpha {
         if len == 0 {
             ui.add_space(24.0);
             ui.horizontal(|ui| {
-                theme::record(
-                    ui,
-                    if ui.available_width() > 700.0 {
-                        150.0
-                    } else {
-                        80.0
-                    },
-                );
+                theme::cover(ui, 80.0);
                 ui.add_space(18.0);
                 ui.vertical(|ui| {
                     ui.add_space(12.0);
                     ui.label(
                         egui::RichText::new(if self.queue_page {
-                            "A little room for more."
+                            "Your queue is empty"
                         } else {
-                            "Start with a song."
+                            "Search your music"
                         })
                         .size(23.0),
                     );
                     ui.weak(if self.queue_page {
                         "Search for a song and add it to your queue."
                     } else {
-                        "Search an artist, a song, or a sound you love."
+                        "Find songs, artists and albums on YouTube Music."
                     });
                     ui.weak("Ctrl+K to search");
                 });
@@ -964,7 +997,7 @@ impl eframe::App for Alpha {
             .frame(
                 egui::Frame::new()
                     .fill(ui.visuals().window_fill)
-                    .inner_margin(egui::Margin::symmetric(24, 14)),
+                    .inner_margin(egui::Margin::symmetric(24, 8)),
             )
             .show(ui, |ui| self.transport(ui));
         egui::CentralPanel::default()

@@ -6,11 +6,12 @@ Windows media/tray integration and an experimental account library connection.
 The earlier silent native experience prototype is available with `--prototype`.
 Broader playback feasibility and authenticated playback remain deferred.
 
-The listening UI uses a blue-slate and brass palette, original vector record
-marks, and dedicated Search, Queue, Account, Playlists and Settings destinations.
-Dark, Light and High contrast remain available in Settings. Installed Georgia
-provides display headings on Windows, with bundled-font fallbacks elsewhere;
-operating-system font files are never redistributed.
+The listening UI follows YouTube Music's sidebar, search and persistent-player
+layout while keeping Octave's original charcoal and sage palette. Narrow windows
+use wrapped navigation. Search, Queue, Account, Playlists and Settings remain
+available, alongside Dark, Light and High contrast appearances. Track artwork
+placeholders are native vector graphics; installed Windows fonts are loaded
+locally and never redistributed.
 
 ## Expansion: local playlists
 
