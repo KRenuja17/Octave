@@ -91,7 +91,10 @@ enumeration, not stable saved device identifiers.
 
 ## Account and desktop beta preview
 
-Open **Account** to connect a YouTube Music browser session. The on-screen
+Open **Account → Connection options** to connect a YouTube Music browser session.
+The signed-out overview links to Search and local playlists; opening Account
+does not start a connection. Settings groups desktop behavior, output and sound
+preferences into expandable cards, with appearance controls first. The on-screen
 instructions use an explicitly pasted Cookie header value and account index;
 Octave never reads browser databases or asks for a Google password. This advanced
 connection is memory-only: quit or Disconnect forgets the session. You must

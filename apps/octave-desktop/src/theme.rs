@@ -149,3 +149,19 @@ pub fn transport_button(
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     response
 }
+
+/// Shared settings/account surface, using the active appearance rather than fixed colors.
+pub fn surface<R>(
+    ui: &mut egui::Ui,
+    content: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Frame::new()
+        .fill(ui.visuals().window_fill)
+        .corner_radius(12.0)
+        .inner_margin(16.0)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+            content(ui)
+        })
+}

@@ -588,43 +588,62 @@ impl Alpha {
             ui.weak("Sound, appearance and desktop preferences.");
             ui.add_space(18.0);
             if let Some(desktop) = &mut self.desktop {
-                egui::CollapsingHeader::new("Desktop settings")
-                    .default_open(crate::argument("--page").as_deref() == Some("desktop"))
-                    .show(ui, |ui| {
-                        ui.weak(&desktop.status);
-                        ui.add_enabled(
-                            desktop.can_hide(),
-                            egui::Checkbox::new(
-                                &mut desktop.close_to_tray,
-                                "Keep playing in tray when closing this window",
-                            ),
-                        );
-                        ui.weak(
+                theme::surface(ui, |ui| {
+                    ui.weak("Window and tray");
+                    egui::CollapsingHeader::new("Desktop settings")
+                        .default_open(crate::argument("--page").as_deref() == Some("desktop"))
+                        .show(ui, |ui| {
+                            ui.weak(&desktop.status);
+                            ui.add_enabled(
+                                desktop.can_hide(),
+                                egui::Checkbox::new(
+                                    &mut desktop.close_to_tray,
+                                    "Keep playing in tray when closing this window",
+                                ),
+                            );
+                            ui.weak(
                     "This setting lasts until Quit. Use the tray menu to show the window again.",
                 );
-                        if ui.button("Quit Octave").clicked() {
-                            self.quitting = true;
-                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                        }
-                    });
+                            if ui.button("Quit Octave").clicked() {
+                                self.quitting = true;
+                                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                            }
+                        });
+                });
+                ui.add_space(12.0);
             }
             if !self.loaded {
                 ui.spinner();
                 ui.label("Restoring your queue…");
                 return;
             }
-            let selected_output = egui::CollapsingHeader::new("Audio output")
-                .default_open(crate::argument("--page").as_deref() == Some("output"))
-                .show(ui, |ui| self.output_ui.render(ui))
-                .body_returned
-                .flatten();
+            let selected_output = theme::surface(ui, |ui| {
+                ui.weak("Choose where your music plays");
+                egui::CollapsingHeader::new("Audio output")
+                    .default_open(crate::argument("--page").as_deref() == Some("output"))
+                    .show(ui, |ui| self.output_ui.render(ui))
+                    .body_returned
+                    .flatten()
+            })
+            .inner;
+            ui.add_space(12.0);
             if let Some(device) = selected_output {
                 self.change_output(device);
             }
-            egui::CollapsingHeader::new("Sound and appearance")
+            theme::surface(ui, |ui| {
+                ui.weak("Make Octave feel and sound right for you");
+                egui::CollapsingHeader::new("Sound and appearance")
             .default_open(crate::argument("--page").as_deref()==Some("settings"))
             .show(ui, |ui| {
-                ui.label("Track transitions");
+                ui.add_space(8.0);
+                ui.strong("Appearance");
+                egui::ComboBox::from_label("Appearance").selected_text(["Dark","Light","High contrast"][usize::from(self.session.appearance.min(2))]).show_ui(ui,|ui| {
+                    for (index,label) in ["Dark","Light","High contrast"].into_iter().enumerate() { ui.selectable_value(&mut self.session.appearance,index as u8,label); }
+                });
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.strong("Track transitions");
                 ui.add(egui::Slider::new(&mut self.crossfade_draft, 0..=5).suffix(" s").text("Crossfade (0 = gapless)"));
                 if ui.button("Apply transition").clicked() {
                     self.halt_at_current_position();
@@ -633,7 +652,10 @@ impl Alpha {
                     self.message = "Transition saved. Press Resume when ready.".into();
                 }
                 ui.weak("If the next song is not ready, it starts normally. Songs with different audio formats join without a fade.");
-                ui.label("Three-band equalizer");
+                ui.add_space(12.0);
+                ui.separator();
+                ui.add_space(12.0);
+                ui.strong("Three-band equalizer");
                 for (index,label) in ["Bass · 100 Hz", "Mid · 1 kHz", "Treble · 10 kHz"].into_iter().enumerate() {
                     ui.add(egui::Slider::new(&mut self.eq_draft.gains_db[index],-12.0..=12.0).suffix(" dB").text(label));
                 }
@@ -647,10 +669,8 @@ impl Alpha {
                         self.message="Equalizer applied. Press Resume when ready.".into();
                     }
                 });
-                egui::ComboBox::from_label("Appearance").selected_text(["Dark","Light","High contrast"][usize::from(self.session.appearance.min(2))]).show_ui(ui,|ui| {
-                    for (index,label) in ["Dark","Light","High contrast"].into_iter().enumerate() { ui.selectable_value(&mut self.session.appearance,index as u8,label); }
-                });
                 ui.weak("EQ and appearance are saved with your listening settings.");
+            });
             });
             if self.applied_appearance != Some(self.session.appearance) {
                 theme::apply(ui.ctx(), self.session.appearance);
@@ -688,6 +708,18 @@ impl Alpha {
             return;
         }
         if self.account_page {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Search music").clicked() {
+                    self.account_page = false;
+                    self.queue_page = false;
+                }
+                if ui.button("Local playlists").clicked() {
+                    self.account_page = false;
+                    self.playlists_page = true;
+                    self.queue_page = false;
+                }
+            });
+            ui.add_space(12.0);
             let action = egui::ScrollArea::vertical()
                 .id_salt("account-page")
                 .max_height(ui.clip_rect().height().max(80.0))
@@ -1233,23 +1265,49 @@ mod tests {
                 events,
                 ..Default::default()
             },
-            |ui| app.content(ui),
+            |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| app.content(ui));
+            },
         );
         output.textures_delta.clear();
         output
     }
     fn click(ctx: &egui::Context, app: &mut Alpha, name: &str) {
-        let output = content_frame(ctx, app, vec![]);
-        let tree = output.platform_output.accesskit_update.unwrap();
-        let bounds = tree
-            .nodes
-            .iter()
-            .find_map(|(_, node)| {
-                (node.label() == Some(name))
-                    .then(|| node.bounds())
-                    .flatten()
-            })
-            .unwrap_or_else(|| panic!("Missing action: {name}"));
+        let mut attempts = 0;
+        let bounds = loop {
+            let output = content_frame(ctx, app, vec![]);
+            let tree = output.platform_output.accesskit_update.unwrap();
+            let bounds = tree
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(name))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap_or_else(|| panic!("Missing action: {name}"));
+            if bounds.y0 >= 0.0 && bounds.y1 <= 740.0 {
+                break bounds;
+            }
+            attempts += 1;
+            assert!(attempts < 12, "Could not scroll to {name}");
+            content_frame(
+                ctx,
+                app,
+                vec![
+                    egui::Event::PointerMoved(egui::pos2(900.0, 400.0)),
+                    egui::Event::MouseWheel {
+                        phase: egui::TouchPhase::Move,
+                        unit: egui::MouseWheelUnit::Point,
+                        delta: egui::vec2(0.0, if bounds.y0 < 0.0 { 180.0 } else { -180.0 }),
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+            for _ in 0..12 {
+                content_frame(ctx, app, vec![]);
+            }
+        };
         let pos = egui::pos2(
             ((bounds.x0 + bounds.x1) / 2.0) as f32,
             ((bounds.y0 + bounds.y1) / 2.0) as f32,

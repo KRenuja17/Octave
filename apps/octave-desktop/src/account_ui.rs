@@ -188,9 +188,21 @@ impl AccountUi {
     }
     pub fn render(&mut self, ui: &mut egui::Ui, current: Option<&Track>) -> Option<Action> {
         let mut action = None;
-        ui.heading("Your music");
-        ui.weak("Account library preview · playback still uses the unsigned resolver.");
+        ui.heading("Account");
+        ui.weak("Your YouTube Music library in Octave.");
+        ui.add_space(18.0);
         if self.account.is_none() {
+            crate::theme::surface(ui, |ui| {
+                ui.strong("Not connected");
+                ui.add_space(8.0);
+                ui.label("Search, listening and local playlists are available without connecting an account.");
+                ui.add_space(8.0);
+                ui.weak("Account library access is experimental. Connecting a library does not enable authenticated playback.");
+            });
+            ui.add_space(12.0);
+            crate::theme::surface(ui, |ui| {
+                ui.weak("Optional · advanced beta connection");
+                egui::CollapsingHeader::new("Connection options").show(ui, |ui| {
             ui.label("Connect an existing YouTube Music browser session. Octave never asks for your Google password and keeps the session in memory only.");
             ui.hyperlink_to("Open YouTube Music to sign in", "https://music.youtube.com");
             ui.collapsing("How to connect", |ui| {
@@ -202,6 +214,7 @@ impl AccountUi {
                     .password(true)
                     .hint_text("Cookie header value")
                     .char_limit(16384)
+                    .margin(egui::vec2(12.0, 10.0))
                     .desired_width(f32::INFINITY),
             );
             ui.add(
@@ -224,66 +237,73 @@ impl AccountUi {
                     Err(error) => self.message = error.to_string(),
                 }
             }
+            });
+            });
         } else {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(if self.verified {
-                    "Session connected"
-                } else {
-                    "Session not yet verified"
-                });
-                if ui.button("Disconnect").clicked() {
-                    self.disconnect();
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                for (label, id) in [
-                    ("Liked songs", "VLLM"),
-                    ("Library songs", "FEmusic_liked_videos"),
-                    ("Albums", "FEmusic_liked_albums"),
-                    ("Playlists", "FEmusic_liked_playlists"),
-                ] {
-                    if ui
-                        .add_enabled(self.pending.is_none(), egui::Button::new(label))
-                        .clicked()
-                    {
-                        self.browse(id.into(), false);
-                    }
-                }
-                if ui
-                    .add_enabled(self.pending.is_none(), egui::Button::new("Refresh"))
-                    .clicked()
-                {
-                    self.browse(self.browse_id.clone(), false);
-                }
-            });
-            if let Some(track) = current {
+            crate::theme::surface(ui, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    ui.label(format!("Current song: {}", track.title));
-                    for (label, liked) in [("Like song", true), ("Remove like", false)] {
+                    ui.label(if self.verified {
+                        "Session connected"
+                    } else {
+                        "Session not yet verified"
+                    });
+                    if ui.button("Disconnect").clicked() {
+                        self.disconnect();
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    for (label, id) in [
+                        ("Liked songs", "VLLM"),
+                        ("Library songs", "FEmusic_liked_videos"),
+                        ("Albums", "FEmusic_liked_albums"),
+                        ("Playlists", "FEmusic_liked_playlists"),
+                    ] {
                         if ui
-                            .add_enabled(
-                                self.pending.is_none() && self.verified,
-                                egui::Button::new(label),
-                            )
+                            .add_enabled(self.pending.is_none(), egui::Button::new(label))
                             .clicked()
                         {
-                            self.rate(track.clone(), liked);
+                            self.browse(id.into(), false);
                         }
                     }
-                    if let Some(liked) = self.ratings.get(&track.id.0) {
-                        ui.weak(if *liked {
-                            "Confirmed liked"
-                        } else {
-                            "Confirmed not liked"
-                        });
+                    if ui
+                        .add_enabled(self.pending.is_none(), egui::Button::new("Refresh"))
+                        .clicked()
+                    {
+                        self.browse(self.browse_id.clone(), false);
                     }
                 });
-            }
+                if let Some(track) = current {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(format!("Current song: {}", track.title));
+                        for (label, liked) in [("Like song", true), ("Remove like", false)] {
+                            if ui
+                                .add_enabled(
+                                    self.pending.is_none() && self.verified,
+                                    egui::Button::new(label),
+                                )
+                                .clicked()
+                            {
+                                self.rate(track.clone(), liked);
+                            }
+                        }
+                        if let Some(liked) = self.ratings.get(&track.id.0) {
+                            ui.weak(if *liked {
+                                "Confirmed liked"
+                            } else {
+                                "Confirmed not liked"
+                            });
+                        }
+                    });
+                }
+            });
         }
         if self.pending.is_some() {
             ui.spinner();
         }
-        ui.label(&self.message);
+        if !self.message.is_empty() {
+            ui.add_space(10.0);
+            ui.label(&self.message);
+        }
         let mut chosen = None;
         let mut unlike = None;
         egui::ScrollArea::vertical()
@@ -360,6 +380,42 @@ impl AccountUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn signed_out_view_is_idle_and_connection_form_is_collapsed() {
+        for width in [480.0, 1100.0] {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut account = AccountUi::default();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width, 760.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| {
+                    assert!(account.render(ui, None).is_none());
+                },
+            );
+            output.textures_delta.clear();
+            let tree = output.platform_output.accesskit_update.unwrap();
+            assert!(
+                tree.nodes
+                    .iter()
+                    .any(|(_, n)| n.label() == Some("Connection options"))
+            );
+            assert!(
+                !tree
+                    .nodes
+                    .iter()
+                    .any(|(_, n)| n.label() == Some("Connect session"))
+            );
+            assert!(
+                account.account.is_none() && account.pending.is_none() && account.cookie.is_empty()
+            );
+        }
+    }
     #[test]
     fn paged_results_deduplicate_and_large_library_is_virtualized() {
         let mut account = AccountUi::default();
