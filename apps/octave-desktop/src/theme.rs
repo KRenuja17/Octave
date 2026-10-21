@@ -158,7 +158,11 @@ pub fn surface<R>(
     egui::Frame::new()
         .fill(ui.visuals().window_fill)
         .corner_radius(12.0)
-        .inner_margin(16.0)
+        .inner_margin(if ui.available_width() < 600.0 {
+            12.0
+        } else {
+            16.0
+        })
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);

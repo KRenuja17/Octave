@@ -415,7 +415,14 @@ impl Alpha {
             if let Some(track) = self.session.current() {
                 self.artwork.show(ui, &track.id.0, &track.title, 48.0);
             } else {
-                theme::cover(ui, 48.0);
+                theme::cover(
+                    ui,
+                    if ui.available_width() < 600.0 {
+                        32.0
+                    } else {
+                        48.0
+                    },
+                );
             }
             ui.add_space(8.0);
             ui.vertical(|ui| {
@@ -539,11 +546,28 @@ impl Alpha {
             self.queue_page = false;
         }
     }
+    fn page_scroll(&mut self, ui: &mut egui::Ui) {
+        let page = if self.settings_page {
+            4
+        } else if self.playlists_page {
+            3
+        } else if self.account_page {
+            2
+        } else if self.queue_page {
+            1
+        } else {
+            0
+        };
+        egui::ScrollArea::vertical()
+            .id_salt(("listening-page", page))
+            .auto_shrink([false, false])
+            .show(ui, |ui| self.content_body(ui));
+    }
     fn content(&mut self, ui: &mut egui::Ui) {
         if ui.available_width() >= 850.0 {
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
-                    egui::vec2(168.0, 0.0),
+                    egui::vec2(168.0, ui.available_height()),
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.heading("Octave");
@@ -556,20 +580,24 @@ impl Alpha {
                     },
                 );
                 ui.separator();
-                ui.add_space(20.0);
+                ui.add_space(16.0);
                 let width = ui.available_width();
                 ui.vertical(|ui| {
                     ui.set_width(width);
                     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-                    self.content_body(ui);
+                    self.page_scroll(ui);
                 });
             });
         } else {
-            ui.heading("Octave");
-            ui.horizontal_wrapped(|ui| self.navigation(ui));
+            ui.label(egui::RichText::new("Octave").strong().size(20.0));
+            ui.scope(|ui| {
+                ui.spacing_mut().button_padding = egui::vec2(8.0, 6.0);
+                ui.spacing_mut().item_spacing.x = 10.0;
+                ui.horizontal_wrapped(|ui| self.navigation(ui));
+            });
             ui.separator();
-            ui.add_space(12.0);
-            self.content_body(ui);
+            ui.add_space(6.0);
+            self.page_scroll(ui);
         }
     }
     fn content_body(&mut self, ui: &mut egui::Ui) {
@@ -1132,13 +1160,13 @@ impl eframe::App for Alpha {
             .frame(
                 egui::Frame::new()
                     .fill(ui.visuals().panel_fill)
-                    .inner_margin(egui::Margin::symmetric(28, 20)),
+                    .inner_margin(if ui.available_width() < 850.0 {
+                        egui::Margin::symmetric(14, 12)
+                    } else {
+                        egui::Margin::symmetric(28, 20)
+                    }),
             )
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("listening-content")
-                    .show(ui, |ui| self.content(ui));
-            });
+            .show(ui, |ui| self.content(ui));
         self.frames += 1;
         if std::env::args().any(|s| s == "--smoke-test") && self.loaded && self.frames >= 3 {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -1265,9 +1293,7 @@ mod tests {
                 events,
                 ..Default::default()
             },
-            |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| app.content(ui));
-            },
+            |ui| app.content(ui),
         );
         output.textures_delta.clear();
         output
@@ -1327,6 +1353,60 @@ mod tests {
                 ],
             );
         }
+    }
+    #[test]
+    fn navigation_stays_fixed_while_settings_scroll_and_can_switch_pages() {
+        let path = path("fixed-navigation");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        click(&ctx, &mut app, "Settings");
+        click(&ctx, &mut app, "Sound and appearance");
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        let bounds = |output: egui::FullOutput, name: &str| {
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(name))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap()
+        };
+        let nav_before = bounds(content_frame(&ctx, &mut app, vec![]), "Settings");
+        let control_before = bounds(content_frame(&ctx, &mut app, vec![]), "Apply transition");
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(900.0, 400.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -240.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        let nav_after = bounds(content_frame(&ctx, &mut app, vec![]), "Settings");
+        let control_after = bounds(content_frame(&ctx, &mut app, vec![]), "Apply transition");
+        assert!((nav_before.y0 - nav_after.y0).abs() < 1.0);
+        assert!(control_after.y0 < control_before.y0);
+        click(&ctx, &mut app, "Account");
+        assert!(app.account_page && !app.settings_page);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn search_results_to_queue_and_clear_work_through_widgets() {
