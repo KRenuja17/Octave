@@ -176,15 +176,48 @@ mod tests {
     fn live_unsigned_lyrics_reach_the_panel() {
         let id = TrackId("dQw4w9WgXcQ".into());
         let mut app = LyricsUi::default();
+        load_live(&mut app, &id);
+    }
+
+    #[test]
+    #[ignore = "Opt-in unsigned timed-lyrics requests; no audio or account access"]
+    fn live_unsigned_timed_lyrics_reach_the_panel() {
+        let mut app = LyricsUi::default();
+        for raw in ["hpSrLjc5SMs", "6Zt4P1scOwE"] {
+            let id = TrackId(raw.into());
+            load_live(&mut app, &id);
+            let lyrics = app.lyrics.as_ref().unwrap();
+            assert!(
+                !lyrics.cues.is_empty(),
+                "Expected genuine line timings for {raw}"
+            );
+            let count = lyrics.cues.len();
+            let output = frame(&mut app, &id);
+            let tree = output.platform_output.accesskit_update.unwrap();
+            assert!(tree.nodes.iter().any(|(_, node)| {
+                node.label() == Some("Text from YouTube Music · line timings loaded")
+                    || node.value() == Some("Text from YouTube Music · line timings loaded")
+            }));
+            println!("live_timed_panel=true track={raw} cues={count}");
+        }
+        // Switching back to a plain recording must discard the prior cue map.
+        let id = TrackId("dQw4w9WgXcQ".into());
         frame(&mut app, &id);
+        assert!(app.lyrics.is_none());
+        load_live(&mut app, &id);
+    }
+
+    fn load_live(app: &mut LyricsUi, id: &TrackId) {
+        frame(app, id);
         app.load_current();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         while !app.settled() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            frame(&mut app, &id);
+            frame(app, id);
         }
         assert!(app.settled(), "Lyrics worker did not finish");
         let lyrics = app.lyrics.as_ref().expect("Live song should have lyrics");
+        assert_eq!(&lyrics.track_id, id);
         assert!(!lyrics.text.trim().is_empty());
         assert!(!lyrics.source.trim().is_empty());
         assert!(app.message.is_empty());
@@ -216,10 +249,12 @@ mod tests {
         assert!(!lyrics_error(Error::Http(403)).contains("stream"));
     }
 
-    fn frame(app: &mut LyricsUi, id: &TrackId) {
+    fn frame(app: &mut LyricsUi, id: &TrackId) -> egui::FullOutput {
         let ctx = egui::Context::default();
+        ctx.enable_accesskit();
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.render(ui, Some(id)));
         output.textures_delta.clear();
+        output
     }
     #[test]
     fn track_changes_discard_old_lyrics_and_pending_responses() {

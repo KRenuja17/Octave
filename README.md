@@ -372,10 +372,16 @@ This opt-in check depends on live song availability and prints counts, not lyric
 
 To probe actual timestamp availability, run
 `cargo test -p octave-provider --locked live_unsigned_timed_lyrics -- --ignored --nocapture`.
-This stricter feasibility check requires real cues on at least two of five public
-tracks. On 22 October 2026 all five returned attributed text but no cue ranges,
-so this opt-in gate currently fails; unsigned live timing support is **unverified**.
+This stricter feasibility check requires real cues on at least two of seven public
+recordings. On 22 October 2026 it passed: `hpSrLjc5SMs` returned 40 timed lines
+(0–222950 ms), and `6Zt4P1scOwE` returned 51 (250–271640 ms), with attribution.
+The five original music-video examples returned text without cue ranges. Coverage
+depends on the exact recording; Octave preserves that identity and never substitutes
+timings from a different version of a song. Extra visitor/mobile context did not
+change those results in the tested requests. No sign-in or audio playback was used.
 The deterministic fixture/fallback tests pass independently of this service gate.
+To verify actual cues reach the desktop worker and its timing-status label, run
+`cargo test -p octave-desktop --locked live_unsigned_timed_lyrics_reach_the_panel -- --ignored --nocapture`.
 For native visual verification, use an isolated restored queue profile with
 `--data-dir EXTERNAL_PROFILE --page lyrics --capture EXTERNAL_IMAGE.png --capture-load-lyrics`.
 The last flag explicitly requests lyrics once for the current song; it only applies

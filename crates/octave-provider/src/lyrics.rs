@@ -182,7 +182,10 @@ mod tests {
         super::parse(value, &TrackId("aaaaaaaaaaa".into()))
     }
     fn timed(lines: Value) -> Value {
-        json!({"contents":{"timedLyricsModel":{"timedLyricsData":lines,"sourceMessage":"Original fixture attribution"}}})
+        // Actual mobile renderer nesting, with independently authored fixture text.
+        json!({"contents":{"elementRenderer":{"newElement":{"type":{"componentType":{"model":{
+            "timedLyricsModel":{"lyricsData":{"timedLyricsData":lines,"sourceMessage":"Original fixture attribution"}}
+        }}}}}}})
     }
     fn line(text: &str, start: Value, end: Value) -> Value {
         json!({"lyricLine":text,"cueRange":{"startTimeMilliseconds":start,"endTimeMilliseconds":end}})
@@ -275,7 +278,12 @@ mod tests {
     fn live_unsigned_timed_lyrics() {
         let provider = Provider::new().unwrap();
         let mut timed_count = 0;
+        // Exact recording IDs matter: the original five music-video examples
+        // serve valid text without cueRange. Include upstream public test tracks
+        // whose unsigned responses have real timings; retain the plain examples.
         for raw in [
+            "hpSrLjc5SMs",
+            "6Zt4P1scOwE",
             "dQw4w9WgXcQ",
             "kJQP7kiw5Fk",
             "hT_nvWreIhg",
@@ -286,6 +294,7 @@ mod tests {
                 .lyrics(&TrackId(raw.into()))
                 .unwrap()
                 .expect("Lyrics available");
+            assert_eq!(lyrics.track_id.0, raw);
             println!(
                 "track={raw} cues={} characters={} attribution={} first_ms={:?} last_ms={:?}",
                 lyrics.cues.len(),
