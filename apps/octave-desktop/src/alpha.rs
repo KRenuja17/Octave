@@ -791,7 +791,12 @@ impl Alpha {
             page
         };
         let mut scroll = egui::ScrollArea::vertical()
-            .id_salt(("listening-page", page, song))
+            .id_salt((
+                "listening-page",
+                page,
+                song,
+                self.catalog_page.then_some(&self.catalog.route),
+            ))
             .auto_shrink([false, false]);
         if top {
             scroll = scroll.vertical_scroll_offset(0.0);

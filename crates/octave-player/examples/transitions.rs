@@ -16,7 +16,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("Probe needs a track longer than 30 seconds".into());
     }
     let modes = match std::env::args().nth(2) {
-        Some(value) => vec![value.parse::<u8>()?.min(5)],
+        Some(value) => vec![
+            value
+                .parse::<u8>()?
+                .min(octave_player::MAX_CROSSFADE_SECONDS),
+        ],
         None => vec![0, 3],
     };
     for fade in modes {

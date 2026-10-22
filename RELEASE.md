@@ -21,9 +21,11 @@ aside and rename the retained backup to `Octave`; rerun its installer from a
 separate extracted copy if shortcut/uninstall registration needs repair. Keep
 backups until the upgraded application has been tested. Never remove your listening
 profile as part of application rollback. Database downgrades are not implemented.
-The transition update migrates listening schemas 1/2 to 3. Back up the profile
-before upgrading if rollback to an older binary may be needed; those binaries
-reject schema 3. Local playlists retain their separate database and format.
+The listening update migrates older profiles transactionally to schema 8, retaining
+queue order/occurrences, position and sound settings, and adding view preferences,
+history and pins. Back up the profile before upgrading if an older binary may be
+needed; older binaries reject schema 8. Local playlists use a separate database
+and migrate to schema 2 to preserve repeated recordings. Downgrades are unsupported.
 
 ## Signed update groundwork
 
@@ -46,8 +48,8 @@ only exact length and SHA-256 verified files are promoted from partial downloads
 
 ## Limitations and remaining release gates
 
-The implemented playback contract is deliberately narrow: unsigned direct AAC-LC
-itag 140 streams only, with typed failures for restricted/ciphered/unavailable
+The implemented playback contract is deliberately narrow: unsigned supported direct AAC-LC/MP4
+streams, choosing the highest reported supported offered bitrate, with typed failures for restricted/ciphered/unavailable
 responses. Reported quality is shown in the transport. No embedded JavaScript
 resolver has been adopted; broader service compatibility is an unresolved
 feasibility decision, not an implied capability of the Rust-only implementation.
@@ -86,3 +88,18 @@ headers, signed media URLs, raw HTTP responses, browser data, or your listening
 database. Review screenshots for account names and private library contents.
 Disconnect and quit to release the memory-only account session. An in-flight
 request can retain its copy until its bounded timeout expires.
+
+## Listening-experience acceptance
+
+Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
+complete public playlists, local history/pins, unsigned catalog and longer
+standard fades have offline fixture coverage. Translation HTTP and Discord IPC
+fixtures pass; real configured LibreTranslate and Discord application/desktop
+acceptance remain open. No default translation server or Discord application ID
+is supplied. API keys/session credentials remain in memory.
+
+The adaptive module is an isolated local analysis experiment, not production
+adaptive audio. Native video is deferred. Account/Premium, screen-reader/RTL,
+physical audio/device latency, fresh-machine/GPU/scaling and signing acceptance
+must remain explicit before a public listening-experience release. Headless
+frame measurements and silent native captures do not establish those outcomes.

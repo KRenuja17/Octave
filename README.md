@@ -332,8 +332,9 @@ rotates fixture pages and scrolls for repeatable artwork/browsing measurements.
 Network and decoding work stays off the UI and audio callback. Each of the active
 and upcoming transports retains one 256 KiB payload block, independent of track
 duration. Ordinary playback queues three roughly 100 ms PCM blocks. Transitions
-add bounded outgoing tail, incoming head and mixed PCM buffers of up to five
-seconds each (plus a 100 ms block), never whole tracks. The audio
+add bounded outgoing tail, incoming head and mixed PCM buffers, each at most
+8 MiB (plus a 100 ms block), supporting up to 12 seconds at 48kHz stereo.
+Whole tracks are never buffered. The audio
 callback reads PCM only. New commands replace pending work; generation checks
 reject stale audio and results. In-flight HTTP work may take up to its 12-second
 timeout to relinquish the worker, while stop silences queued audio immediately.
@@ -351,10 +352,10 @@ During playback, the transport shows **AAC**, the service-reported bitrate (or
 follow the active track across gapless/crossfade transitions, and clear during a
 new load or Stop. They describe the selected unsigned stream; they do not imply
 Premium access, lossless audio, a measured bitrate, or the hardware output format.
-The resolver accepts only direct itag 140 audio/MP4 with the AAC-LC codec declared
-in its MIME type. Unexpected codecs are reported as unsupported.
+The resolver selects the highest reported bitrate among direct audio/MP4 formats
+that declare the supported AAC-LC codec. Unexpected codecs are unsupported.
 
-Only direct AAC/MP4 streams (itag 140) are supported. No account login, Premium
+Only supported direct AAC/MP4 streams are playable. No authenticated playback, Premium
 validation, cipher/JavaScript resolver, live-stream support or automatic
 device-switch recovery is implemented. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
@@ -420,7 +421,7 @@ To verify actual cues reach the desktop worker and its timing-status label, run
 For native visual verification, use an isolated restored queue profile with
 `--data-dir EXTERNAL_PROFILE --page lyrics --capture EXTERNAL_IMAGE.png --capture-load-lyrics`.
 The last flag explicitly requests lyrics once for the current song; it only applies
-in capture mode. Normal navigation never fetches lyrics automatically.
+in capture mode. Normal navigation fetches lyrics only when the optional auto-load preference is enabled.
 
 
 ### Focus and listening panel
@@ -496,3 +497,21 @@ retried after disconnect. Configuration without an application ID never opens IP
 Only fixture transport acceptance has run; real Discord/endpoint acceptance remains
 pending configuration. Idle UI repainting is reduced; artwork/lyrics/motion do not
 force continuous idle animation.
+
+### Adaptive analysis experiment
+
+`cargo run -p octave-player --example adaptive_analysis --release --locked`
+benchmarks generated PCM silently. With two local file paths it analyzes up to
+60 seconds of outgoing tail and incoming intro through the Rust decoder. No
+network, audio output, new runtime or model is needed. It keeps at most 6,000
+10ms energy bins per window and supports cancellation. Periodic onset estimates
+propose a confidence-scored tempo/energy candidate; uncertain/incompatible pairs
+return a natural transition decision. This research module does not change the
+production player or enable an Adaptive mode. Its source-time mapping fixtures
+cover skipped intros, repeated occurrences and stretching. Real music, vocals,
+phrases, musical downbeats, bass handoff and controlled listening remain future
+validation/DSP work; a synthetic pulse result does not prove those capabilities.
+
+Native video is deferred until a supported video resolver/decoder and a shared
+clock/audio owner are proven. The listening release remains audio-first, with no
+embedded browser, FFmpeg runtime or Visual Studio requirement added by this work.

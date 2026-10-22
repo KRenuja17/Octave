@@ -1,4 +1,5 @@
 //! Playback and next-track preparation workers, bounded PCM, and generation cancellation.
+pub mod adaptive;
 mod devices;
 mod equalizer;
 mod playback;

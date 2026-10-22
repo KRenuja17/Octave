@@ -604,8 +604,7 @@ impl CatalogUi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn large_catalog_virtualizes_rows_filters_without_replacing_queue_and_routes_safely() {
+    fn fixture() -> CatalogUi {
         let mut catalog = CatalogUi::at("FEmusic_explore".into());
         catalog.active = catalog.route.clone();
         let mut page = CatalogPage {
@@ -626,6 +625,11 @@ mod tests {
             })
             .collect();
         catalog.page = Some(page);
+        catalog
+    }
+    #[test]
+    fn large_catalog_virtualizes_rows_filters_without_replacing_queue_and_routes_safely() {
+        let mut catalog = fixture();
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         crate::theme::install(&ctx);
@@ -668,5 +672,48 @@ mod tests {
         output.textures_delta.clear();
         assert!(catalog.page.is_none());
         assert_eq!(catalog.active, "local:history");
+    }
+    #[test]
+    #[ignore = "opt-in headless frame measurement; no GPU or physical input acceptance"]
+    fn catalog_scrolling_frame_measurement() {
+        let mut catalog = fixture();
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        let mut times = Vec::new();
+        for frame in 0..140 {
+            let start = std::time::Instant::now();
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    time: Some(frame as f64 / 60.0),
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1180.0, 760.0),
+                    )),
+                    events: vec![
+                        egui::Event::PointerMoved(egui::pos2(800.0, 600.0)),
+                        egui::Event::MouseWheel {
+                            phase: egui::TouchPhase::Move,
+                            unit: egui::MouseWheelUnit::Point,
+                            delta: egui::vec2(0.0, -100.0),
+                            modifiers: egui::Modifiers::NONE,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                |ui| {
+                    assert!(catalog.render(ui, &[], &[], None).is_none());
+                },
+            );
+            output.textures_delta.clear();
+            if frame >= 20 {
+                times.push(start.elapsed().as_secs_f64() * 1000.0);
+            }
+        }
+        times.sort_by(f64::total_cmp);
+        println!(
+            "catalog_headless tracks=1753 collections=1000 frames=120 p50_ms={:.3} p95_ms={:.3} max_ms={:.3}",
+            times[60], times[114], times[119]
+        );
+        assert_eq!(catalog.song_indices.len(), 1753);
     }
 }

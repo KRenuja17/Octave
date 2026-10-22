@@ -2,15 +2,20 @@
 use octave_core::Track;
 use octave_player::{PlaybackState, Snapshot};
 use serde_json::{Value, json};
+#[cfg(target_os = "windows")]
+use std::time::Instant;
+#[cfg(any(target_os = "windows", test))]
+use std::{io, time::Duration};
 use std::{
-    io,
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
+#[cfg(any(target_os = "windows", test))]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(any(target_os = "windows", test))]
 const PACKET_LIMIT: usize = 65536;
 pub fn valid_id(id: &str) -> bool {
     (17..=20).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
@@ -46,6 +51,7 @@ fn activity(track: Option<&Track>, snapshot: &Snapshot) -> Option<Value> {
     }
     Some(value)
 }
+#[cfg(any(target_os = "windows", test))]
 async fn write_packet<T: AsyncWrite + Unpin>(
     stream: &mut T,
     opcode: u32,
@@ -59,6 +65,7 @@ async fn write_packet<T: AsyncWrite + Unpin>(
     stream.write_all(body).await?;
     stream.flush().await
 }
+#[cfg(any(target_os = "windows", test))]
 async fn read_packet<T: AsyncRead + Unpin>(stream: &mut T) -> io::Result<(u32, Vec<u8>)> {
     let opcode = stream.read_u32_le().await?;
     let len = stream.read_u32_le().await? as usize;
@@ -69,6 +76,7 @@ async fn read_packet<T: AsyncRead + Unpin>(stream: &mut T) -> io::Result<(u32, V
     stream.read_exact(&mut body).await?;
     Ok((opcode, body))
 }
+#[cfg(any(target_os = "windows", test))]
 async fn response<T: AsyncRead + AsyncWrite + Unpin>(stream: &mut T) -> io::Result<Value> {
     for _ in 0..8 {
         let (op, body) = read_packet(stream).await?;
@@ -83,6 +91,7 @@ async fn response<T: AsyncRead + AsyncWrite + Unpin>(stream: &mut T) -> io::Resu
     }
     Err(io::ErrorKind::InvalidData.into())
 }
+#[cfg(any(target_os = "windows", test))]
 async fn handshake<T: AsyncRead + AsyncWrite + Unpin>(stream: &mut T, id: &str) -> io::Result<()> {
     write_packet(
         stream,
@@ -96,6 +105,7 @@ async fn handshake<T: AsyncRead + AsyncWrite + Unpin>(stream: &mut T, id: &str) 
     }
     Ok(())
 }
+#[cfg(any(target_os = "windows", test))]
 async fn publish<T: AsyncRead + AsyncWrite + Unpin>(
     stream: &mut T,
     activity: Option<&Value>,
@@ -139,10 +149,13 @@ impl Presence {
                 .char_limit(20),
         );
         ui.add_enabled(
-            valid_id(id) || *enabled,
+            (cfg!(target_os = "windows") && valid_id(id)) || *enabled,
             egui::Checkbox::new(enabled, "Share current song on Discord"),
         );
         ui.weak("Off by default. Pause/stop clears the song; audio never depends on Discord.");
+        if !cfg!(target_os = "windows") {
+            ui.weak("This Discord adapter currently supports Windows.");
+        }
         ui.weak(self.status());
     }
     pub fn update(&mut self, enabled: bool, id: &str, track: Option<&Track>, snapshot: &Snapshot) {
@@ -282,6 +295,10 @@ fn start_worker() -> Worker {
                 }
             });
         });
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        *worker.status.lock().unwrap() = "Discord integration currently supports Windows".into();
     }
     worker
 }
