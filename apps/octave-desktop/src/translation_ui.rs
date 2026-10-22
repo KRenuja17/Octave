@@ -2,7 +2,7 @@ use eframe::egui;
 use octave_core::lyrics::Lyrics;
 use octave_provider::{
     Error,
-    translation::{TranslatedLyrics, Translator, valid_endpoint},
+    translation::{Language, TranslatedLyrics, Translator, valid_endpoint},
 };
 use std::sync::{
     Arc,
@@ -10,6 +10,7 @@ use std::sync::{
     mpsc::{self, Receiver},
 };
 use zeroize::Zeroizing;
+type LanguageResponse = (String, Receiver<Result<Vec<Language>, Error>>);
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Mode {
     #[default]
@@ -30,6 +31,10 @@ pub struct TranslationUi {
     cancel: Arc<AtomicBool>,
     message: String,
     cache: std::collections::VecDeque<TranslatedLyrics>,
+    languages: Vec<Language>,
+    language_endpoint: String,
+    language_rx: Option<LanguageResponse>,
+    language_message: String,
 }
 impl Default for TranslationUi {
     fn default() -> Self {
@@ -46,6 +51,10 @@ impl Default for TranslationUi {
             cancel: Default::default(),
             message: String::new(),
             cache: Default::default(),
+            languages: Vec::new(),
+            language_endpoint: String::new(),
+            language_rx: None,
+            language_message: String::new(),
         }
     }
 }
@@ -55,7 +64,45 @@ impl Drop for TranslationUi {
     }
 }
 impl TranslationUi {
+    fn poll_languages(&mut self, ctx: &egui::Context) {
+        if self.language_endpoint != self.endpoint {
+            self.languages.clear();
+            self.language_message.clear();
+            self.language_endpoint = self.endpoint.clone();
+        }
+        let result = self
+            .language_rx
+            .as_ref()
+            .and_then(|(endpoint, rx)| match rx.try_recv() {
+                Ok(result) => Some((endpoint.clone(), result)),
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    Some((endpoint.clone(), Err(Error::Network)))
+                }
+                Err(mpsc::TryRecvError::Empty) => None,
+            });
+        if let Some((endpoint, result)) = result {
+            self.language_rx = None;
+            if endpoint == self.endpoint {
+                match result {
+                    Ok(languages) => {
+                        self.language_message = format!(
+                            "{} server languages confirmed · no lyrics submitted",
+                            languages.len()
+                        );
+                        self.languages = languages;
+                    }
+                    Err(_) => self.language_message =
+                        "Could not read this server's languages. Check its URL and availability."
+                            .into(),
+                }
+            }
+        }
+        if self.language_rx.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
+    }
     pub fn settings(&mut self, ui: &mut egui::Ui) {
+        self.poll_languages(ui.ctx());
         ui.strong("Lyric translation · LibreTranslate");
         ui.weak("Use your chosen service or local server. Only Translate submits lyric text; opening a view does not.");
         ui.add(
@@ -82,9 +129,50 @@ impl TranslationUi {
                 "Use HTTPS, or loopback HTTP for a local server. Put API keys in the key field.",
             );
         }
+        if ui
+            .add_enabled(
+                valid_endpoint(&self.endpoint) && self.language_rx.is_none(),
+                egui::Button::new("Check server languages"),
+            )
+            .clicked()
+        {
+            let endpoint = self.endpoint.clone();
+            let (tx, rx) = mpsc::sync_channel(1);
+            self.language_rx = Some((endpoint.clone(), rx));
+            std::thread::spawn(move || {
+                let _ = tx.send(
+                    Translator::new(&endpoint, String::new()).and_then(|server| server.languages()),
+                );
+            });
+        }
+        if self.language_rx.is_some() {
+            ui.spinner();
+        }
+        if !self.language_message.is_empty() {
+            ui.weak(&self.language_message);
+        }
+        if !self.languages.is_empty() {
+            ui.collapsing("Server language names and codes", |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        for language in &self.languages {
+                            ui.label(format!("{} · {}", language.name, language.code));
+                        }
+                    });
+            });
+        }
         ui.weak("Service language availability, terms and request limits depend on your endpoint.");
+        ui.horizontal_wrapped(|ui| {
+            ui.hyperlink_to("Hosted API & keys", "https://portal.libretranslate.com/");
+            ui.hyperlink_to(
+                "Local server setup",
+                "https://docs.libretranslate.com/guides/installation/",
+            );
+        });
     }
     pub fn header(&mut self, ui: &mut egui::Ui, document: Option<&Lyrics>) -> bool {
+        self.poll_languages(ui.ctx());
         let mut changed = false;
         let context = (self.endpoint.clone(), self.target.clone());
         if self.original.as_ref() != document || self.context != context {
@@ -136,7 +224,7 @@ impl TranslationUi {
                 .selected_text(&self.target)
                 .show_ui(ui, |ui| {
                     let query = self.query.to_lowercase();
-                    for (code, name) in [
+                    let common = [
                         ("en", "English"),
                         ("es", "Spanish"),
                         ("fr", "French"),
@@ -146,11 +234,20 @@ impl TranslationUi {
                         ("ru", "Russian"),
                         ("ja", "Japanese"),
                         ("ko", "Korean"),
-                        ("zh", "Chinese"),
+                        ("zh-Hans", "Chinese (Simplified)"),
+                        ("zh-Hant", "Chinese (Traditional)"),
                         ("ar", "Arabic"),
                         ("hi", "Hindi"),
-                        ("si", "Sinhala"),
-                    ] {
+                    ];
+                    let choices: Vec<_> = if self.languages.is_empty() {
+                        common.to_vec()
+                    } else {
+                        self.languages
+                            .iter()
+                            .map(|l| (l.code.as_str(), l.name.as_str()))
+                            .collect()
+                    };
+                    for (code, name) in choices {
                         if query.is_empty()
                             || code.contains(&query)
                             || name.to_lowercase().contains(&query)
@@ -192,6 +289,9 @@ impl TranslationUi {
         });
         if !valid_endpoint(&self.endpoint) {
             ui.weak("Configure a translation endpoint in Settings.");
+        }
+        if self.languages.is_empty() {
+            ui.weak("Common language choices · use Check server languages in Settings to confirm availability.");
         }
         if self.rx.is_some() {
             ui.spinner();
@@ -239,6 +339,32 @@ mod tests {
             app.header(ui, Some(document));
         });
         output.textures_delta.clear();
+    }
+    #[test]
+    fn language_metadata_from_a_previous_endpoint_is_discarded() {
+        let mut app = TranslationUi::default();
+        app.endpoint = "https://first.example.com".into();
+        let ctx = egui::Context::default();
+        app.poll_languages(&ctx);
+        let (tx, rx) = mpsc::channel();
+        app.language_rx = Some((app.endpoint.clone(), rx));
+        app.endpoint = "https://second.example.com".into();
+        tx.send(Ok(vec![Language {
+            code: "en".into(),
+            name: "English".into(),
+        }]))
+        .unwrap();
+        app.poll_languages(&ctx);
+        assert!(app.language_rx.is_none() && app.languages.is_empty());
+        let (tx, rx) = mpsc::channel();
+        app.language_rx = Some((app.endpoint.clone(), rx));
+        tx.send(Ok(vec![Language {
+            code: "es".into(),
+            name: "Spanish".into(),
+        }]))
+        .unwrap();
+        app.poll_languages(&ctx);
+        assert_eq!(app.languages[0].code, "es");
     }
     #[test]
     fn old_song_responses_are_discarded_and_failed_refresh_keeps_original_and_translation() {

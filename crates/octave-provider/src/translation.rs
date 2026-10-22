@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
+// Compatible with the hosted service's documented 2,000-character input limit.
+const MAX_BATCH_CHARS: usize = 2000;
 
 pub struct Translator {
     endpoint: Url,
@@ -19,6 +21,41 @@ pub struct TranslatedLyrics {
     pub original: Lyrics,
     pub target: String,
     pub lines: Vec<String>,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Language {
+    pub code: String,
+    pub name: String,
+}
+fn language_code(code: &str) -> bool {
+    (2..=12).contains(&code.len())
+        && code
+            .split('-')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphabetic()))
+}
+fn parse_languages(value: &Value) -> Result<Vec<Language>, Error> {
+    let values = value
+        .as_array()
+        .filter(|v| !v.is_empty() && v.len() <= 256)
+        .ok_or(Error::InvalidResponse)?;
+    let mut languages = Vec::new();
+    for value in values {
+        let code = value["code"]
+            .as_str()
+            .filter(|s| language_code(s))
+            .ok_or(Error::InvalidResponse)?;
+        let name = value["name"]
+            .as_str()
+            .filter(|s| !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control))
+            .ok_or(Error::InvalidResponse)?;
+        if !languages.iter().any(|l: &Language| l.code == code) {
+            languages.push(Language {
+                code: code.into(),
+                name: name.into(),
+            });
+        }
+    }
+    Ok(languages)
 }
 pub fn valid_endpoint(endpoint: &str) -> bool {
     endpoint_url(endpoint).is_some()
@@ -42,6 +79,9 @@ fn endpoint_url(endpoint: &str) -> Option<Url> {
     if !url.path().trim_end_matches('/').ends_with("/translate") {
         let path = format!("{}/translate", url.path().trim_end_matches('/'));
         url.set_path(&path);
+    } else {
+        let path = url.path().trim_end_matches('/').to_owned();
+        url.set_path(&path);
     }
     Some(url)
 }
@@ -63,15 +103,36 @@ impl Translator {
                 .map_err(network)?,
         })
     }
+    /// Explicit public metadata lookup; no lyrics, cookies or API key submitted.
+    pub fn languages(&self) -> Result<Vec<Language>, Error> {
+        let mut url = self.endpoint.clone();
+        url.set_path(&format!(
+            "{}/languages",
+            self.endpoint.path().trim_end_matches("/translate")
+        ));
+        let response = self.client.get(url).send().map_err(network)?;
+        if !response.status().is_success() {
+            return Err(Error::Http(response.status().as_u16()));
+        }
+        let mut bytes = Vec::new();
+        response
+            .take(256 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::Network)?;
+        if bytes.len() > 256 * 1024 {
+            return Err(Error::InvalidResponse);
+        }
+        parse_languages(
+            &serde_json::from_slice::<Value>(&bytes).map_err(|_| Error::InvalidResponse)?,
+        )
+    }
     pub fn translate(
         &self,
         original: &Lyrics,
         target: &str,
         cancelled: impl Fn() -> bool,
     ) -> Result<TranslatedLyrics, Error> {
-        if !(2..=12).contains(&target.len())
-            || !target.bytes().all(|b| b.is_ascii_alphabetic() || b == b'-')
-        {
+        if !language_code(target) {
             return Err(Error::InvalidResponse);
         }
         let mut lines: Vec<String> = if original.cues.is_empty() {
@@ -93,10 +154,10 @@ impl Translator {
         let mut count = 0;
         for index in indices {
             let chars = lines[index].chars().count();
-            if chars > 4000 {
+            if chars > MAX_BATCH_CHARS {
                 return Err(Error::InvalidResponse);
             }
-            if !batch.is_empty() && (batch.len() == 24 || count + chars > 4000) {
+            if !batch.is_empty() && (batch.len() == 24 || count + chars > MAX_BATCH_CHARS) {
                 batches.push(std::mem::take(&mut batch));
                 count = 0;
             }
@@ -116,7 +177,7 @@ impl Translator {
             }
             if batch
                 .iter()
-                .any(|&index| lines[index].chars().count() > 4000)
+                .any(|&index| lines[index].chars().count() > MAX_BATCH_CHARS)
             {
                 return Err(Error::InvalidResponse);
             }
@@ -252,6 +313,133 @@ mod tests {
         assert_eq!(
             translator.translate(&original, "es", || true),
             Err(Error::Cancelled)
+        );
+    }
+    #[test]
+    fn unicode_batches_respect_hosted_character_limit_and_keep_line_order() {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+                let mut size = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        size = value.trim().parse::<usize>().unwrap();
+                    }
+                }
+                let mut bytes = vec![0; size];
+                reader.read_exact(&mut bytes).unwrap();
+                let request: Value = serde_json::from_slice(&bytes).unwrap();
+                let lines = request["q"].as_array().unwrap();
+                assert_eq!(lines.len(), 2);
+                assert_eq!(
+                    lines
+                        .iter()
+                        .map(|s| s.as_str().unwrap().chars().count())
+                        .sum::<usize>(),
+                    2000
+                );
+                assert!(request.get("api_key").is_none());
+                let payload = json!({"translatedText":lines}).to_string();
+                write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",payload.len()).unwrap();
+            }
+        });
+        let lines: Vec<_> = ["日", "本", "語", "歌"]
+            .iter()
+            .map(|s| s.repeat(1000))
+            .collect();
+        let document = Lyrics {
+            track_id: octave_core::TrackId("fixture".into()),
+            text: lines.join("\n"),
+            source: "Original fixture".into(),
+            cues: Vec::new(),
+        };
+        let translator = Translator::new(&endpoint, String::new()).unwrap();
+        assert_eq!(
+            translator
+                .translate(&document, "en", || false)
+                .unwrap()
+                .lines,
+            lines
+        );
+        server.join().unwrap();
+        let too_long = Lyrics {
+            text: "A".repeat(2001),
+            ..document
+        };
+        assert_eq!(
+            translator.translate(&too_long, "en", || false),
+            Err(Error::InvalidResponse)
+        );
+    }
+    #[test]
+    fn language_lookup_is_metadata_only_and_validates_server_response() {
+        use std::io::{BufRead, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}/api/translate/", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            assert_eq!(line, "GET /api/languages HTTP/1.1\r\n");
+            loop {
+                line.clear();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+                assert!(
+                    !line.contains("fixture-secret")
+                        && !line.to_ascii_lowercase().starts_with("cookie:")
+                        && !line.to_ascii_lowercase().starts_with("authorization:")
+                );
+            }
+            let payload = r#"[{"code":"en","name":"English"},{"code":"zh-Hans","name":"Chinese"},{"code":"en","name":"Duplicate"}]"#;
+            write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",payload.len()).unwrap();
+        });
+        let languages = Translator::new(&endpoint, "fixture-secret".into())
+            .unwrap()
+            .languages()
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(languages.len(), 2);
+        assert_eq!(languages[1].code, "zh-Hans");
+        for invalid in [
+            json!([]),
+            json!({"languages":[]}),
+            json!([{"code":"--","name":"Invalid"}]),
+            json!([{"code":"en","name":"bad\nname"}]),
+        ] {
+            assert_eq!(parse_languages(&invalid), Err(Error::InvalidResponse));
+        }
+    }
+    #[test]
+    #[ignore = "explicit public language metadata only; never submits lyrics or keys"]
+    fn live_official_translation_language_metadata() {
+        let languages = Translator::new("https://libretranslate.com", String::new())
+            .unwrap()
+            .languages()
+            .unwrap();
+        assert!(languages.iter().any(|l| l.code == "en"));
+        assert!(languages.iter().any(|l| l.code == "es"));
+        println!(
+            "official_translation_languages={} lyrics_submitted=false",
+            languages.len()
         );
     }
     #[test]

@@ -147,7 +147,10 @@ batches and do not claim to retrieve every playlist entry.
 Translation stays off until you request it. Configure a LibreTranslate-compatible
 HTTPS endpoint (loopback HTTP is allowed) in Settings, optionally enter an API key
 for that run, then select a language and Translate in Lyrics. Original,
-Translation and Both share the original cue identities. Keys and translated
+Translation and Both share the original cue identities. **Check server languages**
+fetches only public language metadata, then the menu uses that server's choices.
+Common choices are labeled until checked; custom codes remain available in Settings.
+Requests batch at most 2,000 characters and preserve line order. Keys and translated
 lyrics are memory-only. No default public translation service is contacted.
 
 Discord Rich Presence is off by default. Supply your public Discord application
