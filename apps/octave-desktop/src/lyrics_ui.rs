@@ -14,12 +14,14 @@ impl LyricsUi {
     #[cfg(test)]
     pub(crate) fn reading_fixture(id: TrackId) -> Self {
         Self {
-            id: Some(id),
+            id: Some(id.clone()),
             lyrics: Some(Lyrics {
+                track_id: id,
                 text: (0..80)
                     .map(|i| format!("Original fixture line {i}\n"))
                     .collect(),
                 source: "Original test fixture".into(),
+                cues: Vec::new(),
             }),
             ..Self::default()
         }
@@ -95,7 +97,17 @@ impl LyricsUi {
                 self.load_current();
             }
         });
-        ui.weak("Text from YouTube Music · not time-synced");
+        ui.weak(
+            if self
+                .lyrics
+                .as_ref()
+                .is_some_and(|lyrics| !lyrics.cues.is_empty())
+            {
+                "Text from YouTube Music · line timings loaded"
+            } else {
+                "Text from YouTube Music · not time-synced"
+            },
+        );
         if let Some(lyrics) = &self.lyrics
             && !lyrics.source.trim().is_empty()
         {
@@ -166,7 +178,7 @@ mod tests {
         let mut app = LyricsUi::default();
         frame(&mut app, &id);
         app.load_current();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
         while !app.settled() && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(50));
             frame(&mut app, &id);
@@ -188,8 +200,10 @@ mod tests {
         let mut app = LyricsUi::default();
         frame(&mut app, &id);
         let original = Lyrics {
+            track_id: id.clone(),
             text: "Original test verse\n\nSecond stanza".into(),
             source: "Test source".into(),
+            cues: Vec::new(),
         };
         app.lyrics = Some(original.clone());
         let (tx, rx) = mpsc::sync_channel(1);
@@ -216,10 +230,12 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1);
         app.response = Some(rx);
         tx.send((
-            old,
+            old.clone(),
             Ok(Some(Lyrics {
+                track_id: old,
                 text: "Original test verse".into(),
                 source: "Test fixture".into(),
+                cues: Vec::new(),
             })),
         ))
         .unwrap();

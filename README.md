@@ -120,9 +120,10 @@ Windows. The tray offers Show, Play/pause, Previous, Next, Stop and Quit. In
 otherwise closing quits normally. Tray failure always leaves normal close-to-quit
 behavior. Quit stops playback and saves listening state.
 
-**Lyrics → Load lyrics** fetches optional plain lyrics/source from YouTube Music
+**Lyrics → Load lyrics** fetches optional lyrics/source from YouTube Music
 on a separate worker. Missing lyrics or request failure never controls playback.
-Lyrics are not saved and are not synchronized to playback in this preview.
+The unsigned Rust provider requests mobile line timings, with a plain-text web
+fallback on failure. Lyrics are not saved or synchronized to playback in this preview.
 
 ## Local Windows package
 
@@ -354,6 +355,10 @@ Use **Now playing** in the bottom player for larger artwork and song details.
 The listening view has **Now playing**, **Up next**, and **Lyrics** tabs; switching
 tabs does not start playback or change the queue. Queue navigation opens Up next.
 Lyrics load only when requested, show their source, and are not time-synced.
+The provider retains service-supplied line cues when valid, along with exact track
+identity and attribution. Missing, overlapping, reversed, or malformed timings
+remain plain text; no timestamps are estimated. The panel indicates when line
+timings were loaded, but highlighting and follow scrolling are still pending.
 Unavailable lyrics can be retried; changing songs discards the old song's text.
 The lyrics page scrolls as one reading surface, with attribution beside the header
 and responsive text sizes. Reloading retains the current text if the request fails.
@@ -364,6 +369,13 @@ Compact lyrics use a smaller song header to leave more room above the fixed play
 To explicitly verify the unsigned lyrics worker and panel without audio, run
 `cargo test -p octave-desktop --locked live_unsigned_lyrics_reach_the_panel -- --ignored --nocapture`.
 This opt-in check depends on live song availability and prints counts, not lyrics.
+
+To probe actual timestamp availability, run
+`cargo test -p octave-provider --locked live_unsigned_timed_lyrics -- --ignored --nocapture`.
+This stricter feasibility check requires real cues on at least two of five public
+tracks. On 22 October 2026 all five returned attributed text but no cue ranges,
+so this opt-in gate currently fails; unsigned live timing support is **unverified**.
+The deterministic fixture/fallback tests pass independently of this service gate.
 For native visual verification, use an isolated restored queue profile with
 `--data-dir EXTERNAL_PROFILE --page lyrics --capture EXTERNAL_IMAGE.png --capture-load-lyrics`.
 The last flag explicitly requests lyrics once for the current song; it only applies
