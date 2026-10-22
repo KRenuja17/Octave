@@ -357,6 +357,9 @@ Lyrics load only when requested, show their source, and are not time-synced.
 Unavailable lyrics can be retried; changing songs discards the old song's text.
 The lyrics page scrolls as one reading surface, with attribution beside the header
 and responsive text sizes. Reloading retains the current text if the request fails.
+Listening tabs stay visible while reading, with **Back to top** available in Lyrics.
+Reading positions are separate for each song; a new song starts at the beginning.
+Compact lyrics use a smaller song header to leave more room above the fixed player.
 
 To explicitly verify the unsigned lyrics worker and panel without audio, run
 `cargo test -p octave-desktop --locked live_unsigned_lyrics_reach_the_panel -- --ignored --nocapture`.

@@ -522,9 +522,12 @@ impl Alpha {
             ui.weak("Choose a song from Search or load a local playlist.");
             return;
         };
+        let compact = ui.available_width() < 600.0;
         theme::surface(ui, |ui| {
             ui.horizontal_top(|ui| {
-                let size = if lyrics {
+                let size = if lyrics && compact {
+                    40.0
+                } else if lyrics {
                     64.0
                 } else if ui.available_width() < 600.0 {
                     112.0
@@ -535,15 +538,19 @@ impl Alpha {
                 ui.add_space(12.0);
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
-                    ui.weak(if lyrics { "Lyrics for" } else { "Now playing" });
+                    if !lyrics || !compact {
+                        ui.weak(if lyrics { "Lyrics for" } else { "Now playing" });
+                    }
                     ui.add(
-                        egui::Label::new(
-                            egui::RichText::new(&track.title).strong().size(if lyrics {
+                        egui::Label::new(egui::RichText::new(&track.title).strong().size(
+                            if lyrics && compact {
+                                17.0
+                            } else if lyrics {
                                 20.0
                             } else {
                                 26.0
-                            }),
-                        )
+                            },
+                        ))
                         .wrap(),
                     );
                     if !track.artists.is_empty() {
@@ -621,10 +628,44 @@ impl Alpha {
         } else {
             0
         };
-        egui::ScrollArea::vertical()
-            .id_salt(("listening-page", page))
-            .auto_shrink([false, false])
-            .show(ui, |ui| self.content_body(ui));
+        let listening =
+            self.queue_page && !self.settings_page && !self.playlists_page && !self.account_page;
+        let mut top = false;
+        if listening {
+            ui.horizontal_wrapped(|ui| {
+                ui.selectable_value(&mut self.listening_tab, 0, "Now playing");
+                ui.selectable_value(&mut self.listening_tab, 1, "Up next");
+                ui.selectable_value(&mut self.listening_tab, 2, "Lyrics");
+                if self.listening_tab == 2 {
+                    top = ui.small_button("Back to top").clicked();
+                }
+            });
+            ui.add_space(8.0);
+            ui.separator();
+        }
+        // Each song starts at the beginning; returning to it preserves its reading position.
+        let song = (listening && self.listening_tab == 2)
+            .then(|| self.session.current().map(|t| t.id.0.clone()))
+            .flatten();
+        let page = if listening {
+            10 + self.listening_tab
+        } else {
+            page
+        };
+        let mut scroll = egui::ScrollArea::vertical()
+            .id_salt(("listening-page", page, song))
+            .auto_shrink([false, false]);
+        if top {
+            scroll = scroll.vertical_scroll_offset(0.0);
+        } else if crate::argument("--capture").is_some()
+            && std::env::args().any(|s| s == "--capture-scroll")
+            && self.frames >= 40
+            && self.lyrics.settled()
+        {
+            // Deterministic preview position even when the native window lacks pointer focus.
+            scroll = scroll.vertical_scroll_offset(520.0);
+        }
+        scroll.show(ui, |ui| self.content_body(ui));
     }
     fn content(&mut self, ui: &mut egui::Ui) {
         if ui.available_width() >= 850.0 {
@@ -833,31 +874,24 @@ impl Alpha {
             ui.colored_label(egui::Color32::LIGHT_RED, "Local storage is unavailable. This session may not survive restart; existing data has been left intact.");
         }
         ui.add_space(12.0);
-        if self.queue_page {
-            ui.horizontal_wrapped(|ui| {
-                ui.selectable_value(&mut self.listening_tab, 0, "Now playing");
-                ui.selectable_value(&mut self.listening_tab, 1, "Up next");
-                ui.selectable_value(&mut self.listening_tab, 2, "Lyrics");
-            });
-            ui.add_space(16.0);
-            if self.listening_tab != 1 {
-                self.now_playing(ui, self.listening_tab == 2);
-                if self.listening_tab == 2 {
-                    ui.add_space(16.0);
-                    theme::surface(ui, |ui| {
-                        self.lyrics
-                            .render(ui, self.session.current().map(|t| &t.id));
-                        if self.capture_load_lyrics
-                            && self.loaded
-                            && self.session.current().is_some()
-                        {
-                            self.capture_load_lyrics = false;
-                            self.lyrics.load_current();
-                        }
-                    });
-                }
-                return;
+        if self.queue_page && self.listening_tab != 1 {
+            self.now_playing(ui, self.listening_tab == 2);
+            if self.listening_tab == 2 {
+                ui.add_space(if ui.available_width() < 600.0 {
+                    8.0
+                } else {
+                    16.0
+                });
+                theme::surface(ui, |ui| {
+                    self.lyrics
+                        .render(ui, self.session.current().map(|t| &t.id));
+                    if self.capture_load_lyrics && self.loaded && self.session.current().is_some() {
+                        self.capture_load_lyrics = false;
+                        self.lyrics.load_current();
+                    }
+                });
             }
+            return;
         }
         if self.queue_page {
             ui.horizontal_wrapped(|ui| {
@@ -1181,24 +1215,6 @@ impl Drop for Alpha {
     }
 }
 impl eframe::App for Alpha {
-    fn raw_input_hook(&mut self, _ctx: &egui::Context, input: &mut egui::RawInput) {
-        if crate::argument("--capture").is_some()
-            && std::env::args().any(|s| s == "--capture-scroll")
-            && (25..32).contains(&self.frames)
-        {
-            let rect = input.screen_rect.unwrap_or(egui::Rect::from_min_size(
-                egui::Pos2::ZERO,
-                egui::vec2(560.0, 720.0),
-            ));
-            input.events.push(egui::Event::PointerMoved(rect.center()));
-            input.events.push(egui::Event::MouseWheel {
-                unit: egui::MouseWheelUnit::Point,
-                delta: egui::vec2(0.0, -100.0),
-                phase: egui::TouchPhase::Move,
-                modifiers: egui::Modifiers::NONE,
-            });
-        }
-    }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll();
         let commands = self.desktop.as_ref().map(|d| d.drain()).unwrap_or_default();
@@ -1283,7 +1299,12 @@ impl eframe::App for Alpha {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
             }
             if self.loaded
-                && self.frames >= 30
+                && self.frames
+                    >= if std::env::args().any(|s| s == "--capture-scroll") {
+                        64
+                    } else {
+                        30
+                    }
                 && self.lyrics.settled()
                 && ((self.artwork.settled()
                     && self.playlists.as_ref().is_none_or(|p| p.settled())
@@ -1495,6 +1516,97 @@ mod tests {
         drop(app);
         std::fs::remove_file(path).unwrap();
     }
+    #[test]
+    fn lyrics_scroll_keeps_tabs_fixed_and_top_and_song_switch_reset_reading() {
+        let path = path("lyrics-scroll");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.session.position = 42.0;
+        app.queue_page = true;
+        app.listening_tab = 2;
+        app.lyrics = crate::lyrics_ui::LyricsUi::reading_fixture(track(1).id);
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        let bounds = |output: egui::FullOutput, name: &str| {
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(name) || node.value() == Some(name))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap_or_else(|| panic!("Missing {name}"))
+        };
+        content_frame(&ctx, &mut app, vec![]);
+        let tab = bounds(content_frame(&ctx, &mut app, vec![]), "Up next");
+        let line = bounds(
+            content_frame(&ctx, &mut app, vec![]),
+            "Original fixture line 0",
+        );
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(900.0, 400.0)),
+                egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -150.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        let scrolled = bounds(
+            content_frame(&ctx, &mut app, vec![]),
+            "Original fixture line 0",
+        );
+        let fixed = bounds(content_frame(&ctx, &mut app, vec![]), "Up next");
+        assert!(scrolled.y0 < line.y0 - 100.0);
+        assert!((fixed.y0 - tab.y0).abs() < 1.0);
+        click(&ctx, &mut app, "Back to top");
+        let reset = bounds(
+            content_frame(&ctx, &mut app, vec![]),
+            "Original fixture line 0",
+        );
+        assert!((reset.y0 - line.y0).abs() < 1.0);
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(900.0, 400.0)),
+                egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -150.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..20 {
+            content_frame(&ctx, &mut app, vec![]);
+        }
+        app.session.queue.push(track(2));
+        app.session.cursor = 1;
+        app.lyrics = crate::lyrics_ui::LyricsUi::reading_fixture(track(2).id);
+        let next = bounds(
+            content_frame(&ctx, &mut app, vec![]),
+            "Original fixture line 0",
+        );
+        assert!((next.y0 - line.y0).abs() < 1.0);
+        assert_eq!(app.session.position, 42.0);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[test]
     fn listening_tabs_preserve_queue_position_without_starting_playback() {
         let path = path("listening-tabs");

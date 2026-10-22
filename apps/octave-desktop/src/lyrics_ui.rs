@@ -11,6 +11,20 @@ pub struct LyricsUi {
     message: String,
 }
 impl LyricsUi {
+    #[cfg(test)]
+    pub(crate) fn reading_fixture(id: TrackId) -> Self {
+        Self {
+            id: Some(id),
+            lyrics: Some(Lyrics {
+                text: (0..80)
+                    .map(|i| format!("Original fixture line {i}\n"))
+                    .collect(),
+                source: "Original test fixture".into(),
+            }),
+            ..Self::default()
+        }
+    }
+
     pub fn settled(&self) -> bool {
         self.response.is_none()
     }
