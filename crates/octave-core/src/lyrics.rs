@@ -25,12 +25,20 @@ impl Lyrics {
     /// Provider validation guarantees sorted, nonoverlapping cue ranges.
     pub fn active_at(&self, position: Duration) -> Option<usize> {
         let ms = position.as_millis();
-        let index = self
-            .cues
-            .partition_point(|cue| u128::from(cue.start_ms) <= ms);
-        index
-            .checked_sub(1)
-            .filter(|&i| ms < u128::from(self.cues[i].end_ms))
+        self.anchor_at(position).filter(|&i| {
+            u128::from(self.cues[i].start_ms) <= ms && ms < u128::from(self.cues[i].end_ms)
+        })
+    }
+    /// Read near the preceding line in gaps, without highlighting it.
+    pub fn anchor_at(&self, position: Duration) -> Option<usize> {
+        if self.cues.is_empty() {
+            return None;
+        }
+        Some(
+            self.cues
+                .partition_point(|cue| u128::from(cue.start_ms) <= position.as_millis())
+                .saturating_sub(1),
+        )
     }
 }
 
@@ -96,6 +104,7 @@ mod tests {
             ],
         };
         let at = |ms| doc.active_at(Duration::from_millis(ms));
+        assert_eq!(doc.anchor_at(Duration::from_millis(2500)), Some(0));
         assert_eq!(
             [at(0), at(1000), at(1999), at(2000), at(3000), at(4000)],
             [None, Some(0), Some(0), None, Some(1), None]

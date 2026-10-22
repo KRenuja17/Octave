@@ -2,6 +2,7 @@
 pub mod account;
 pub mod lyrics;
 pub mod range;
+pub mod related;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
 use reqwest::blocking::Client;
 use serde_json::{Value, json};
@@ -63,6 +64,16 @@ pub struct Provider {
 impl Provider {
     /// Public video artwork only; never sends account credentials.
     pub fn thumbnail(&self, id: &TrackId) -> Result<Vec<u8>, Error> {
+        self.thumbnail_tier(id, false)
+    }
+    /// A bounded larger artwork tier for Focus. Missing high-res art falls back.
+    pub fn thumbnail_large(&self, id: &TrackId) -> Result<Vec<u8>, Error> {
+        match self.thumbnail_tier(id, true) {
+            Err(Error::Http(404)) => self.thumbnail(id),
+            result => result,
+        }
+    }
+    fn thumbnail_tier(&self, id: &TrackId, large: bool) -> Result<Vec<u8>, Error> {
         if id.0.len() != 11
             || !id
                 .0
@@ -73,7 +84,11 @@ impl Provider {
         }
         let response = self
             .client
-            .get(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", id.0))
+            .get(format!(
+                "https://i.ytimg.com/vi/{}/{}.jpg",
+                id.0,
+                if large { "maxresdefault" } else { "hqdefault" }
+            ))
             .timeout(Duration::from_secs(5))
             .send()
             .map_err(network)?;
@@ -82,10 +97,10 @@ impl Provider {
         }
         let mut bytes = Vec::new();
         response
-            .take(512 * 1024 + 1)
+            .take(2 * 1024 * 1024 + 1)
             .read_to_end(&mut bytes)
             .map_err(|_| Error::Network)?;
-        if bytes.len() > 512 * 1024 {
+        if bytes.len() > 2 * 1024 * 1024 {
             return Err(Error::InvalidResponse);
         }
         Ok(bytes)

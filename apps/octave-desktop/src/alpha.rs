@@ -12,6 +12,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+#[path = "listening_scene.rs"]
+mod scene;
 
 pub fn run() -> eframe::Result {
     let path = crate::argument("--data-dir")
@@ -49,6 +51,8 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    focus: bool,
+    history: crate::shell::History,
     listening_tab: u8,
     artwork: crate::song_artwork::SongArtwork,
     settings_page: bool,
@@ -62,6 +66,7 @@ struct Alpha {
     output_ui: crate::output_ui::OutputUi,
     lyrics: crate::lyrics_ui::LyricsUi,
     account: crate::account_ui::AccountUi,
+    related: crate::related_ui::RelatedUi,
     account_page: bool,
     desktop: Option<crate::desktop::Desktop>,
     quitting: bool,
@@ -88,11 +93,14 @@ struct Alpha {
     seek: Option<f64>,
     frames: u32,
     capture_requested: bool,
+    capture_ready_at: Option<Instant>,
     capture_load_lyrics: bool,
 }
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            focus: crate::argument("--page").as_deref() == Some("focus"),
+            history: crate::shell::History::default(),
             listening_tab: match crate::argument("--page").as_deref() {
                 Some("now-playing") => 0,
                 Some("lyrics") => 2,
@@ -113,6 +121,7 @@ impl Alpha {
             output_ui: crate::output_ui::OutputUi::default(),
             lyrics: crate::lyrics_ui::LyricsUi::default(),
             account: crate::account_ui::AccountUi::default(),
+            related: crate::related_ui::RelatedUi::default(),
             account_page: false,
             desktop: None,
             quitting: false,
@@ -142,6 +151,7 @@ impl Alpha {
             seek: None,
             frames: 0,
             capture_requested: false,
+            capture_ready_at: None,
             capture_load_lyrics: crate::argument("--capture").is_some()
                 && std::env::args().any(|s| s == "--capture-load-lyrics"),
         }
@@ -514,6 +524,15 @@ impl Alpha {
                 self.account_page = false;
                 self.playlists_page = false;
             }
+            if ui.button("Focus").clicked() {
+                self.focus = true;
+            }
+            if ui.button("Side panel").clicked() {
+                self.session.view.panel_open = !self.session.view.panel_open;
+                if ui.available_width() < 850.0 {
+                    self.show_compact_panel();
+                }
+            }
         });
     }
     fn now_playing(&mut self, ui: &mut egui::Ui, lyrics: bool) {
@@ -672,6 +691,47 @@ impl Alpha {
         scroll.show(ui, |ui| self.content_body(ui));
     }
     fn content(&mut self, ui: &mut egui::Ui) {
+        if self.applied_appearance != Some(self.session.appearance) {
+            theme::apply(ui.ctx(), self.session.appearance);
+            self.applied_appearance = Some(self.session.appearance);
+        }
+
+        self.history.record(self.destination());
+        if self.focus {
+            self.focus_view(ui);
+            return;
+        }
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(self.history.can_back(), egui::Button::new("← Back"))
+                .clicked()
+                && let Some(target) = self.history.back()
+            {
+                self.navigate(target);
+            }
+            if ui
+                .add_enabled(self.history.can_forward(), egui::Button::new("Forward →"))
+                .clicked()
+                && let Some(target) = self.history.forward()
+            {
+                self.navigate(target);
+            }
+            ui.checkbox(&mut self.session.view.panel_open, "Listening panel");
+        });
+        if self.session.view.panel_open && ui.available_width() >= 1100.0 {
+            self.companion(ui);
+        } else if self.session.view.panel_open && ui.available_width() < 1100.0 {
+            ui.horizontal_wrapped(|ui| {
+                if ui.small_button("Open queue").clicked() {
+                    self.session.view.panel_tab = 0;
+                    self.show_compact_panel();
+                }
+                if ui.small_button("Open lyrics").clicked() {
+                    self.session.view.panel_tab = 1;
+                    self.show_compact_panel();
+                }
+            });
+        }
         if ui.available_width() >= 850.0 {
             ui.horizontal_top(|ui| {
                 ui.allocate_ui_with_layout(
@@ -772,6 +832,7 @@ impl Alpha {
             .default_open(crate::argument("--page").as_deref()==Some("settings"))
             .show(ui, |ui| {
                 ui.add_space(8.0);
+                ui.checkbox(&mut self.session.view.reduced_motion, "Reduce motion");
                 ui.strong("Appearance");
                 egui::ComboBox::from_label("Appearance").selected_text(["Dark","Light","High contrast"][usize::from(self.session.appearance.min(2))]).show_ui(ui,|ui| {
                     for (index,label) in ["Dark","Light","High contrast"].into_iter().enumerate() { ui.selectable_value(&mut self.session.appearance,index as u8,label); }
@@ -887,29 +948,7 @@ impl Alpha {
                     16.0
                 });
                 theme::surface(ui, |ui| {
-                    let snapshot = self.player.snapshot();
-                    let can_seek = match &snapshot.state {
-                        PlaybackState::Playing(id) | PlaybackState::Paused(id) => {
-                            self.session.current().is_some_and(|track| &track.id == id)
-                        }
-                        _ => false,
-                    };
-                    self.lyrics.playhead(
-                        Duration::from_secs_f64(self.session.position.max(0.0)),
-                        can_seek,
-                    );
-                    if let Some(position) = self
-                        .lyrics
-                        .render(ui, self.session.current().map(|t| &t.id))
-                    {
-                        self.player.seek(position);
-                        self.session.position = position.as_secs_f64();
-                        self.seek = None;
-                    }
-                    if self.capture_load_lyrics && self.loaded && self.session.current().is_some() {
-                        self.capture_load_lyrics = false;
-                        self.lyrics.load_current();
-                    }
+                    self.render_lyrics(ui);
                 });
             }
             return;
@@ -1238,6 +1277,22 @@ impl Drop for Alpha {
 impl eframe::App for Alpha {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll();
+        let reduce_motion = self.session.view.reduced_motion || self.session.appearance == 2;
+        ui.ctx().style_mut_of(
+            if self.session.appearance == 1 {
+                egui::Theme::Light
+            } else {
+                egui::Theme::Dark
+            },
+            |style| {
+                style.animation_time = if reduce_motion { 0.0 } else { 0.18 };
+                style.scroll_animation = if reduce_motion {
+                    egui::style::ScrollAnimation::none()
+                } else {
+                    egui::style::ScrollAnimation::default()
+                };
+            },
+        );
         let commands = self.desktop.as_ref().map(|d| d.drain()).unwrap_or_default();
         for command in commands {
             self.desktop_command(command, ui.ctx());
@@ -1295,6 +1350,15 @@ impl eframe::App for Alpha {
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if let Some(path) = crate::argument("--capture") {
+            if self.loaded
+                && self.artwork.settled()
+                && self.lyrics.settled()
+                && !self.capture_load_lyrics
+            {
+                self.capture_ready_at.get_or_insert_with(Instant::now);
+            } else {
+                self.capture_ready_at = None;
+            }
             let image = ui.input(|i| {
                 i.events.iter().find_map(|e| {
                     if let egui::Event::Screenshot { image, .. } = e {
@@ -1332,6 +1396,9 @@ impl eframe::App for Alpha {
                     && !self.searching
                     && self.debounce.is_none())
                     || self.frames >= 240)
+                && self
+                    .capture_ready_at
+                    .is_some_and(|ready| ready.elapsed() >= Duration::from_millis(600))
                 && !self.capture_requested
             {
                 ui.ctx()
@@ -1534,6 +1601,54 @@ mod tests {
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn focus_and_companion_navigation_preserve_the_listening_session() {
+        let path = path("focus-companion");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.session.position = 42.0;
+        app.lyrics = crate::lyrics_ui::LyricsUi::reading_fixture(track(1).id);
+        let original = app.session.queue.clone();
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        theme::install(&ctx);
+        app.focus = true;
+        let output = content_frame(&ctx, &mut app, vec![]);
+        assert!(
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .any(|(_, node)| node.label() == Some("← Leave Focus"))
+        );
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Escape,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!app.focus);
+        app.session.view.panel_open = true;
+        app.session.view.panel_tab = 1;
+        content_frame(&ctx, &mut app, vec![]);
+        assert_eq!(app.session.queue, original);
+        assert_eq!(app.session.position, 42.0);
+        assert!(matches!(app.player.snapshot().state, PlaybackState::Idle));
+        app.session.view.panel_tab = 0;
+        app.show_compact_panel();
+        assert!(app.queue_page && app.listening_tab == 1);
+        app.navigate(crate::shell::Destination::Search);
+        assert!(!app.queue_page);
         drop(app);
         std::fs::remove_file(path).unwrap();
     }

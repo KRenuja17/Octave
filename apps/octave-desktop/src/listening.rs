@@ -2,6 +2,25 @@
 use octave_core::Track;
 
 pub const MAX_QUEUE: usize = 500;
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewPreferences {
+    pub panel_open: bool,
+    pub panel_width: f32,
+    pub panel_tab: u8,
+    pub lyrics_only: bool,
+    pub reduced_motion: bool,
+}
+impl Default for ViewPreferences {
+    fn default() -> Self {
+        Self {
+            panel_open: false,
+            panel_width: 360.0,
+            panel_tab: 0,
+            lyrics_only: false,
+            reduced_motion: false,
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Repeat {
     #[default]
@@ -20,6 +39,7 @@ impl Repeat {
 }
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
+    pub view: ViewPreferences,
     pub crossfade: u8,
     pub equalizer: octave_player::Equalizer,
     pub appearance: u8,
@@ -32,6 +52,7 @@ pub struct Session {
 impl Default for Session {
     fn default() -> Self {
         Self {
+            view: ViewPreferences::default(),
             crossfade: 0,
             equalizer: octave_player::Equalizer::default(),
             appearance: 0,

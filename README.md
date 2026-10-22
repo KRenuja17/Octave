@@ -388,3 +388,21 @@ For native visual verification, use an isolated restored queue profile with
 `--data-dir EXTERNAL_PROFILE --page lyrics --capture EXTERNAL_IMAGE.png --capture-load-lyrics`.
 The last flag explicitly requests lyrics once for the current song; it only applies
 in capture mode. Normal navigation never fetches lyrics automatically.
+
+
+### Focus and listening panel
+
+**Focus** opens a large-artwork lyrics scene; **Lyrics only** prioritizes reading.
+Compact windows keep a small song header and the same bottom player. Escape or
+**Leave Focus** restores browsing without changing playback. **Side panel** opens
+Queue / Lyrics / Related alongside browsing in wide windows; narrow windows use
+queue/lyrics destinations. Drag the divider or use **Narrower/Wider panel**.
+Back/Forward store destinations without replaying listening actions.
+
+Panel width/tab/visibility, lyrics-only and Reduce motion preferences are saved
+in schema 4. Older binaries reject this newer schema instead of overwriting it.
+High contrast disables motion. Artwork has separate bounded 160/512px tiers
+(96 small and eight large textures); no artwork work runs on the audio thread.
+Lyrics have an eight-document, 15-minute memory cache. Related has eight
+memory-only result sets; **Load related songs** explicitly requests unsigned
+recommendations and offers queue actions. Neither failure interrupts audio.

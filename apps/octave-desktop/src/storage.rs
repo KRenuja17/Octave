@@ -78,7 +78,7 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 3 {
+    if version > 4 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
@@ -97,6 +97,9 @@ fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
         let tx = db.transaction()?;
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN crossfade INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=3;")?;
         tx.commit()?;
+    }
+    if version < 4 {
+        db.execute_batch("CREATE TABLE IF NOT EXISTS view_preferences (singleton INTEGER PRIMARY KEY CHECK(singleton=1), panel_open INTEGER NOT NULL, panel_width REAL NOT NULL, panel_tab INTEGER NOT NULL, lyrics_only INTEGER NOT NULL, reduced_motion INTEGER NOT NULL); PRAGMA user_version=4;")?;
     }
     Ok(())
 }
@@ -128,6 +131,16 @@ fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
         ],
     )?;
     let gains = s.equalizer.sanitized().gains_db;
+    tx.execute(
+        "INSERT OR REPLACE INTO view_preferences VALUES (1,?1,?2,?3,?4,?5)",
+        params![
+            s.view.panel_open,
+            s.view.panel_width.clamp(300.0, 440.0),
+            s.view.panel_tab.min(2),
+            s.view.lyrics_only,
+            s.view.reduced_motion
+        ],
+    )?;
     tx.execute(
         "INSERT OR REPLACE INTO preferences VALUES (1,?1,?2,?3,?4,?5)",
         params![
@@ -179,6 +192,15 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
         s.appearance = row.get::<_, i64>(3)?.clamp(0, 2) as u8;
         s.crossfade = row.get::<_, i64>(4)?.clamp(0, 5) as u8;
     }
+    let mut stmt = db.prepare("SELECT panel_open,panel_width,panel_tab,lyrics_only,reduced_motion FROM view_preferences WHERE singleton=1")?;
+    let mut rows = stmt.query([])?;
+    if let Some(row) = rows.next()? {
+        s.view.panel_open = row.get(0)?;
+        s.view.panel_width = row.get::<_, f32>(1)?.clamp(300.0, 440.0);
+        s.view.panel_tab = row.get::<_, i64>(2)?.clamp(0, 2) as u8;
+        s.view.lyrics_only = row.get(3)?;
+        s.view.reduced_motion = row.get(4)?;
+    }
     Ok(s)
 }
 #[cfg(test)]
@@ -200,12 +222,15 @@ mod tests {
         };
         s.appearance = 2;
         s.crossfade = 4;
+        s.view.panel_open = true;
+        s.view.panel_width = 410.0;
+        s.view.reduced_motion = true;
         save(&mut db, &s).unwrap();
         assert_eq!(load(&db).unwrap(), s);
         assert_eq!(
             db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            3
+            4
         );
     }
     #[test]

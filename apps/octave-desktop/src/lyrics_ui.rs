@@ -3,6 +3,7 @@ use octave_core::TrackId;
 use octave_provider::{Error, Provider, lyrics::Lyrics};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
+use std::{collections::VecDeque, time::Instant};
 type Response = (TrackId, Result<Option<Lyrics>, Error>);
 #[derive(Default)]
 pub struct LyricsUi {
@@ -13,6 +14,7 @@ pub struct LyricsUi {
     reading: octave_core::lyrics::Reading,
     position: Duration,
     can_seek: bool,
+    cache: VecDeque<(Lyrics, Instant)>,
 }
 impl LyricsUi {
     #[cfg(test)]
@@ -81,8 +83,22 @@ impl LyricsUi {
     pub fn render(&mut self, ui: &mut egui::Ui, id: Option<&TrackId>) -> Option<Duration> {
         let mut seek = None;
         if self.id.as_ref() != id {
+            if let Some(document) = self.lyrics.take() {
+                self.cache
+                    .retain(|(cached, _)| cached.track_id != document.track_id);
+                if self.cache.len() == 8 {
+                    self.cache.pop_front();
+                }
+                self.cache.push_back((document, Instant::now()));
+            }
             self.id = id.cloned();
-            self.lyrics = None;
+            self.lyrics = self
+                .cache
+                .iter()
+                .find(|(document, time)| {
+                    Some(&document.track_id) == id && time.elapsed() < Duration::from_secs(900)
+                })
+                .map(|(document, _)| document.clone());
             self.response = None;
             self.message.clear();
             self.reading = Default::default();
@@ -199,7 +215,8 @@ impl LyricsUi {
             if egui::Popup::is_any_open(ui.ctx()) {
                 self.reading.manual();
             }
-            let recenter = self.reading.update(active);
+            let anchor = lyrics.anchor_at(self.position);
+            let recenter = self.reading.update(anchor);
             // The page owns scrolling, keeping artwork, attribution and lyrics in one flow.
             ui.scope(|ui| {
                 ui.set_max_width(ui.available_width().min(720.0));
@@ -239,9 +256,9 @@ impl LyricsUi {
                                 rect.y_range(),
                                 egui::Stroke::new(3.0, ui.visuals().selection.stroke.color),
                             );
-                            if recenter {
-                                response.scroll_to_me(Some(egui::Align::Center));
-                            }
+                        }
+                        if recenter && anchor == Some(index) {
+                            response.scroll_to_me(Some(egui::Align::Center));
                         }
                         if response.clicked() && self.can_seek && !manual {
                             seek = Some(Duration::from_millis(cue.start_ms));
