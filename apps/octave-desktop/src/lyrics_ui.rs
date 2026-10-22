@@ -2,6 +2,7 @@ use eframe::egui;
 use octave_core::TrackId;
 use octave_provider::{Error, Provider, lyrics::Lyrics};
 use std::sync::mpsc::{self, Receiver};
+use std::time::Duration;
 type Response = (TrackId, Result<Option<Lyrics>, Error>);
 #[derive(Default)]
 pub struct LyricsUi {
@@ -9,6 +10,9 @@ pub struct LyricsUi {
     response: Option<Receiver<Response>>,
     lyrics: Option<Lyrics>,
     message: String,
+    reading: octave_core::lyrics::Reading,
+    position: Duration,
+    can_seek: bool,
 }
 impl LyricsUi {
     #[cfg(test)]
@@ -45,12 +49,43 @@ impl LyricsUi {
         });
     }
 
-    pub fn render(&mut self, ui: &mut egui::Ui, id: Option<&TrackId>) {
+    pub fn playhead(&mut self, position: Duration, can_seek: bool) {
+        self.position = position;
+        self.can_seek = can_seek;
+    }
+
+    pub fn manual(&mut self) {
+        self.reading.manual();
+    }
+
+    pub fn controls(&mut self, ui: &mut egui::Ui) {
+        if self
+            .lyrics
+            .as_ref()
+            .is_some_and(|lyrics| !lyrics.cues.is_empty())
+        {
+            if self.reading.following {
+                if ui
+                    .small_button("Following lyrics")
+                    .on_hover_text("Pause automatic scrolling")
+                    .clicked()
+                {
+                    self.reading.manual();
+                }
+            } else if ui.small_button("Resume follow").clicked() {
+                self.reading.resume();
+            }
+        }
+    }
+
+    pub fn render(&mut self, ui: &mut egui::Ui, id: Option<&TrackId>) -> Option<Duration> {
+        let mut seek = None;
         if self.id.as_ref() != id {
             self.id = id.cloned();
             self.lyrics = None;
             self.response = None;
             self.message.clear();
+            self.reading = Default::default();
         }
         let result = self
             .response
@@ -65,7 +100,7 @@ impl LyricsUi {
         if let Some((id, result)) = result {
             if self.id.as_ref() == Some(&id) {
                 match result {
-                    Ok(lyrics) => {
+                    Ok(lyrics) if lyrics.as_ref().is_none_or(|lyrics| lyrics.track_id == id) => {
                         self.lyrics = lyrics;
                         self.message = if self.lyrics.is_none() {
                             "No lyrics are available for this song.".into()
@@ -74,6 +109,7 @@ impl LyricsUi {
                         };
                     }
                     Err(error) => self.message = lyrics_error(error).into(),
+                    _ => self.message = lyrics_error(Error::InvalidResponse).into(),
                 }
             }
             self.response = None;
@@ -135,6 +171,35 @@ impl LyricsUi {
             ui.label(&self.message);
         }
         if let Some(lyrics) = &self.lyrics {
+            let manual = ui.input(|input| {
+                let over = input
+                    .pointer
+                    .hover_pos()
+                    .is_some_and(|p| ui.clip_rect().contains(p));
+                (over
+                    && (input
+                        .raw
+                        .events
+                        .iter()
+                        .any(|event| matches!(event, egui::Event::MouseWheel { .. }))
+                        || input.pointer.is_decidedly_dragging()))
+                    || [
+                        egui::Key::PageUp,
+                        egui::Key::PageDown,
+                        egui::Key::Home,
+                        egui::Key::End,
+                    ]
+                    .iter()
+                    .any(|&key| input.key_pressed(key))
+            });
+            if manual {
+                self.reading.manual();
+            }
+            let active = lyrics.active_at(self.position);
+            if egui::Popup::is_any_open(ui.ctx()) {
+                self.reading.manual();
+            }
+            let recenter = self.reading.update(active);
             // The page owns scrolling, keeping artwork, attribution and lyrics in one flow.
             ui.scope(|ui| {
                 ui.set_max_width(ui.available_width().min(720.0));
@@ -143,17 +208,67 @@ impl LyricsUi {
                 } else {
                     26.0
                 };
-                for line in lyrics.text.lines() {
-                    if line.trim().is_empty() {
-                        ui.add_space(18.0);
-                    } else {
-                        ui.add(egui::Label::new(egui::RichText::new(line).size(size)).wrap());
-                        ui.add_space(5.0);
+                if !lyrics.cues.is_empty() {
+                    ui.add_space(ui.clip_rect().height() * 0.25);
+                    for (index, cue) in lyrics.cues.iter().enumerate() {
+                        let current = active == Some(index);
+                        let text = if cue.text.trim().is_empty() {
+                            "♪"
+                        } else {
+                            &cue.text
+                        };
+                        let rich =
+                            egui::RichText::new(text)
+                                .size(size)
+                                .strong()
+                                .color(if current {
+                                    ui.visuals().text_color()
+                                } else {
+                                    ui.visuals().weak_text_color()
+                                });
+                        let response = ui.add(
+                            egui::Button::new(rich)
+                                .wrap()
+                                .frame(current)
+                                .min_size(egui::vec2(ui.available_width(), 42.0)),
+                        );
+                        if current {
+                            let rect = response.rect;
+                            ui.painter().vline(
+                                rect.left() + 2.0,
+                                rect.y_range(),
+                                egui::Stroke::new(3.0, ui.visuals().selection.stroke.color),
+                            );
+                            if recenter {
+                                response.scroll_to_me(Some(egui::Align::Center));
+                            }
+                        }
+                        if response.clicked() && self.can_seek && !manual {
+                            seek = Some(Duration::from_millis(cue.start_ms));
+                            self.reading.resume();
+                        }
+                        response.on_hover_text(if self.can_seek {
+                            "Seek to this line"
+                        } else {
+                            "Start playback to seek to a line"
+                        });
+                        ui.add_space(9.0);
+                    }
+                    ui.add_space(ui.clip_rect().height() * 0.4);
+                } else {
+                    for line in lyrics.text.lines() {
+                        if line.trim().is_empty() {
+                            ui.add_space(18.0);
+                        } else {
+                            ui.add(egui::Label::new(egui::RichText::new(line).size(size)).wrap());
+                            ui.add_space(5.0);
+                        }
                     }
                 }
                 ui.add_space(16.0);
             });
         }
+        seek
     }
 }
 
@@ -171,6 +286,130 @@ fn lyrics_error(error: Error) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn timed_app() -> LyricsUi {
+        let id = TrackId("aaaaaaaaaaa".into());
+        LyricsUi {
+            id: Some(id.clone()),
+            lyrics: Some(Lyrics {
+                track_id: id,
+                text: "First phrase\nSecond phrase".into(),
+                source: "Original fixture".into(),
+                cues: vec![
+                    octave_core::lyrics::LyricCue {
+                        id: 0,
+                        text: "First phrase".into(),
+                        start_ms: 1000,
+                        end_ms: 2000,
+                    },
+                    octave_core::lyrics::LyricCue {
+                        id: 1,
+                        text: "Second phrase".into(),
+                        start_ms: 3000,
+                        end_ms: 4000,
+                    },
+                ],
+            }),
+            position: Duration::from_millis(1500),
+            can_seek: true,
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn timed_click_seeks_but_manual_scroll_and_paging_keep_reading_ownership() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = timed_app();
+        let frame = |app: &mut LyricsUi, events: Vec<egui::Event>| {
+            let mut seek = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(700.0, 600.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    app.controls(ui);
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        seek = app.render(ui, Some(&TrackId("aaaaaaaaaaa".into())));
+                    });
+                },
+            );
+            output.textures_delta.clear();
+            (seek, output)
+        };
+        let (_, output) = frame(&mut app, vec![]);
+        let bounds = output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .find_map(|(_, node)| {
+                (node.label() == Some("First phrase"))
+                    .then(|| node.bounds())
+                    .flatten()
+            })
+            .unwrap();
+        let pos = egui::pos2(
+            (bounds.x0 + bounds.x1) as f32 * 0.5,
+            (bounds.y0 + bounds.y1) as f32 * 0.5,
+        );
+        frame(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let (seek, _) = frame(
+            &mut app,
+            vec![egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert_eq!(seek, Some(Duration::from_millis(1000)));
+        frame(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(400.0, 350.0)),
+                egui::Event::MouseWheel {
+                    phase: egui::TouchPhase::Move,
+                    unit: egui::MouseWheelUnit::Point,
+                    delta: egui::vec2(0.0, -80.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        assert!(!app.reading.following);
+        app.position = Duration::from_millis(3500);
+        frame(&mut app, vec![]);
+        assert!(!app.reading.following);
+        app.reading.resume();
+        frame(
+            &mut app,
+            vec![egui::Event::Key {
+                key: egui::Key::Home,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        assert!(!app.reading.following);
+        app.can_seek = false;
+        assert_eq!(frame(&mut app, vec![]).0, None);
+    }
     #[test]
     #[ignore = "Opt-in unsigned network request; no audio or account access"]
     fn live_unsigned_lyrics_reach_the_panel() {
@@ -252,7 +491,9 @@ mod tests {
     fn frame(app: &mut LyricsUi, id: &TrackId) -> egui::FullOutput {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
-        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.render(ui, Some(id)));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            app.render(ui, Some(id));
+        });
         output.textures_delta.clear();
         output
     }

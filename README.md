@@ -123,7 +123,7 @@ behavior. Quit stops playback and saves listening state.
 **Lyrics → Load lyrics** fetches optional lyrics/source from YouTube Music
 on a separate worker. Missing lyrics or request failure never controls playback.
 The unsigned Rust provider requests mobile line timings, with a plain-text web
-fallback on failure. Lyrics are not saved or synchronized to playback in this preview.
+fallback on failure. Lyrics are not saved. Valid timed lines follow the consumed-audio clock.
 
 ## Local Windows package
 
@@ -354,11 +354,13 @@ is accelerated and emits no audio; real-time network AAC acceptance remains sepa
 Use **Now playing** in the bottom player for larger artwork and song details.
 The listening view has **Now playing**, **Up next**, and **Lyrics** tabs; switching
 tabs does not start playback or change the queue. Queue navigation opens Up next.
-Lyrics load only when requested, show their source, and are not time-synced.
+Lyrics load only when requested and show their source. Timed recordings highlight
+the active line using the same consumed-audio clock as the player.
 The provider retains service-supplied line cues when valid, along with exact track
 identity and attribution. Missing, overlapping, reversed, or malformed timings
-remain plain text; no timestamps are estimated. The panel indicates when line
-timings were loaded, but highlighting and follow scrolling are still pending.
+remain plain text; no timestamps are estimated. Click a timed line during playback or pause to seek without changing play intent.
+Follow centers new active lines; wheel/drag, paging and menus suspend it. Use
+**Resume follow** to return. Plain recordings retain the ordinary reading view.
 Unavailable lyrics can be retried; changing songs discards the old song's text.
 The lyrics page scrolls as one reading surface, with attribution beside the header
 and responsive text sizes. Reloading retains the current text if the request fails.

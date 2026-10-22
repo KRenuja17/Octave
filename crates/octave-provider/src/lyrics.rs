@@ -1,22 +1,7 @@
 use crate::{Error, Provider, WEB_UA, valid_id};
 use octave_core::TrackId;
+pub use octave_core::lyrics::{LyricCue, Lyrics};
 use serde_json::{Value, json};
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Lyrics {
-    pub track_id: TrackId,
-    pub text: String,
-    pub source: String,
-    /// Empty for plain lyrics. Timings are supplied by the service, never estimated.
-    pub cues: Vec<LyricCue>,
-}
-/// A line occurrence in one lyrics document. IDs are stable within that document.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct LyricCue {
-    pub id: usize,
-    pub text: String,
-    pub start_ms: u64,
-    pub end_ms: u64,
-}
 
 impl Provider {
     pub fn lyrics(&self, id: &TrackId) -> Result<Option<Lyrics>, Error> {

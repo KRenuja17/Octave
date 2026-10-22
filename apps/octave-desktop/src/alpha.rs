@@ -638,6 +638,10 @@ impl Alpha {
                 ui.selectable_value(&mut self.listening_tab, 2, "Lyrics");
                 if self.listening_tab == 2 {
                     top = ui.small_button("Back to top").clicked();
+                    if top {
+                        self.lyrics.manual();
+                    }
+                    self.lyrics.controls(ui);
                 }
             });
             ui.add_space(8.0);
@@ -883,8 +887,25 @@ impl Alpha {
                     16.0
                 });
                 theme::surface(ui, |ui| {
-                    self.lyrics
-                        .render(ui, self.session.current().map(|t| &t.id));
+                    let snapshot = self.player.snapshot();
+                    let can_seek = match &snapshot.state {
+                        PlaybackState::Playing(id) | PlaybackState::Paused(id) => {
+                            self.session.current().is_some_and(|track| &track.id == id)
+                        }
+                        _ => false,
+                    };
+                    self.lyrics.playhead(
+                        Duration::from_secs_f64(self.session.position.max(0.0)),
+                        can_seek,
+                    );
+                    if let Some(position) = self
+                        .lyrics
+                        .render(ui, self.session.current().map(|t| &t.id))
+                    {
+                        self.player.seek(position);
+                        self.session.position = position.as_secs_f64();
+                        self.seek = None;
+                    }
                     if self.capture_load_lyrics && self.loaded && self.session.current().is_some() {
                         self.capture_load_lyrics = false;
                         self.lyrics.load_current();
