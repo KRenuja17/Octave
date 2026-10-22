@@ -54,7 +54,7 @@ handoff and remembered device preferences are not implemented yet.
 ## Expansion: sound and appearance
 
 **Settings → Sound and appearance → Track transitions** defaults to gapless playback.
-Set Crossfade to 1–5 seconds and choose **Apply transition** to save it. Applying
+Set Crossfade to 1–12 seconds and choose **Apply transition** to save it. Applying
 stops playback and retains position; Resume uses the new setting. Automatic queue
 advance and repeat use prepared audio on the same output device. Manual skip and
 seek remain immediate cancellation/restart actions.
@@ -82,8 +82,8 @@ decode worker, with independent state for each channel.
 
 Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
 alongside listening state. Transition settings upgrade the listening database to
-schema 5, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
-upgrading if you may need an older binary: older versions cannot read schema 5
+schema 6, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
+upgrading if you may need an older binary: older versions cannot read schema 6
 and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
@@ -400,7 +400,7 @@ queue/lyrics destinations. Drag the divider or use **Narrower/Wider panel**.
 Back/Forward store destinations without replaying listening actions.
 
 Panel width/tab/visibility, lyrics-only and Reduce motion preferences are saved
-in schema 5. Older binaries reject this newer schema instead of overwriting it.
+in schema 6. Older binaries reject this newer schema instead of overwriting it.
 High contrast disables motion. Artwork has separate bounded 160/512px tiers
 (96 small and eight large textures); no artwork work runs on the audio thread.
 Lyrics have an eight-document, 15-minute memory cache. Related has eight
@@ -425,3 +425,19 @@ queue supports a drag handle/drop marker, keyboard menu actions, Play next and
 removal/undo. Undo is available until the next queue edit. Neither undo nor view
 navigation starts playback. Local playlist schema 2 preserves duplicates and adds
 filter/sort presentation without changing saved source order.
+
+
+### Transition status and continuous playback
+
+Settings separates Continuous playback, Prepare the next song, and Gapless /
+Standard crossfade. Blend length supports 1–12 seconds; existing gapless defaults
+survive migration. At unusual rates/channel counts, an 8 MiB per-segment PCM ceiling
+can shorten the fade. Short songs retain at least half their ordinary audio.
+Preparing / Ready / Mixing / Natural transition / preparation failure comes from
+player state. Mixing progress uses actual consumed incoming samples, freezes on
+pause, and is invalidated on seek/skip/output changes. Format mismatches keep a
+natural boundary. No adaptive mixing is implied by the visual status.
+
+**Load lyrics when the song changes** is optional and off by default. It reuses
+exact-ID memory results or requests the new document while a lyrics scene is open.
+Translation will still require its own explicit request.

@@ -144,7 +144,7 @@ fn run(
             continue;
         }
         let count = audio.block_size();
-        let keep = fade * audio.rate.get() as usize * audio.channels.get() as usize;
+        let keep = transition::tail_budget(audio.rate.get(), audio.channels.get(), fade as u8);
         if tail.len() > keep {
             let count = count.min(tail.len() - keep);
             clock.append(output, shared, request, tail.drain(..count).collect());
@@ -188,6 +188,17 @@ fn run(
             );
             clock.append(output, shared, request, remaining);
             let next_clock = Clock::new(&next, clock.sequence + 1);
+            *shared.mix.lock().unwrap() = Some(Mix {
+                generation: request.generation,
+                sequence: next_clock.sequence,
+                outgoing: clock.id.clone(),
+                incoming: next_clock.id.clone(),
+                duration: Duration::from_secs_f64(
+                    mixed.len() as f64
+                        / f64::from(audio.rate.get())
+                        / f64::from(audio.channels.get()),
+                ),
+            });
             next_clock.append(output, shared, request, mixed);
             let count = next.block_size().min(next.head.len());
             next_clock.append(output, shared, request, next.head.drain(..count).collect());
@@ -388,9 +399,20 @@ mod tests {
             )
         });
         let mut samples = Vec::new();
+        let player = Player {
+            shared: shared.clone(),
+        };
+        let mut mix_seen = false;
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while !worker.is_finished() {
             assert!(std::time::Instant::now() < deadline, "render timed out");
+            if let TransitionStatus::Mixing {
+                elapsed, duration, ..
+            } = player.transition_status()
+            {
+                assert!(elapsed < duration);
+                mix_seen = true;
+            }
             // Consume 10 ms per turn; give the producer time to refill its bounded queue.
             if !output.empty() {
                 samples.extend(source.by_ref().take(160));
@@ -398,12 +420,18 @@ mod tests {
             thread::sleep(Duration::from_millis(2));
         }
         worker.join().unwrap().unwrap();
+        if fade > 0 && ready && next_rate == 8000 {
+            assert!(
+                mix_seen,
+                "Mixing must be observable only while mixed samples are consumed"
+            );
+        }
         let snapshot = shared.snapshot.lock().unwrap().clone();
         (samples, snapshot)
     }
     #[test]
     fn prepared_join_and_fade_preserve_samples_through_the_real_output_queue() {
-        for fade in [0, 1, 5] {
+        for fade in [0, 1, 5, 12] {
             let (samples, snapshot) = render(fade, true, 8000);
             let expected = if fade == 0 { 32000 } else { 24000 };
             // Queue keep-alive can append final silence after the last song; never inside the join.

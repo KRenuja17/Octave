@@ -278,7 +278,11 @@ impl Alpha {
         let snapshot = self.player.snapshot();
         self.observe(snapshot);
         self.player
-            .prepare_next(self.session.upcoming().map(|t| t.id.clone()));
+            .prepare_next(if self.session.continuous && self.session.preload {
+                self.session.upcoming().map(|t| t.id.clone())
+            } else {
+                None
+            });
         if self.retry_at.is_some_and(|t| Instant::now() >= t) {
             self.start(false);
         }
@@ -341,7 +345,12 @@ impl Alpha {
             match &snapshot.state {
                 PlaybackState::Ended(_) if !self.ended_seen => {
                     self.ended_seen = true;
-                    self.next(true);
+                    if self.session.continuous {
+                        self.next(true);
+                    } else {
+                        self.halt();
+                        self.message = "Finished. Continuous playback is off.".into();
+                    }
                 }
                 PlaybackState::Failed(_, failure) if !self.failure_seen => {
                     self.failure_seen = true;
@@ -361,6 +370,7 @@ impl Alpha {
         self.transport_snapshot(ui, snapshot);
     }
     fn transport_snapshot(&mut self, ui: &mut egui::Ui, snapshot: Snapshot) {
+        self.mix_status(ui);
         if self.session.current().is_some() {
             let mut seconds = self
                 .seek
@@ -859,8 +869,16 @@ impl Alpha {
                 ui.add_space(12.0);
                 ui.separator();
                 ui.add_space(12.0);
+                ui.checkbox(&mut self.session.view.auto_lyrics,"Load lyrics when the song changes");
                 ui.strong("Track transitions");
-                ui.add(egui::Slider::new(&mut self.crossfade_draft, 0..=5).suffix(" s").text("Crossfade (0 = gapless)"));
+                ui.checkbox(&mut self.session.continuous,"Continuous playback");
+                ui.checkbox(&mut self.session.preload,"Prepare the next song in advance");
+                let mut standard=self.crossfade_draft>0;
+                egui::ComboBox::from_label("Transition style").selected_text(if standard {"Standard crossfade"}else{"Gapless"}).show_ui(ui,|ui| {
+                    if ui.selectable_value(&mut standard,false,"Gapless").clicked(){self.crossfade_draft=0;}
+                    if ui.selectable_value(&mut standard,true,"Standard crossfade").clicked(){self.crossfade_draft=self.crossfade_draft.max(1);}
+                });
+                if standard { ui.add(egui::Slider::new(&mut self.crossfade_draft,1..=octave_player::MAX_CROSSFADE_SECONDS).suffix(" s").text("Blend length")); }
                 if ui.button("Apply transition").clicked() {
                     self.halt_at_current_position();
                     self.session.crossfade = self.crossfade_draft.min(5);
@@ -1655,6 +1673,25 @@ mod tests {
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn continuous_off_finishes_without_advancing_or_autoplay() {
+        let path = path("continuous-off");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.add(track(2), false);
+        app.session.continuous = false;
+        app.observe(Snapshot {
+            state: PlaybackState::Ended(track(1).id),
+            position: Duration::from_secs(60),
+            duration: Duration::from_secs(60),
+            ..Default::default()
+        });
+        assert_eq!(app.session.cursor, 0);
+        assert_eq!(app.session.position, 60.0);
+        assert!(matches!(app.player.snapshot().state, PlaybackState::Idle));
         drop(app);
         std::fs::remove_file(path).unwrap();
     }

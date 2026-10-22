@@ -2,7 +2,16 @@
 use super::*;
 use std::collections::VecDeque;
 
-pub(crate) const MAX_FADE: u8 = 5;
+pub(crate) const MAX_FADE: u8 = 12;
+/// Per-segment PCM ceiling: 8 MiB, plus one 100ms decode block.
+pub(crate) const MAX_TRANSITION_SAMPLES: usize = 2 * 1024 * 1024;
+pub(crate) fn tail_budget(rate: u32, channels: u16, seconds: u8) -> usize {
+    (rate as usize * channels as usize * usize::from(seconds.min(MAX_FADE)))
+        .min(MAX_TRANSITION_SAMPLES)
+        / channels as usize
+        * channels as usize
+}
+
 #[derive(Clone, PartialEq)]
 pub(crate) struct Plan {
     pub generation: u64,
@@ -143,9 +152,7 @@ pub(crate) fn work(shared: Arc<Shared>) {
                 device: None,
             };
             let prepared = Prepared::open(&shared, &request).and_then(|mut p| {
-                let count =
-                    p.rate.get() as usize * p.channels.get() as usize * usize::from(MAX_FADE)
-                        + p.block_size();
+                let count = tail_budget(p.rate.get(), p.channels.get(), MAX_FADE) + p.block_size();
                 p.head = p.read(count)?.into();
                 if p.head.is_empty() {
                     return Err(Failure::Audio("Next track has no audio."));
@@ -192,6 +199,40 @@ pub(crate) fn overlap(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn twelve_second_overlap_preserves_unmixed_audio_and_complementary_gains() {
+        let mut tail = vec![0.5; 14 * 48000 * 2];
+        let mut head = VecDeque::from(vec![-0.5; 14 * 48000 * 2]);
+        let mixed = overlap(&mut tail, &mut head, 2, tail_budget(48000, 2, 12));
+        assert_eq!(mixed.len(), 12 * 48000 * 2);
+        assert_eq!(tail.len(), 2 * 48000 * 2);
+        assert_eq!(head.len(), 2 * 48000 * 2);
+        assert!(tail.iter().all(|sample| *sample == 0.5));
+        assert!(head.iter().all(|sample| *sample == -0.5));
+        assert!(
+            mixed
+                .iter()
+                .all(|sample| sample.is_finite() && sample.abs() <= 0.5)
+        );
+        assert!(
+            mixed
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| frame[0] == frame[1])
+        );
+    }
+    #[test]
+    fn twelve_second_buffers_are_frame_aligned_and_memory_bounded() {
+        assert_eq!(tail_budget(48000, 2, 12), 1_152_000);
+        for rate in [8000, 44100, 48000, 192000] {
+            for channels in [1, 2, 6, 8] {
+                let samples = tail_budget(rate, channels, 12);
+                assert!(samples <= MAX_TRANSITION_SAMPLES);
+                assert_eq!(samples % usize::from(channels), 0);
+            }
+        }
+    }
     #[test]
     fn overlap_is_frame_aligned_bounded_and_preserves_unmixed_samples() {
         let mut tail = vec![0.5; 12];

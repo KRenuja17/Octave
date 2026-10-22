@@ -9,6 +9,7 @@ pub struct ViewPreferences {
     pub panel_tab: u8,
     pub lyrics_only: bool,
     pub reduced_motion: bool,
+    pub auto_lyrics: bool,
 }
 impl Default for ViewPreferences {
     fn default() -> Self {
@@ -18,6 +19,7 @@ impl Default for ViewPreferences {
             panel_tab: 0,
             lyrics_only: false,
             reduced_motion: false,
+            auto_lyrics: false,
         }
     }
 }
@@ -41,6 +43,8 @@ impl Repeat {
 pub struct Session {
     pub view: ViewPreferences,
     pub crossfade: u8,
+    pub continuous: bool,
+    pub preload: bool,
     pub equalizer: octave_player::Equalizer,
     pub appearance: u8,
     pub queue: octave_core::queue::Queue,
@@ -54,6 +58,8 @@ impl Default for Session {
         Self {
             view: ViewPreferences::default(),
             crossfade: 0,
+            continuous: true,
+            preload: true,
             equalizer: octave_player::Equalizer::default(),
             appearance: 0,
             queue: Default::default(),

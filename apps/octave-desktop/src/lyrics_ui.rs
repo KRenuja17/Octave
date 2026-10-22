@@ -15,6 +15,7 @@ pub struct LyricsUi {
     position: Duration,
     can_seek: bool,
     cache: VecDeque<(Lyrics, Instant)>,
+    pub auto_load: bool,
 }
 impl LyricsUi {
     #[cfg(test)]
@@ -102,6 +103,13 @@ impl LyricsUi {
             self.response = None;
             self.message.clear();
             self.reading = Default::default();
+        }
+        if self.auto_load
+            && self.lyrics.is_none()
+            && self.response.is_none()
+            && self.message.is_empty()
+        {
+            self.load_current();
         }
         let result = self
             .response

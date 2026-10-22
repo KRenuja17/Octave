@@ -5,6 +5,34 @@ mod playback;
 mod transition;
 pub use devices::{OutputDevice, output_devices};
 pub use equalizer::Equalizer;
+pub const MAX_CROSSFADE_SECONDS: u8 = transition::MAX_FADE;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransitionMode {
+    Gapless,
+    Standard { seconds: u8 },
+}
+#[derive(Clone, Debug, PartialEq)]
+pub enum TransitionStatus {
+    Idle,
+    Preparing,
+    Ready,
+    PreparationFailed,
+    Mixing {
+        outgoing: TrackId,
+        incoming: TrackId,
+        elapsed: Duration,
+        duration: Duration,
+    },
+    NaturalTransition,
+}
+#[derive(Clone)]
+struct Mix {
+    generation: u64,
+    sequence: u64,
+    outgoing: TrackId,
+    incoming: TrackId,
+    duration: Duration,
+}
 use octave_core::TrackId;
 use octave_provider::{Provider, range::RangeReader};
 use rodio::{Decoder, Source, buffer::SamplesBuffer};
@@ -70,6 +98,7 @@ struct Request {
 }
 #[derive(Default)]
 struct Shared {
+    mix: Mutex<Option<Mix>>,
     preparation: Mutex<transition::Preparation>,
     crossfade: AtomicU32,
     equalizer: Mutex<Equalizer>,
@@ -104,8 +133,19 @@ impl Player {
     pub fn play(&self, id: TrackId) {
         self.request(id, Duration::ZERO, false, Duration::ZERO);
     }
-    /// Zero selects gapless; 1..=5 selects a linear crossfade. Apply stops playback.
+    /// Zero selects gapless; 1..=12 selects a bounded linear crossfade.
     pub fn set_crossfade(&self, seconds: u8) {
+        self.set_transition_mode(if seconds == 0 {
+            TransitionMode::Gapless
+        } else {
+            TransitionMode::Standard { seconds }
+        });
+    }
+    pub fn set_transition_mode(&self, mode: TransitionMode) {
+        let seconds = match mode {
+            TransitionMode::Gapless => 0,
+            TransitionMode::Standard { seconds } => seconds.clamp(1, transition::MAX_FADE),
+        };
         self.stop();
         self.shared.crossfade.store(
             u32::from(seconds.min(transition::MAX_FADE)),
@@ -146,6 +186,42 @@ impl Player {
     /// A preparation failure never interrupts current audio; queue advance retries normally.
     pub fn preparation_failure(&self) -> Option<Failure> {
         self.shared.preparation.lock().unwrap().failure.clone()
+    }
+    pub fn transition_status(&self) -> TransitionStatus {
+        let snapshot = self.snapshot();
+        if !matches!(
+            snapshot.state,
+            PlaybackState::Playing(_) | PlaybackState::Paused(_) | PlaybackState::Loading(_)
+        ) {
+            return TransitionStatus::Idle;
+        }
+        let mix = self.shared.mix.lock().unwrap().clone();
+        if let Some(mix) = mix.filter(|mix| {
+            mix.generation == self.shared.generation.load(Ordering::Acquire)
+                && mix.sequence == snapshot.sequence
+        }) {
+            if !mix.duration.is_zero() && snapshot.position < mix.duration {
+                return TransitionStatus::Mixing {
+                    outgoing: mix.outgoing,
+                    incoming: mix.incoming,
+                    elapsed: snapshot.position,
+                    duration: mix.duration,
+                };
+            }
+            if mix.duration.is_zero() && snapshot.position < Duration::from_secs(1) {
+                return TransitionStatus::NaturalTransition;
+            }
+        }
+        let preparation = self.shared.preparation.lock().unwrap();
+        if preparation.failure.is_some() {
+            TransitionStatus::PreparationFailed
+        } else if preparation.ready.is_some() || preparation.committed.is_some() {
+            TransitionStatus::Ready
+        } else if preparation.plan.is_some() {
+            TransitionStatus::Preparing
+        } else {
+            TransitionStatus::Idle
+        }
     }
     /// Apply on the next explicit play; cancel old PCM to avoid abrupt filter changes.
     pub fn set_equalizer(&self, settings: Equalizer) {
@@ -194,6 +270,7 @@ impl Player {
         let mut pending = self.shared.pending.lock().unwrap();
         let generation = self.shared.generation.fetch_add(1, Ordering::AcqRel) + 1;
         self.shared.preparation.lock().unwrap().set(None);
+        *self.shared.mix.lock().unwrap() = None;
         if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
             output.stop();
         }
@@ -479,6 +556,39 @@ mod tests {
             },
         );
         assert_eq!(player.snapshot().state, PlaybackState::Idle);
+    }
+    #[test]
+    fn mix_status_uses_current_consumed_clock_and_is_cancelled_by_seek() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        let id = TrackId("incoming".into());
+        *player.shared.mix.lock().unwrap() = Some(Mix {
+            generation: 0,
+            sequence: 1,
+            outgoing: TrackId("outgoing".into()),
+            incoming: id.clone(),
+            duration: Duration::from_secs(4),
+        });
+        *player.shared.snapshot.lock().unwrap() = Snapshot {
+            state: PlaybackState::Paused(id),
+            sequence: 1,
+            position: Duration::from_secs(1),
+            duration: Duration::from_secs(30),
+            ..Default::default()
+        };
+        let status = player.transition_status();
+        assert!(
+            matches!(status,TransitionStatus::Mixing{elapsed,..} if elapsed==Duration::from_secs(1))
+        );
+        assert_eq!(player.transition_status(), status); // pause cannot animate a second clock
+        player.seek(Duration::from_secs(10));
+        assert!(!matches!(
+            player.transition_status(),
+            TransitionStatus::Mixing { .. }
+        ));
+        player.stop();
+        assert_eq!(player.transition_status(), TransitionStatus::Idle);
     }
     #[test]
     fn stale_audio_stops_without_consuming_more_samples() {

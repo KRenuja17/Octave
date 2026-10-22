@@ -3,6 +3,50 @@ use super::*;
 use crate::shell::Destination;
 
 impl Alpha {
+    pub(super) fn mix_status(&self, ui: &mut egui::Ui) {
+        use octave_player::TransitionStatus;
+        match self.player.transition_status() {
+            TransitionStatus::Idle => (),
+            TransitionStatus::Preparing => {
+                ui.weak("Preparing next song…");
+            }
+            TransitionStatus::Ready => {
+                ui.weak("Next song ready");
+            }
+            TransitionStatus::PreparationFailed => {
+                ui.weak("Next song preparation unavailable · natural transition");
+            }
+            TransitionStatus::NaturalTransition => {
+                ui.weak("Natural transition");
+            }
+            TransitionStatus::Mixing {
+                outgoing,
+                incoming,
+                elapsed,
+                duration,
+            } => {
+                let title = |id: &TrackId| {
+                    self.session
+                        .queue
+                        .iter()
+                        .find(|t| &t.id == id)
+                        .map(|t| t.title.as_str())
+                        .unwrap_or("Song")
+                };
+                ui.add(
+                    egui::ProgressBar::new(
+                        (elapsed.as_secs_f32() / duration.as_secs_f32()).clamp(0.0, 1.0),
+                    )
+                    .text(format!(
+                        "Mixing · {} → {}",
+                        title(&outgoing),
+                        title(&incoming)
+                    ))
+                    .animate(false),
+                );
+            }
+        }
+    }
     pub(super) fn destination(&self) -> Destination {
         if self.settings_page {
             Destination::Settings
@@ -35,6 +79,7 @@ impl Alpha {
         ));
     }
     pub(super) fn render_lyrics(&mut self, ui: &mut egui::Ui) {
+        self.lyrics.auto_load = self.session.view.auto_lyrics;
         let snapshot = self.player.snapshot();
         let can_seek = match &snapshot.state {
             PlaybackState::Playing(id) | PlaybackState::Paused(id) => {

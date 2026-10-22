@@ -78,7 +78,7 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 5 {
+    if version > 6 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
@@ -104,6 +104,11 @@ fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     if version < 5 {
         let tx = db.transaction()?;
         tx.execute_batch("ALTER TABLE queue RENAME TO queue_v4; CREATE TABLE queue (slot INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL UNIQUE, id TEXT NOT NULL, title TEXT NOT NULL, artists TEXT NOT NULL); INSERT INTO queue SELECT slot,slot+1,id,title,artists FROM queue_v4; DROP TABLE queue_v4; CREATE TABLE queue_shuffle_order (slot INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL UNIQUE); PRAGMA user_version=5;")?;
+        tx.commit()?;
+    }
+    if version < 6 {
+        let tx = db.transaction()?;
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN continuous INTEGER NOT NULL DEFAULT 1; ALTER TABLE preferences ADD COLUMN preload INTEGER NOT NULL DEFAULT 1; ALTER TABLE view_preferences ADD COLUMN auto_lyrics INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=6;")?;
         tx.commit()?;
     }
     Ok(())
@@ -150,23 +155,26 @@ fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
     )?;
     let gains = s.equalizer.sanitized().gains_db;
     tx.execute(
-        "INSERT OR REPLACE INTO view_preferences VALUES (1,?1,?2,?3,?4,?5)",
+        "INSERT OR REPLACE INTO view_preferences VALUES (1,?1,?2,?3,?4,?5,?6)",
         params![
             s.view.panel_open,
             s.view.panel_width.clamp(300.0, 440.0),
             s.view.panel_tab.min(2),
             s.view.lyrics_only,
-            s.view.reduced_motion
+            s.view.reduced_motion,
+            s.view.auto_lyrics
         ],
     )?;
     tx.execute(
-        "INSERT OR REPLACE INTO preferences VALUES (1,?1,?2,?3,?4,?5)",
+        "INSERT OR REPLACE INTO preferences VALUES (1,?1,?2,?3,?4,?5,?6,?7)",
         params![
             gains[0],
             gains[1],
             gains[2],
             s.appearance.min(2),
-            s.crossfade.min(5)
+            s.crossfade.min(octave_player::MAX_CROSSFADE_SECONDS),
+            s.continuous,
+            s.preload
         ],
     )?;
     tx.commit()
@@ -217,7 +225,7 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
         };
     }
     let mut stmt = db.prepare(
-        "SELECT bass,mid,treble,appearance,crossfade FROM preferences WHERE singleton=1",
+        "SELECT bass,mid,treble,appearance,crossfade,continuous,preload FROM preferences WHERE singleton=1",
     )?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
@@ -226,9 +234,13 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
         }
         .sanitized();
         s.appearance = row.get::<_, i64>(3)?.clamp(0, 2) as u8;
-        s.crossfade = row.get::<_, i64>(4)?.clamp(0, 5) as u8;
+        s.crossfade = row
+            .get::<_, i64>(4)?
+            .clamp(0, i64::from(octave_player::MAX_CROSSFADE_SECONDS)) as u8;
+        s.continuous = row.get(5)?;
+        s.preload = row.get(6)?;
     }
-    let mut stmt = db.prepare("SELECT panel_open,panel_width,panel_tab,lyrics_only,reduced_motion FROM view_preferences WHERE singleton=1")?;
+    let mut stmt = db.prepare("SELECT panel_open,panel_width,panel_tab,lyrics_only,reduced_motion,auto_lyrics FROM view_preferences WHERE singleton=1")?;
     let mut rows = stmt.query([])?;
     if let Some(row) = rows.next()? {
         s.view.panel_open = row.get(0)?;
@@ -236,6 +248,7 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
         s.view.panel_tab = row.get::<_, i64>(2)?.clamp(0, 2) as u8;
         s.view.lyrics_only = row.get(3)?;
         s.view.reduced_motion = row.get(4)?;
+        s.view.auto_lyrics = row.get(5)?;
     }
     Ok(s)
 }
@@ -284,7 +297,10 @@ mod tests {
             gains_db: [6.0, -3.0, 2.0],
         };
         s.appearance = 2;
-        s.crossfade = 4;
+        s.crossfade = 12;
+        s.continuous = false;
+        s.preload = false;
+        s.view.auto_lyrics = true;
         s.view.panel_open = true;
         s.view.panel_width = 410.0;
         s.view.reduced_motion = true;
@@ -293,7 +309,7 @@ mod tests {
         assert_eq!(
             db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            5
+            6
         );
     }
     #[test]
@@ -305,7 +321,7 @@ mod tests {
         s.equalizer.gains_db = [2.0, -3.0, 4.0];
         s.appearance = 2;
         save(&mut db, &s).unwrap();
-        db.execute_batch("ALTER TABLE preferences DROP COLUMN crossfade; DROP TABLE view_preferences; ALTER TABLE queue RENAME TO queue_v5; CREATE TABLE queue (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); INSERT INTO queue SELECT slot,id,title,artists FROM queue_v5; DROP TABLE queue_v5; DROP TABLE queue_shuffle_order; PRAGMA user_version=2;")
+        db.execute_batch("ALTER TABLE preferences RENAME TO preferences_v6; CREATE TABLE preferences (singleton INTEGER PRIMARY KEY,bass REAL NOT NULL,mid REAL NOT NULL,treble REAL NOT NULL,appearance INTEGER NOT NULL); INSERT INTO preferences SELECT singleton,bass,mid,treble,appearance FROM preferences_v6; DROP TABLE preferences_v6; DROP TABLE view_preferences; ALTER TABLE queue RENAME TO queue_v5; CREATE TABLE queue (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); INSERT INTO queue SELECT slot,id,title,artists FROM queue_v5; DROP TABLE queue_v5; DROP TABLE queue_shuffle_order; PRAGMA user_version=2;")
             .unwrap();
         migrate(&mut db).unwrap();
         assert_eq!(load(&db).unwrap(), s);
