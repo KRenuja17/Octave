@@ -82,8 +82,8 @@ decode worker, with independent state for each channel.
 
 Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
 alongside listening state. Transition settings upgrade the listening database to
-schema 6, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
-upgrading if you may need an older binary: older versions cannot read schema 6
+schema 7, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
+upgrading if you may need an older binary: older versions cannot read schema 7
 and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
@@ -400,7 +400,7 @@ queue/lyrics destinations. Drag the divider or use **Narrower/Wider panel**.
 Back/Forward store destinations without replaying listening actions.
 
 Panel width/tab/visibility, lyrics-only and Reduce motion preferences are saved
-in schema 6. Older binaries reject this newer schema instead of overwriting it.
+in schema 7. Older binaries reject this newer schema instead of overwriting it.
 High contrast disables motion. Artwork has separate bounded 160/512px tiers
 (96 small and eight large textures); no artwork work runs on the audio thread.
 Lyrics have an eight-document, 15-minute memory cache. Related has eight
@@ -441,3 +441,25 @@ natural boundary. No adaptive mixing is implied by the visual status.
 **Load lyrics when the song changes** is optional and off by default. It reuses
 exact-ID memory results or requests the new document while a lyrics scene is open.
 Translation will still require its own explicit request.
+
+
+### Optional translation and Discord
+
+Settings → Optional integrations accepts a LibreTranslate-compatible HTTPS endpoint
+(or loopback HTTP for a local server). No service is selected automatically. API
+keys are masked and kept only in memory; the endpoint and target language are
+saved. **Translate via LibreTranslate** explicitly sends lyric text to that service.
+Original / Translation / Both keep original cue identity; unexpected line counts,
+old-song responses and failures preserve the original text. Batches contain at
+most 24 lines / 4,000 characters, with bounded response size and deadlines. Service
+language coverage, terms and limits are those of your configured endpoint.
+See the [LibreTranslate API](https://docs.libretranslate.com/api/operations/translate/).
+
+Discord Rich Presence is off by default and needs Octave's public application ID
+and a running Discord desktop client. No bot token is used. Enabling shares current
+track/artist/public artwork and elapsed time over local IPC; pause/stop clears it.
+IPC work is separate from playback, bounded by time/packet limits, coalesced and
+retried after disconnect. Configuration without an application ID never opens IPC.
+Only fixture transport acceptance has run; real Discord/endpoint acceptance remains
+pending configuration. Idle UI repainting is reduced; artwork/lyrics/motion do not
+force continuous idle animation.

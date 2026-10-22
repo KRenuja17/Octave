@@ -4,6 +4,7 @@ pub mod lyrics;
 pub mod playlist;
 pub mod range;
 pub mod related;
+pub mod translation;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
 use reqwest::blocking::Client;
 use serde_json::{Value, json};

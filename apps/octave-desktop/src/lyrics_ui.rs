@@ -16,6 +16,7 @@ pub struct LyricsUi {
     can_seek: bool,
     cache: VecDeque<(Lyrics, Instant)>,
     pub auto_load: bool,
+    pub translation: crate::translation_ui::TranslationUi,
 }
 impl LyricsUi {
     #[cfg(test)]
@@ -174,6 +175,9 @@ impl LyricsUi {
             ui.weak(&lyrics.source);
         }
         ui.add_space(16.0);
+        if self.translation.header(ui, self.lyrics.as_ref()) {
+            self.reading.reflow();
+        }
         if self.id.is_none() {
             ui.label("Choose a song to view its lyrics.");
         } else if self.lyrics.is_none() && self.settled() && self.message.is_empty() {
@@ -237,11 +241,12 @@ impl LyricsUi {
                     ui.add_space(ui.clip_rect().height() * 0.25);
                     for (index, cue) in lyrics.cues.iter().enumerate() {
                         let current = active == Some(index);
-                        let text = if cue.text.trim().is_empty() {
+                        let original = if cue.text.trim().is_empty() {
                             "♪"
                         } else {
                             &cue.text
                         };
+                        let (text, translated) = self.translation.line(index, original);
                         let rich =
                             egui::RichText::new(text)
                                 .size(size)
@@ -277,16 +282,33 @@ impl LyricsUi {
                         } else {
                             "Start playback to seek to a line"
                         });
+                        if let Some(translated) = translated {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(translated).size(size * 0.72).weak(),
+                                )
+                                .wrap(),
+                            );
+                        }
                         ui.add_space(9.0);
                     }
                     ui.add_space(ui.clip_rect().height() * 0.4);
                 } else {
-                    for line in lyrics.text.lines() {
+                    for (index, original) in lyrics.text.lines().enumerate() {
+                        let (line, translated) = self.translation.line(index, original);
                         if line.trim().is_empty() {
                             ui.add_space(18.0);
                         } else {
                             ui.add(egui::Label::new(egui::RichText::new(line).size(size)).wrap());
                             ui.add_space(5.0);
+                        }
+                        if let Some(translated) = translated {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(translated).size(size * 0.72).weak(),
+                                )
+                                .wrap(),
+                            );
                         }
                     }
                 }

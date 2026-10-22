@@ -7,6 +7,7 @@ mod account_ui;
 mod alpha;
 mod artwork;
 mod desktop;
+mod discord;
 mod listening;
 mod live;
 mod lyrics_ui;
@@ -23,6 +24,7 @@ mod shell;
 mod song_artwork;
 mod storage;
 mod theme;
+mod translation_ui;
 #[cfg(test)]
 mod ui_tests;
 use eframe::egui;

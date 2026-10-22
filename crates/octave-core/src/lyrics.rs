@@ -66,6 +66,11 @@ impl Reading {
         self.following = true;
         self.recenter = true;
     }
+    pub fn reflow(&mut self) {
+        if self.following {
+            self.recenter = true;
+        }
+    }
     /// Call with the consumed-audio position. Repeated paused/buffering frames
     /// never advance this controller; manual reading survives cue changes/seeks.
     pub fn update(&mut self, active: Option<usize>) -> bool {

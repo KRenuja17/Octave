@@ -73,6 +73,7 @@ struct Alpha {
     related: crate::related_ui::RelatedUi,
     account_page: bool,
     desktop: Option<crate::desktop::Desktop>,
+    presence: crate::discord::Presence,
     quitting: bool,
     session: Session,
     player: Player,
@@ -130,6 +131,7 @@ impl Alpha {
             related: crate::related_ui::RelatedUi::default(),
             account_page: false,
             desktop: None,
+            presence: Default::default(),
             quitting: false,
             session: Session::default(),
             player: Player::new(),
@@ -232,6 +234,9 @@ impl Alpha {
             match event {
                 storage::Event::Loaded(session) => {
                     self.session = session;
+                    self.lyrics.translation.endpoint =
+                        self.session.view.translation_endpoint.clone();
+                    self.lyrics.translation.target = self.session.view.translation_target.clone();
                     self.eq_draft = self.session.equalizer;
                     self.player.set_equalizer(self.session.equalizer);
                     self.crossfade_draft = self.session.crossfade;
@@ -274,6 +279,14 @@ impl Alpha {
                 self.search.submit(self.query.clone());
                 self.searching = true;
             }
+        }
+        if self.loaded {
+            if self.lyrics.translation.endpoint.is_empty()
+                || octave_provider::translation::valid_endpoint(&self.lyrics.translation.endpoint)
+            {
+                self.session.view.translation_endpoint = self.lyrics.translation.endpoint.clone();
+            }
+            self.session.view.translation_target = self.lyrics.translation.target.clone();
         }
         let snapshot = self.player.snapshot();
         self.observe(snapshot);
@@ -812,6 +825,17 @@ impl Alpha {
             ui.heading("Settings");
             ui.weak("Sound, appearance and desktop preferences.");
             ui.add_space(18.0);
+            theme::surface(ui, |ui| {
+                ui.collapsing("Optional integrations", |ui| {
+                    self.lyrics.translation.settings(ui);
+                    self.presence.settings(
+                        ui,
+                        &mut self.session.view.discord_enabled,
+                        &mut self.session.view.discord_id,
+                    );
+                });
+            });
+
             if let Some(desktop) = &mut self.desktop {
                 theme::surface(ui, |ui| {
                     ui.weak("Window and tray");
@@ -1349,6 +1373,12 @@ impl Drop for Alpha {
 impl eframe::App for Alpha {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.poll();
+        self.presence.update(
+            self.session.view.discord_enabled,
+            &self.session.view.discord_id,
+            self.session.current(),
+            &self.player.snapshot(),
+        );
         let reduce_motion = self.session.view.reduced_motion || self.session.appearance == 2;
         ui.ctx().style_mut_of(
             if self.session.appearance == 1 {
@@ -1478,7 +1508,21 @@ impl eframe::App for Alpha {
                 self.capture_requested = true;
             }
         }
-        ui.ctx().request_repaint_after(Duration::from_millis(50));
+        let repaint = if crate::argument("--capture").is_some() {
+            16
+        } else if matches!(self.player.snapshot().state, PlaybackState::Playing(_)) {
+            50
+        } else if !self.loaded
+            || self.searching
+            || self.debounce.is_some()
+            || !self.lyrics.settled()
+        {
+            100
+        } else {
+            500
+        };
+        ui.ctx()
+            .request_repaint_after(Duration::from_millis(repaint));
     }
 }
 

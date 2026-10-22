@@ -10,6 +10,10 @@ pub struct ViewPreferences {
     pub lyrics_only: bool,
     pub reduced_motion: bool,
     pub auto_lyrics: bool,
+    pub translation_endpoint: String,
+    pub translation_target: String,
+    pub discord_id: String,
+    pub discord_enabled: bool,
 }
 impl Default for ViewPreferences {
     fn default() -> Self {
@@ -20,6 +24,10 @@ impl Default for ViewPreferences {
             lyrics_only: false,
             reduced_motion: false,
             auto_lyrics: false,
+            translation_endpoint: String::new(),
+            translation_target: "en".into(),
+            discord_id: String::new(),
+            discord_enabled: false,
         }
     }
 }
