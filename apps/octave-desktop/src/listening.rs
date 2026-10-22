@@ -50,6 +50,8 @@ impl Repeat {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Session {
     pub view: ViewPreferences,
+    pub history: Vec<Track>,
+    pub pinned: Vec<octave_core::Collection>,
     pub crossfade: u8,
     pub continuous: bool,
     pub preload: bool,
@@ -65,6 +67,8 @@ impl Default for Session {
     fn default() -> Self {
         Self {
             view: ViewPreferences::default(),
+            history: Vec::new(),
+            pinned: Vec::new(),
             crossfade: 0,
             continuous: true,
             preload: true,

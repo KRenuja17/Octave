@@ -91,6 +91,11 @@ impl Queue {
         self.ids.clear();
         self.original_order = None;
     }
+    pub fn truncate(&mut self, len: usize) {
+        self.revision = self.revision.wrapping_add(1);
+        self.tracks.truncate(len);
+        self.ids.truncate(len);
+    }
     pub fn swap(&mut self, a: usize, b: usize) {
         self.revision = self.revision.wrapping_add(1);
         self.tracks.swap(a, b);

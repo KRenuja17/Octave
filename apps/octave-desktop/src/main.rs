@@ -6,6 +6,7 @@
 mod account_ui;
 mod alpha;
 mod artwork;
+mod catalog_ui;
 mod desktop;
 mod discord;
 mod listening;

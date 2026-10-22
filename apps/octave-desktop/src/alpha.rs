@@ -54,6 +54,9 @@ pub fn run() -> eframe::Result {
 
 struct Alpha {
     focus: bool,
+    catalog_page: bool,
+    catalog: crate::catalog_ui::CatalogUi,
+    last_history: Option<(TrackId, u64)>,
     history: crate::shell::History,
     playlist_import: crate::playlist_import::PlaylistImport,
     undo_queue: Option<(octave_core::queue::Queue, usize, f64, (u64, u64))>,
@@ -104,6 +107,19 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            last_history: None,
+            catalog_page: matches!(
+                crate::argument("--page").as_deref(),
+                Some("home" | "explore" | "history")
+            ),
+            catalog: crate::catalog_ui::CatalogUi::at(
+                match crate::argument("--page").as_deref() {
+                    Some("history") => "local:history",
+                    Some("explore") => "FEmusic_explore",
+                    _ => "FEmusic_home",
+                }
+                .into(),
+            ),
             focus: crate::argument("--page").as_deref() == Some("focus"),
             history: crate::shell::History::default(),
             playlist_import: Default::default(),
@@ -177,6 +193,7 @@ impl Alpha {
             self.ended_seen = false;
             self.seek = None;
             if reset_retry {
+                self.last_history = None;
                 self.retry_count = 0;
             }
         }
@@ -354,6 +371,16 @@ impl Alpha {
             | PlaybackState::Failed(id, _) => self.session.current().is_some_and(|t| &t.id == id),
         };
         if same_track {
+            if matches!(snapshot.state, PlaybackState::Playing(_))
+                && !snapshot.position.is_zero()
+                && let Some(track) = self.session.current().cloned()
+                && self.last_history.as_ref() != Some(&(track.id.clone(), snapshot.sequence))
+            {
+                self.last_history = Some((track.id.clone(), snapshot.sequence));
+                self.session.history.retain(|entry| entry.id != track.id);
+                self.session.history.insert(0, track);
+                self.session.history.truncate(200);
+            }
             self.session.position = snapshot.position.as_secs_f64();
             match &snapshot.state {
                 PlaybackState::Ended(_) if !self.ended_seen => {
@@ -560,6 +587,7 @@ impl Alpha {
             .response
             .on_hover_text("Playback options");
             if ui.button("Now playing").clicked() {
+                self.catalog_page = false;
                 self.listening_tab = 0;
                 self.queue_page = true;
                 self.settings_page = false;
@@ -634,13 +662,28 @@ impl Alpha {
         });
     }
     fn navigation(&mut self, ui: &mut egui::Ui) {
+        for (label, route) in [
+            ("Home", "FEmusic_home"),
+            ("Explore", "FEmusic_explore"),
+            ("History", "local:history"),
+        ] {
+            if theme::nav(ui, self.catalog_page && self.catalog.route == route, label).clicked() {
+                self.navigate(crate::shell::Destination::Catalog(route.into()));
+            }
+        }
+
         if theme::nav(
             ui,
-            !self.queue_page && !self.account_page && !self.settings_page && !self.playlists_page,
+            !self.catalog_page
+                && !self.queue_page
+                && !self.account_page
+                && !self.settings_page
+                && !self.playlists_page,
             "Search",
         )
         .clicked()
         {
+            self.catalog_page = false;
             self.settings_page = false;
             self.playlists_page = false;
             self.account_page = false;
@@ -653,6 +696,7 @@ impl Alpha {
         )
         .clicked()
         {
+            self.catalog_page = false;
             self.settings_page = false;
             self.playlists_page = false;
             self.account_page = false;
@@ -660,21 +704,47 @@ impl Alpha {
             self.listening_tab = 1;
         }
         if theme::nav(ui, self.account_page, "Account").clicked() {
+            self.catalog_page = false;
             self.settings_page = false;
             self.playlists_page = false;
             self.account_page = true;
         }
         if theme::nav(ui, self.playlists_page, "Playlists").clicked() {
             self.playlists_page = true;
+            self.catalog_page = false;
             self.settings_page = false;
             self.account_page = false;
             self.queue_page = false;
         }
         if theme::nav(ui, self.settings_page, "Settings").clicked() {
+            self.catalog_page = false;
             self.settings_page = true;
             self.playlists_page = false;
             self.account_page = false;
             self.queue_page = false;
+        }
+        if ui.available_width() < 240.0 && !self.session.pinned.is_empty() {
+            ui.separator();
+            ui.weak("Pinned collections");
+            let mut open = None;
+            egui::ScrollArea::vertical()
+                .id_salt("pinned-navigation")
+                .max_height(ui.available_height().max(80.0))
+                .show(ui, |ui| {
+                    for collection in &self.session.pinned {
+                        let title: String = collection.title.chars().take(36).collect();
+                        if ui
+                            .small_button(title)
+                            .on_hover_text(&collection.title)
+                            .clicked()
+                        {
+                            open = Some(collection.id.clone());
+                        }
+                    }
+                });
+            if let Some(id) = open {
+                self.navigate(crate::shell::Destination::Catalog(id));
+            }
         }
     }
     fn page_scroll(&mut self, ui: &mut egui::Ui) {
@@ -689,8 +759,11 @@ impl Alpha {
         } else {
             0
         };
-        let listening =
-            self.queue_page && !self.settings_page && !self.playlists_page && !self.account_page;
+        let listening = !self.catalog_page
+            && self.queue_page
+            && !self.settings_page
+            && !self.playlists_page
+            && !self.account_page;
         let mut top = false;
         if listening {
             ui.horizontal_wrapped(|ui| {
@@ -942,6 +1015,10 @@ impl Alpha {
         if !self.loaded {
             ui.spinner();
             ui.label("Restoring your queue…");
+            return;
+        }
+        if self.catalog_page {
+            self.catalog_body(ui);
             return;
         }
         if self.playlists_page {
@@ -1260,78 +1337,84 @@ impl Alpha {
                     } else {
                         &self.results[index]
                     };
-                    ui.push_id(index, |ui| {
-                        let selected = self.queue_page && self.session.cursor == index;
-                        let fill = if selected {
-                            ui.visuals().selection.bg_fill
-                        } else {
-                            egui::Color32::TRANSPARENT
-                        };
-                        egui::Frame::new()
-                            .fill(fill)
-                            .corner_radius(4.0)
-                            .inner_margin(4.0)
-                            .show(ui, |ui| {
-                                ui.horizontal(|ui| {
-                                    self.artwork.show(ui, &track.id.0, &track.title, 48.0);
-                                    let play = ui
-                                        .button("▶")
-                                        .on_hover_text(format!("Play {}", track.title));
-                                    play.widget_info(|| {
-                                        egui::WidgetInfo::labeled(
-                                            egui::WidgetType::Button,
-                                            true,
-                                            format!("Play {}", track.title),
-                                        )
-                                    });
-                                    if play.clicked() {
-                                        action = Some((index, 0));
-                                    }
-                                    ui.vertical(|ui| {
-                                        ui.set_width((ui.available_width() - 60.0).max(120.0));
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(&track.title).strong(),
+                    ui.push_id(
+                        (
+                            self.session.queue.revision().0,
+                            self.session.queue.id_at(index),
+                        ),
+                        |ui| {
+                            let selected = self.queue_page && self.session.cursor == index;
+                            let fill = if selected {
+                                ui.visuals().selection.bg_fill
+                            } else {
+                                egui::Color32::TRANSPARENT
+                            };
+                            egui::Frame::new()
+                                .fill(fill)
+                                .corner_radius(4.0)
+                                .inner_margin(4.0)
+                                .show(ui, |ui| {
+                                    ui.horizontal(|ui| {
+                                        self.artwork.show(ui, &track.id.0, &track.title, 48.0);
+                                        let play = ui
+                                            .button("▶")
+                                            .on_hover_text(format!("Play {}", track.title));
+                                        play.widget_info(|| {
+                                            egui::WidgetInfo::labeled(
+                                                egui::WidgetType::Button,
+                                                true,
+                                                format!("Play {}", track.title),
                                             )
-                                            .truncate(),
-                                        )
-                                        .on_hover_text(&track.title);
-                                        ui.add(
-                                            egui::Label::new(
-                                                egui::RichText::new(track.artists.join(" · "))
-                                                    .weak(),
-                                            )
-                                            .truncate(),
-                                        );
-                                    });
-                                    let menu = ui.menu_button("•••", |ui| {
-                                        for (label, code) in if self.queue_page {
-                                            vec![
-                                                ("Move up", 3),
-                                                ("Move down", 4),
-                                                ("Remove", 5),
-                                                ("Add duplicate", 6),
-                                            ]
-                                        } else {
-                                            vec![("Play next", 1), ("Add to queue", 2)]
-                                        } {
-                                            if ui.button(label).clicked() {
-                                                action = Some((index, code));
-                                                ui.close();
-                                            }
+                                        });
+                                        if play.clicked() {
+                                            action = Some((index, 0));
                                         }
-                                    });
-                                    menu.response.widget_info(|| {
-                                        egui::WidgetInfo::labeled(
-                                            egui::WidgetType::Button,
-                                            true,
-                                            format!("Actions for {}", track.title),
-                                        )
+                                        ui.vertical(|ui| {
+                                            ui.set_width((ui.available_width() - 60.0).max(120.0));
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(&track.title).strong(),
+                                                )
+                                                .truncate(),
+                                            )
+                                            .on_hover_text(&track.title);
+                                            ui.add(
+                                                egui::Label::new(
+                                                    egui::RichText::new(track.artists.join(" · "))
+                                                        .weak(),
+                                                )
+                                                .truncate(),
+                                            );
+                                        });
+                                        let menu = ui.menu_button("•••", |ui| {
+                                            for (label, code) in if self.queue_page {
+                                                vec![
+                                                    ("Move up", 3),
+                                                    ("Move down", 4),
+                                                    ("Remove", 5),
+                                                    ("Add duplicate", 6),
+                                                ]
+                                            } else {
+                                                vec![("Play next", 1), ("Add to queue", 2)]
+                                            } {
+                                                if ui.button(label).clicked() {
+                                                    action = Some((index, code));
+                                                    ui.close();
+                                                }
+                                            }
+                                        });
+                                        menu.response.widget_info(|| {
+                                            egui::WidgetInfo::labeled(
+                                                egui::WidgetType::Button,
+                                                true,
+                                                format!("Actions for {}", track.title),
+                                            )
+                                        });
                                     });
                                 });
-                            });
-                        ui.add_space(3.0);
-                    });
+                            ui.add_space(3.0);
+                        },
+                    );
                 }
             });
         if let Some((index, code)) = action {
@@ -1424,6 +1507,7 @@ impl eframe::App for Alpha {
             }
         }
         if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
+            self.catalog_page = false;
             self.settings_page = false;
             self.playlists_page = false;
             self.account_page = false;
@@ -1455,6 +1539,7 @@ impl eframe::App for Alpha {
             if self.loaded
                 && self.artwork.settled()
                 && self.lyrics.settled()
+                && (!self.catalog_page || self.catalog.settled())
                 && !self.capture_load_lyrics
             {
                 self.capture_ready_at.get_or_insert_with(Instant::now);
@@ -1717,6 +1802,38 @@ mod tests {
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn history_requires_consumed_audio_and_stays_cleared_for_the_current_play() {
+        let path = path("history");
+        let mut app = loaded(path.clone());
+        app.session.queue = vec![track(1), track(2)].into();
+        let mut snapshot = Snapshot {
+            state: PlaybackState::Playing(track(1).id),
+            ..Default::default()
+        };
+        app.observe(snapshot.clone());
+        assert!(app.session.history.is_empty());
+        snapshot.position = Duration::from_secs(1);
+        app.observe(snapshot.clone());
+        assert_eq!(app.session.history, vec![track(1)]);
+        app.session.history.clear();
+        app.observe(snapshot);
+        assert!(app.session.history.is_empty());
+        app.observe(Snapshot {
+            sequence: 1,
+            state: PlaybackState::Playing(track(2).id),
+            position: Duration::from_secs(1),
+            ..Default::default()
+        });
+        assert_eq!(app.session.history, vec![track(2)]);
+        app.navigate(crate::shell::Destination::Catalog("local:history".into()));
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        content_frame(&ctx, &mut app, vec![]);
+        assert!(matches!(app.player.snapshot().state, PlaybackState::Idle));
         drop(app);
         std::fs::remove_file(path).unwrap();
     }

@@ -78,7 +78,7 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 7 {
+    if version > 8 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
@@ -114,6 +114,11 @@ fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     if version < 7 {
         let tx = db.transaction()?;
         tx.execute_batch("ALTER TABLE view_preferences ADD COLUMN translation_endpoint TEXT NOT NULL DEFAULT ''; ALTER TABLE view_preferences ADD COLUMN translation_target TEXT NOT NULL DEFAULT 'en'; ALTER TABLE view_preferences ADD COLUMN discord_id TEXT NOT NULL DEFAULT ''; ALTER TABLE view_preferences ADD COLUMN discord_enabled INTEGER NOT NULL DEFAULT 0; PRAGMA user_version=7;")?;
+        tx.commit()?;
+    }
+    if version < 8 {
+        let tx = db.transaction()?;
+        tx.execute_batch("CREATE TABLE history (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); CREATE TABLE pinned (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL); PRAGMA user_version=8;")?;
         tx.commit()?;
     }
     Ok(())
@@ -158,6 +163,27 @@ fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
             }
         ],
     )?;
+    if s.history.len() > 200 || s.pinned.len() > 50 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    tx.execute_batch("DELETE FROM history; DELETE FROM pinned;")?;
+    for (index, track) in s.history.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO history VALUES (?1,?2,?3,?4)",
+            params![
+                index as i64,
+                track.id.0,
+                track.title,
+                serde_json::to_string(&track.artists).unwrap()
+            ],
+        )?;
+    }
+    for (index, collection) in s.pinned.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO pinned VALUES (?1,?2,?3)",
+            params![index as i64, collection.id, collection.title],
+        )?;
+    }
     let gains = s.equalizer.sanitized().gains_db;
     tx.execute(
         "INSERT OR REPLACE INTO view_preferences VALUES (1,?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
@@ -263,6 +289,30 @@ fn load(db: &Connection) -> rusqlite::Result<Session> {
         s.view.discord_id = row.get(8)?;
         s.view.discord_enabled = row.get(9)?;
     }
+    let mut stmt = db.prepare("SELECT id,title,artists FROM history ORDER BY slot LIMIT 201")?;
+    s.history = stmt
+        .query_map([], |row| {
+            let artists: String = row.get(2)?;
+            Ok(Track {
+                id: TrackId(row.get(0)?),
+                title: row.get(1)?,
+                artists: serde_json::from_str(&artists)
+                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut stmt = db.prepare("SELECT id,title FROM pinned ORDER BY slot LIMIT 51")?;
+    s.pinned = stmt
+        .query_map([], |row| {
+            Ok(octave_core::Collection {
+                id: row.get(0)?,
+                title: row.get(1)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    if s.history.len() > 200 || s.pinned.len() > 50 {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     Ok(s)
 }
 #[cfg(test)]
@@ -317,12 +367,17 @@ mod tests {
         s.view.panel_open = true;
         s.view.panel_width = 410.0;
         s.view.reduced_motion = true;
+        s.history = vec![track(2), track(1)];
+        s.pinned = vec![octave_core::Collection {
+            id: "VLPL_fixture".into(),
+            title: "Pinned fixture".into(),
+        }];
         save(&mut db, &s).unwrap();
         assert_eq!(load(&db).unwrap(), s);
         assert_eq!(
             db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            7
+            8
         );
     }
     #[test]
@@ -334,7 +389,7 @@ mod tests {
         s.equalizer.gains_db = [2.0, -3.0, 4.0];
         s.appearance = 2;
         save(&mut db, &s).unwrap();
-        db.execute_batch("ALTER TABLE preferences RENAME TO preferences_v6; CREATE TABLE preferences (singleton INTEGER PRIMARY KEY,bass REAL NOT NULL,mid REAL NOT NULL,treble REAL NOT NULL,appearance INTEGER NOT NULL); INSERT INTO preferences SELECT singleton,bass,mid,treble,appearance FROM preferences_v6; DROP TABLE preferences_v6; DROP TABLE view_preferences; ALTER TABLE queue RENAME TO queue_v5; CREATE TABLE queue (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); INSERT INTO queue SELECT slot,id,title,artists FROM queue_v5; DROP TABLE queue_v5; DROP TABLE queue_shuffle_order; PRAGMA user_version=2;")
+        db.execute_batch("ALTER TABLE preferences RENAME TO preferences_v6; CREATE TABLE preferences (singleton INTEGER PRIMARY KEY,bass REAL NOT NULL,mid REAL NOT NULL,treble REAL NOT NULL,appearance INTEGER NOT NULL); INSERT INTO preferences SELECT singleton,bass,mid,treble,appearance FROM preferences_v6; DROP TABLE preferences_v6; DROP TABLE view_preferences; DROP TABLE history; DROP TABLE pinned; ALTER TABLE queue RENAME TO queue_v5; CREATE TABLE queue (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); INSERT INTO queue SELECT slot,id,title,artists FROM queue_v5; DROP TABLE queue_v5; DROP TABLE queue_shuffle_order; PRAGMA user_version=2;")
             .unwrap();
         migrate(&mut db).unwrap();
         assert_eq!(load(&db).unwrap(), s);

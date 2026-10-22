@@ -1,5 +1,6 @@
 //! Experimental unsigned YouTube Music access. No cookies or account state are read.
 pub mod account;
+pub mod catalog;
 pub mod lyrics;
 pub mod playlist;
 pub mod range;
@@ -64,6 +65,37 @@ pub struct Provider {
     client: Client,
 }
 impl Provider {
+    pub fn public_artwork(&self, url: &str) -> Result<Vec<u8>, Error> {
+        let parsed = reqwest::Url::parse(url).map_err(|_| Error::InvalidResponse)?;
+        if parsed.scheme() != "https"
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+            || url.len() > 2048
+            || !parsed.host_str().is_some_and(|host| {
+                host.ends_with(".googleusercontent.com") || host.ends_with(".ytimg.com")
+            })
+        {
+            return Err(Error::InvalidResponse);
+        }
+        let response = self
+            .client
+            .get(parsed)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .map_err(network)?;
+        if !response.status().is_success() {
+            return Err(Error::Http(response.status().as_u16()));
+        }
+        let mut bytes = Vec::new();
+        response
+            .take(2 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::Network)?;
+        if bytes.len() > 2 * 1024 * 1024 {
+            return Err(Error::InvalidResponse);
+        }
+        Ok(bytes)
+    }
     /// Public video artwork only; never sends account credentials.
     pub fn thumbnail(&self, id: &TrackId) -> Result<Vec<u8>, Error> {
         self.thumbnail_tier(id, false)
@@ -223,17 +255,18 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
         .ok_or(Error::UnsupportedStream)?;
     let audio = formats
         .iter()
-        .find(|v| v["itag"] == 140 && v["url"].is_string())
+        .filter(|v| {
+            v["url"].is_string()
+                && v["mimeType"].as_str().is_some_and(|mime| {
+                    mime.split(';').next().map(str::trim) == Some("audio/mp4")
+                        && mime
+                            .split(';')
+                            .skip(1)
+                            .any(|part| part.trim() == "codecs=\"mp4a.40.2\"")
+                })
+        })
+        .max_by_key(|v| reported_bitrate(v).unwrap_or(0))
         .ok_or(Error::UnsupportedStream)?;
-    let mime = audio["mimeType"].as_str().ok_or(Error::UnsupportedStream)?;
-    if mime.split(';').next().map(str::trim) != Some("audio/mp4")
-        || !mime
-            .split(';')
-            .skip(1)
-            .any(|part| part.trim() == "codecs=\"mp4a.40.2\"")
-    {
-        return Err(Error::UnsupportedStream);
-    }
     let url = audio["url"].as_str().ok_or(Error::UnsupportedStream)?;
     let parsed = reqwest::Url::parse(url).map_err(|_| Error::InvalidResponse)?;
     if parsed.scheme() != "https"
@@ -251,15 +284,19 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
             .ok_or(Error::InvalidResponse)
     };
     Ok(ResolvedStream {
-        bitrate_bps: audio["averageBitrate"]
-            .as_u64()
-            .or_else(|| audio["bitrate"].as_u64())
-            .filter(|n| (1000..=1_000_000).contains(n))
-            .map(|n| n as u32),
+        bitrate_bps: reported_bitrate(audio),
         track_id: id.clone(),
         url: Sensitive::new(url.to_owned()),
         content_length: number("contentLength")?,
         duration: Duration::from_millis(number("approxDurationMs")?),
+    })
+}
+fn reported_bitrate(audio: &Value) -> Option<u32> {
+    ["averageBitrate", "bitrate"].into_iter().find_map(|key| {
+        audio[key]
+            .as_u64()
+            .filter(|n| (1000..=1_000_000).contains(n))
+            .map(|n| n as u32)
     })
 }
 fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
@@ -348,6 +385,22 @@ fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn highest_direct_supported_aac_is_selected_from_offered_formats() {
+        let id = TrackId("abcdefghijk".into());
+        let base = json!({"mimeType":"audio/mp4; codecs=\"mp4a.40.2\"","url":"https://r1.googlevideo.com/videoplayback","contentLength":"1024","approxDurationMs":"5000","bitrate":128000});
+        let mut high = base.clone();
+        high["bitrate"] = json!(256000);
+        let mut unsupported = base.clone();
+        unsupported["mimeType"] = json!("audio/webm; codecs=\"opus\"");
+        unsupported["bitrate"] = json!(512000);
+        let mut cipher = high.clone();
+        cipher.as_object_mut().unwrap().remove("url");
+        cipher["signatureCipher"] = json!("secret");
+        cipher["bitrate"] = json!(320000);
+        let value = json!({"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[base, high, unsupported, cipher]}});
+        assert_eq!(parse_stream(&id, &value).unwrap().bitrate_bps, Some(256000));
+    }
     #[test]
     fn selected_quality_uses_reported_values_and_rejects_unexpected_codecs() {
         let id = TrackId("abcdefghijk".into());

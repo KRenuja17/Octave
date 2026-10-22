@@ -1,8 +1,9 @@
 //! Navigation history stores destinations, never play intent or queue copies.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum Destination {
     #[default]
     Search,
+    Catalog(String),
     Listening(u8),
     Playlists,
     Account,
@@ -16,7 +17,7 @@ pub struct History {
 }
 impl History {
     pub fn record(&mut self, destination: Destination) {
-        if self.current == Some(destination) {
+        if self.current.as_ref() == Some(&destination) {
             return;
         }
         if let Some(current) = self.current.replace(destination) {
@@ -29,14 +30,14 @@ impl History {
     }
     pub fn back(&mut self) -> Option<Destination> {
         let target = self.back.pop()?;
-        if let Some(current) = self.current.replace(target) {
+        if let Some(current) = self.current.replace(target.clone()) {
             self.forward.push(current);
         }
         Some(target)
     }
     pub fn forward(&mut self) -> Option<Destination> {
         let target = self.forward.pop()?;
-        if let Some(current) = self.current.replace(target) {
+        if let Some(current) = self.current.replace(target.clone()) {
             self.back.push(current);
         }
         Some(target)

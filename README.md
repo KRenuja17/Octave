@@ -35,8 +35,8 @@ These playlists stay on this computer and do not modify your YouTube Music
 account. A separate `listening.playlists.sqlite3` database sits beside the listening
 database in the selected data directory. Writes run on a worker and commit
 atomically; the UI only accepts changes after saving succeeds. Duplicate names
-(ASCII case-insensitive) and duplicate track IDs are rejected without losing the
-previous snapshot. Backup this database along with your listening database.
+(ASCII case-insensitive) are rejected without losing the previous snapshot.
+Repeated recordings use distinct queue/playlist occurrence IDs. Backup this database along with your listening database.
 
 ## Expansion: audio output selection
 
@@ -59,9 +59,9 @@ stops playback and retains position; Resume uses the new setting. Automatic queu
 advance and repeat use prepared audio on the same output device. Manual skip and
 seek remain immediate cancellation/restart actions.
 
-A second worker prepares only the upcoming track, including at most 5.1 seconds
-of PCM. The playback worker retains at most five seconds of outgoing audio for a
-linear crossfade. Short tracks overlap by at most half their length. Gains sum to
+A second worker prepares only the upcoming track. Each transition segment is
+bounded to 2,097,152 float samples (8 MiB), plus one 100ms decode block. At 48kHz
+stereo this permits a full 12-second linear crossfade; larger formats may shorten it. Short tracks overlap by at most half their length. Gains sum to
 one to avoid boosting identical signals. The incoming track becomes current when
 its first samples are consumed, including the overlap; its position includes that
 overlap. Different sample rates/channel counts use a continuous queued join
@@ -82,8 +82,8 @@ decode worker, with independent state for each channel.
 
 Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
 alongside listening state. Transition settings upgrade the listening database to
-schema 7, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
-upgrading if you may need an older binary: older versions cannot read schema 7
+schema 8, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
+upgrading if you may need an older binary: older versions cannot read schema 8
 and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
@@ -125,6 +125,37 @@ on a separate worker. Missing lyrics or request failure never controls playback.
 The unsigned Rust provider requests mobile line timings, with a plain-text web
 fallback on failure. Lyrics are not saved. Valid timed lines follow the consumed-audio clock.
 
+## Listening experience
+
+**Focus** opens large artwork and clock-driven lyrics, with a lyrics-only option.
+The Queue / Lyrics / Related companion panel resizes and collapses while browsing.
+Timed lines highlight only during their actual cue range and seek when clicked;
+manual scrolling suspends Follow until **Resume follow**. Untimed lyrics remain
+readable. Reduced motion and high contrast are saved locally.
+
+**Home**, **Explore**, Charts, Moods & genres and catalog search browse public data
+without signing in. Collections expose loaded counts and explicit paging. Pin up
+to 50 collections; History retains the 200 most recent recordings actually heard
+on this computer and can be cleared. These are local conveniences. Private
+library and Premium playback acceptance remain separate account work.
+
+A complete finite public playlist can be imported with cancellation and a
+10,000-entry bound. Whole-playlist **True random** uses OS randomness across every
+loaded occurrence. **Service shuffle batch** and **Start mix** are service-chosen
+batches and do not claim to retrieve every playlist entry.
+
+Translation stays off until you request it. Configure a LibreTranslate-compatible
+HTTPS endpoint (loopback HTTP is allowed) in Settings, optionally enter an API key
+for that run, then select a language and Translate in Lyrics. Original,
+Translation and Both share the original cue identities. Keys and translated
+lyrics are memory-only. No default public translation service is contacted.
+
+Discord Rich Presence is off by default. Supply your public Discord application
+ID and explicitly enable it in Settings. It publishes actual playing metadata
+through local Discord IPC, clears on pause/stop and reconnects in the background.
+A bot token is neither needed nor accepted. Real Discord publishing has not yet
+been verified with an Octave application ID.
+
 ## Local Windows package
 
 Using the configured GNU environment, build outside the repo:
@@ -154,10 +185,12 @@ publisher. Signed update verification groundwork and recovery instructions are d
   pending searches and discards obsolete results immediately when the query changes.
 - Play a result to replace the queue; use its menu to append or play next.
   Play/add all search results with the batch controls. Duplicate video IDs are
-  rejected. Queue menus move or remove tracks.
+  rejected by ordinary Add; use Add duplicate for another occurrence. Queue menus
+  move or remove tracks, with guarded undo and drag handles in the companion panel.
 - Resume, pause, seek, change volume, advance, shuffle upcoming songs, or repeat
-  one song/the queue. Completion advances through your queue; no recommendation
-  radio is requested. Removing the current song stops playback.
+  one song/the queue. Continuous playback controls automatic advance; preload is
+  independent. Start mix explicitly requests a service recommendation batch.
+  Removing the current song stops playback.
 - Queue, current position, volume and repeat mode save atomically to SQLite every
   two seconds and on clean exit. Restart restores them **without autoplay**.
   Shuffle order is saved exactly as displayed. Maximum queue size: 10,000 entries.
@@ -400,7 +433,7 @@ queue/lyrics destinations. Drag the divider or use **Narrower/Wider panel**.
 Back/Forward store destinations without replaying listening actions.
 
 Panel width/tab/visibility, lyrics-only and Reduce motion preferences are saved
-in schema 7. Older binaries reject this newer schema instead of overwriting it.
+in schema 8. Older binaries reject this newer schema instead of overwriting it.
 High contrast disables motion. Artwork has separate bounded 160/512px tiers
 (96 small and eight large textures); no artwork work runs on the audio thread.
 Lyrics have an eight-document, 15-minute memory cache. Related has eight

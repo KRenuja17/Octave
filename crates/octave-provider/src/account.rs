@@ -50,11 +50,7 @@ impl fmt::Debug for Account {
         f.write_str("Account([REDACTED])")
     }
 }
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Collection {
-    pub id: String,
-    pub title: String,
-}
+pub use octave_core::Collection;
 #[derive(Clone, Debug, Default)]
 pub struct Page {
     pub tracks: Vec<Track>,
@@ -213,7 +209,7 @@ fn text(value: &Value) -> String {
                 .unwrap_or_default()
         })
 }
-fn parse_page(value: &Value) -> Result<Page, Error> {
+pub(crate) fn parse_page(value: &Value) -> Result<Page, Error> {
     if ![
         "contents",
         "continuationContents",

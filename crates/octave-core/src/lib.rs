@@ -11,6 +11,11 @@ pub struct Track {
     pub title: String,
     pub artists: Vec<String>,
 }
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Collection {
+    pub id: String,
+    pub title: String,
+}
 
 /// Selected AAC stream metadata and the format actually returned by the decoder.
 /// Bitrate is the provider's report, not a measurement or a Premium entitlement.

@@ -25,6 +25,33 @@ impl Drop for PlaylistImport {
     }
 }
 impl PlaylistImport {
+    pub fn begin(&mut self, input: String, random: bool) {
+        if octave_provider::playlist::playlist_id(&input).is_none() {
+            self.message = "Choose a finite public playlist ID or URL.".into();
+            return;
+        }
+        self.cancel.store(true, Ordering::Release);
+        self.input = input.clone();
+        self.random = random;
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.cancel = cancel.clone();
+        let (tx, rx) = mpsc::channel();
+        self.rx = Some(rx);
+        self.message = "Loading public playlist…".into();
+        std::thread::spawn(move || {
+            let result = Provider::new().and_then(|p| {
+                p.complete_playlist(
+                    &input,
+                    || cancel.load(Ordering::Acquire),
+                    |count, skipped| {
+                        let _ = tx.send(Event::Progress(count, skipped));
+                    },
+                )
+            });
+            let _ = tx.send(Event::Complete(result));
+        });
+    }
+
     pub fn render(&mut self, ui: &mut egui::Ui) -> Option<(Vec<Track>, bool)> {
         let mut complete = None;
         while let Some(event) = self.rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
@@ -64,24 +91,7 @@ impl PlaylistImport {
                     )
                     .clicked()
                 {
-                    let input = self.input.clone();
-                    let cancel = Arc::new(AtomicBool::new(false));
-                    self.cancel = cancel.clone();
-                    let (tx, rx) = mpsc::channel();
-                    self.rx = Some(rx);
-                    self.message = "Loading public playlist…".into();
-                    std::thread::spawn(move || {
-                        let result = Provider::new().and_then(|p| {
-                            p.complete_playlist(
-                                &input,
-                                || cancel.load(Ordering::Acquire),
-                                |count, skipped| {
-                                    let _ = tx.send(Event::Progress(count, skipped));
-                                },
-                            )
-                        });
-                        let _ = tx.send(Event::Complete(result));
-                    });
+                    self.begin(self.input.clone(), self.random);
                 }
                 if self.rx.is_some() && ui.button("Cancel import").clicked() {
                     self.cancel.store(true, Ordering::Release);

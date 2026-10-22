@@ -3,6 +3,67 @@ use super::*;
 use crate::shell::Destination;
 
 impl Alpha {
+    pub(super) fn catalog_body(&mut self, ui: &mut egui::Ui) {
+        use crate::catalog_ui::Action;
+        if let Some(action) = self.catalog.render(
+            ui,
+            &self.session.history,
+            &self.session.pinned,
+            self.session.current(),
+        ) {
+            match action {
+                Action::Play(track) => {
+                    self.session.queue = vec![track].into();
+                    self.session.select(0);
+                    self.start(true);
+                }
+                Action::Append(track, next) => self.add(track, next),
+                Action::Pin(collection) => {
+                    if let Some(index) = self
+                        .session
+                        .pinned
+                        .iter()
+                        .position(|c| c.id == collection.id)
+                    {
+                        self.session.pinned.remove(index);
+                    } else if self.session.pinned.len() < 50 {
+                        self.session.pinned.push(collection);
+                    } else {
+                        self.message =
+                            "Pinned collection limit reached (50). Unpin a collection first."
+                                .into();
+                    }
+                }
+                Action::ClearHistory => self.session.history.clear(),
+                Action::Import(id) => {
+                    self.navigate(Destination::Playlists);
+                    self.playlist_import
+                        .begin(id.split('~').next().unwrap_or(&id).into(), false);
+                }
+                Action::Replace(tracks) => {
+                    if !tracks.is_empty() {
+                        self.halt();
+                        self.session.queue = tracks.into();
+                        self.session.select(0);
+                        self.message="Service shuffle batch loaded. Press Resume to listen; this is not whole-playlist true random.".into();
+                    }
+                }
+                Action::Retune(id, tracks) => {
+                    if self.session.current().is_some_and(|track| track.id == id) {
+                        self.session.queue.truncate(self.session.cursor + 1);
+                        for track in tracks.into_iter().filter(|track| track.id != id) {
+                            self.add(track, false);
+                        }
+                        self.message =
+                            "Upcoming recommendations updated; current song kept its place.".into();
+                    } else {
+                        self.message =
+                            "Mix result discarded because the current song changed.".into();
+                    }
+                }
+            }
+        }
+    }
     pub(super) fn mix_status(&self, ui: &mut egui::Ui) {
         use octave_player::TransitionStatus;
         match self.player.transition_status() {
@@ -48,7 +109,9 @@ impl Alpha {
         }
     }
     pub(super) fn destination(&self) -> Destination {
-        if self.settings_page {
+        if self.catalog_page {
+            Destination::Catalog(self.catalog.route.clone())
+        } else if self.settings_page {
             Destination::Settings
         } else if self.playlists_page {
             Destination::Playlists
@@ -61,12 +124,15 @@ impl Alpha {
         }
     }
     pub(super) fn navigate(&mut self, target: Destination) {
+        self.catalog_page = matches!(&target, Destination::Catalog(_));
         self.settings_page = target == Destination::Settings;
         self.playlists_page = target == Destination::Playlists;
         self.account_page = target == Destination::Account;
         self.queue_page = matches!(target, Destination::Listening(_));
-        if let Destination::Listening(tab) = target {
-            self.listening_tab = tab;
+        match target {
+            Destination::Listening(tab) => self.listening_tab = tab,
+            Destination::Catalog(route) => self.catalog.route = route,
+            _ => (),
         }
     }
     pub(super) fn show_compact_panel(&mut self) {
@@ -287,7 +353,10 @@ impl Alpha {
             .show_rows(ui, 72.0, self.session.queue.len(), |ui, range| {
                 for index in range {
                     let track = self.session.queue[index].clone();
-                    let entry = self.session.queue.id_at(index).unwrap();
+                    let entry = (
+                        self.session.queue.revision().0,
+                        self.session.queue.id_at(index).unwrap(),
+                    );
                     let row = ui
                         .push_id(entry, |ui| {
                             ui.horizontal(|ui| {
@@ -337,19 +406,22 @@ impl Alpha {
                         })
                         .inner
                         .response;
-                    if row.dnd_hover_payload::<u64>().is_some() {
+                    if row.dnd_hover_payload::<(u64, u64)>().is_some() {
                         ui.painter().hline(
                             row.rect.x_range(),
                             row.rect.top(),
                             egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
                         );
                     }
-                    if let Some(source) = row.dnd_release_payload::<u64>() {
+                    if let Some(source) = row.dnd_release_payload::<(u64, u64)>() {
                         drop = Some((*source, index));
                     }
                 }
             });
-        if let Some((source, to)) = drop {
+        if let Some(((instance, source), to)) = drop {
+            if instance != self.session.queue.revision().0 {
+                return;
+            }
             if let Some(from) = self
                 .session
                 .queue

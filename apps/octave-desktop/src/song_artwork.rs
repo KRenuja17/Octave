@@ -26,7 +26,9 @@ impl Default for SongArtwork {
                 let image = provider
                     .as_ref()
                     .and_then(|p| {
-                        if large {
+                        if id.starts_with("https://") {
+                            p.public_artwork(&id).ok()
+                        } else if large {
                             p.thumbnail_large(&TrackId(id.clone())).ok()
                         } else {
                             p.thumbnail(&TrackId(id.clone())).ok()
