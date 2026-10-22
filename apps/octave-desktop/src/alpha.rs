@@ -8,9 +8,11 @@ use crate::{
 use eframe::egui;
 use octave_core::{Track, TrackId};
 use octave_player::{PlaybackState, Player, Snapshot};
+#[cfg(test)]
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     path::PathBuf,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 #[path = "listening_scene.rs"]
 mod scene;
@@ -53,6 +55,8 @@ pub fn run() -> eframe::Result {
 struct Alpha {
     focus: bool,
     history: crate::shell::History,
+    playlist_import: crate::playlist_import::PlaylistImport,
+    undo_queue: Option<(octave_core::queue::Queue, usize, f64, (u64, u64))>,
     listening_tab: u8,
     artwork: crate::song_artwork::SongArtwork,
     settings_page: bool,
@@ -101,6 +105,8 @@ impl Alpha {
         Self {
             focus: crate::argument("--page").as_deref() == Some("focus"),
             history: crate::shell::History::default(),
+            playlist_import: Default::default(),
+            undo_queue: None,
             listening_tab: match crate::argument("--page").as_deref() {
                 Some("now-playing") => 0,
                 Some("lyrics") => 2,
@@ -216,7 +222,7 @@ impl Alpha {
         self.message = if self.session.append(track, next) {
             "Added to queue."
         } else {
-            "Already queued, or the 500-song queue is full."
+            "Already queued, or the 10,000-entry queue is full."
         }
         .into();
     }
@@ -293,9 +299,20 @@ impl Alpha {
                 | PlaybackState::Failed(id, _) => Some(id),
                 _ => None,
             };
-            if let Some(cursor) =
-                id.and_then(|id| self.session.queue.iter().position(|t| &t.id == id))
-            {
+            if let Some(cursor) = id.and_then(|id| {
+                let expected = if self.session.repeat == Repeat::One {
+                    self.session.cursor
+                } else if self.session.cursor + 1 < self.session.queue.len() {
+                    self.session.cursor + 1
+                } else {
+                    0
+                };
+                self.session
+                    .queue
+                    .get(expected)
+                    .filter(|track| &track.id == id)
+                    .map(|_| expected)
+            }) {
                 self.session.cursor = cursor;
                 self.transition_sequence = snapshot.sequence;
                 self.retry_count = 0;
@@ -505,13 +522,15 @@ impl Alpha {
                 {
                     self.session.repeat = self.session.repeat.next();
                 }
+                if ui.button("Restore queue order").clicked() {
+                    self.session.queue.restore_upcoming(self.session.cursor + 1);
+                    ui.close();
+                }
                 if ui.button("Shuffle upcoming").clicked() {
-                    self.session.shuffle(
-                        SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap_or_default()
-                            .as_nanos() as u64,
-                    );
+                    if self.session.shuffle_random().is_err() {
+                        self.message =
+                            "Unable to obtain random shuffle. Queue order retained.".into();
+                    }
                     ui.close();
                 }
             })
@@ -885,6 +904,17 @@ impl Alpha {
         }
         if self.playlists_page {
             ui.heading("Your playlists");
+            if let Some((tracks, random)) = self.playlist_import.render(ui) {
+                self.halt();
+                self.session.queue = tracks.into();
+                self.session.cursor = 0;
+                self.session.position = 0.0;
+                if random && self.session.shuffle_all().is_err() {
+                    self.message =
+                        "Shuffle failed; complete playlist retained in source order.".into();
+                }
+                self.message = "Complete public playlist loaded. Press Resume to listen.".into();
+            }
             ui.add_space(16.0);
             let loaded_playlist = self
                 .playlists
@@ -894,13 +924,20 @@ impl Alpha {
                 .render(ui, &self.session.queue);
             if let Some(tracks) = loaded_playlist {
                 self.halt();
-                self.session.queue = tracks;
+                self.session.queue = tracks.into();
                 self.session.cursor = 0;
                 self.session.position = 0.0;
                 self.queue_page = true;
                 self.listening_tab = 1;
                 self.account_page = false;
                 self.message = "Playlist loaded. Press Resume to start listening.".into();
+                if self.playlists.as_ref().is_some_and(|p| p.random_on_load)
+                    && self.session.shuffle_all().is_err()
+                {
+                    self.message =
+                        "Playlist loaded; random shuffle unavailable. Source order retained."
+                            .into();
+                }
                 self.playlists_page = false;
             }
             return;
@@ -926,7 +963,7 @@ impl Alpha {
             if let Some(action) = action {
                 match action {
                     crate::account_ui::Action::Play(track) => {
-                        self.session.queue = vec![track];
+                        self.session.queue = vec![track].into();
                         self.session.select(0);
                         self.start(true);
                     }
@@ -963,6 +1000,15 @@ impl Alpha {
                     self.session.position = 0.0;
                 }
                 ui.weak("Queue order and position are saved on this device.");
+                if ui
+                    .add_enabled(
+                        self.can_undo_removal(),
+                        egui::Button::new("Undo queue removal"),
+                    )
+                    .clicked()
+                {
+                    self.undo_removal();
+                }
             });
         } else {
             let input = ui
@@ -1082,7 +1128,7 @@ impl Alpha {
                                 );
                                 ui.horizontal_wrapped(|ui| {
                                     if theme::primary(ui, "Play top result").clicked() {
-                                        self.session.queue = vec![track.clone()];
+                                        self.session.queue = vec![track.clone()].into();
                                         self.session.select(0);
                                         self.start(true);
                                     }
@@ -1101,7 +1147,7 @@ impl Alpha {
                 );
                 ui.horizontal_wrapped(|ui| {
                     if ui.button("Play results").clicked() {
-                        self.session.queue = self.results.clone();
+                        self.session.queue = self.results.clone().into();
                         self.session.select(0);
                         self.start(true);
                     }
@@ -1218,7 +1264,12 @@ impl Alpha {
                                     });
                                     let menu = ui.menu_button("•••", |ui| {
                                         for (label, code) in if self.queue_page {
-                                            vec![("Move up", 3), ("Move down", 4), ("Remove", 5)]
+                                            vec![
+                                                ("Move up", 3),
+                                                ("Move down", 4),
+                                                ("Remove", 5),
+                                                ("Add duplicate", 6),
+                                            ]
                                         } else {
                                             vec![("Play next", 1), ("Add to queue", 2)]
                                         } {
@@ -1250,14 +1301,17 @@ impl Alpha {
                     }
                     3 => self.session.move_item(index, index.saturating_sub(1)),
                     4 => self.session.move_item(index, index + 1),
-                    5 if self.session.remove(index) => self.halt(),
+                    5 => self.remove_queue_entry(index),
+                    6 if self.session.queue.len() < crate::listening::MAX_QUEUE => {
+                        self.session.queue.push(self.session.queue[index].clone());
+                    }
                     _ => (),
                 }
             } else {
                 let track = self.results[index].clone();
                 match code {
                     0 => {
-                        self.session.queue = vec![track];
+                        self.session.queue = vec![track].into();
                         self.session.select(0);
                         self.start(true);
                     }
@@ -1601,6 +1655,29 @@ mod tests {
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn duplicate_transition_and_removal_undo_preserve_occurrence_and_position() {
+        let path = path("queue-occurrences");
+        let mut app = loaded(path.clone());
+        app.session.queue = vec![track(1), track(1), track(2)].into();
+        app.observe(Snapshot {
+            sequence: 1,
+            state: PlaybackState::Paused(track(1).id),
+            position: Duration::from_secs(42),
+            duration: Duration::from_secs(200),
+            ..Default::default()
+        });
+        assert_eq!(app.session.cursor, 1);
+        let id = app.session.queue.id_at(1);
+        app.remove_queue_entry(0);
+        assert_eq!(app.session.queue.id_at(0), id);
+        app.undo_removal();
+        assert_eq!(app.session.queue.id_at(1), id);
+        assert_eq!(app.session.position, 42.0);
+        assert!(matches!(app.player.snapshot().state, PlaybackState::Idle));
         drop(app);
         std::fs::remove_file(path).unwrap();
     }

@@ -1,6 +1,7 @@
 //! Application-owned types shared by the desktop, provider and player.
 pub mod diagnostics;
 pub mod lyrics;
+pub mod queue;
 /// Stable content identity; never an expiring stream URL.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TrackId(pub String);

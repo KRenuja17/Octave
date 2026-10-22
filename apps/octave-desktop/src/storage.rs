@@ -78,7 +78,7 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |row| row.get(0))?;
-    if version > 4 {
+    if version > 5 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
@@ -101,21 +101,39 @@ fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     if version < 4 {
         db.execute_batch("CREATE TABLE IF NOT EXISTS view_preferences (singleton INTEGER PRIMARY KEY CHECK(singleton=1), panel_open INTEGER NOT NULL, panel_width REAL NOT NULL, panel_tab INTEGER NOT NULL, lyrics_only INTEGER NOT NULL, reduced_motion INTEGER NOT NULL); PRAGMA user_version=4;")?;
     }
+    if version < 5 {
+        let tx = db.transaction()?;
+        tx.execute_batch("ALTER TABLE queue RENAME TO queue_v4; CREATE TABLE queue (slot INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL UNIQUE, id TEXT NOT NULL, title TEXT NOT NULL, artists TEXT NOT NULL); INSERT INTO queue SELECT slot,slot+1,id,title,artists FROM queue_v4; DROP TABLE queue_v4; CREATE TABLE queue_shuffle_order (slot INTEGER PRIMARY KEY, entry_id INTEGER NOT NULL UNIQUE); PRAGMA user_version=5;")?;
+        tx.commit()?;
+    }
     Ok(())
 }
 fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
+    if s.queue.len() > MAX_QUEUE {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
     let tx = db.transaction()?;
     tx.execute("DELETE FROM queue", [])?;
-    for (i, track) in s.queue.iter().take(MAX_QUEUE).enumerate() {
+    for (i, track) in s.queue.iter().enumerate() {
         tx.execute(
-            "INSERT INTO queue VALUES (?1,?2,?3,?4)",
+            "INSERT INTO queue VALUES (?1,?2,?3,?4,?5)",
             params![
                 i as i64,
+                s.queue.id_at(i).ok_or(rusqlite::Error::InvalidQuery)? as i64,
                 track.id.0,
                 track.title,
                 serde_json::to_string(&track.artists).unwrap()
             ],
         )?;
+    }
+    tx.execute("DELETE FROM queue_shuffle_order", [])?;
+    if let Some(order) = &s.queue.original_order {
+        for (slot, id) in order.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO queue_shuffle_order VALUES (?1,?2)",
+                params![slot as i64, *id as i64],
+            )?;
+        }
     }
     tx.execute(
         "INSERT OR REPLACE INTO session VALUES (1,?1,?2,?3,?4)",
@@ -155,18 +173,36 @@ fn save(db: &mut Connection, s: &Session) -> rusqlite::Result<()> {
 }
 fn load(db: &Connection) -> rusqlite::Result<Session> {
     let mut s = Session::default();
-    let mut stmt = db.prepare("SELECT id,title,artists FROM queue ORDER BY slot LIMIT 500")?;
-    s.queue = stmt
+    let mut stmt =
+        db.prepare("SELECT entry_id,id,title,artists FROM queue ORDER BY slot LIMIT 10001")?;
+    let entries = stmt
         .query_map([], |row| {
-            let artists: String = row.get(2)?;
-            Ok(Track {
-                id: TrackId(row.get(0)?),
-                title: row.get(1)?,
-                artists: serde_json::from_str(&artists)
-                    .map_err(|_| rusqlite::Error::InvalidQuery)?,
-            })
+            let artists: String = row.get(3)?;
+            Ok((
+                row.get::<_, i64>(0)? as u64,
+                Track {
+                    id: TrackId(row.get(1)?),
+                    title: row.get(2)?,
+                    artists: serde_json::from_str(&artists)
+                        .map_err(|_| rusqlite::Error::InvalidQuery)?,
+                },
+            ))
         })?
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<Vec<_>, _>>()?;
+    if entries.len() > MAX_QUEUE {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let mut stmt =
+        db.prepare("SELECT entry_id FROM queue_shuffle_order ORDER BY slot LIMIT 10001")?;
+    let order = stmt
+        .query_map([], |row| row.get::<_, i64>(0).map(|id| id as u64))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if order.len() > MAX_QUEUE {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    s.queue =
+        octave_core::queue::Queue::from_entries(entries, (!order.is_empty()).then_some(order))
+            .ok_or(rusqlite::Error::InvalidQuery)?;
     let mut stmt =
         db.prepare("SELECT cursor,position,volume,repeat FROM session WHERE singleton=1")?;
     let mut rows = stmt.query([])?;
@@ -208,6 +244,33 @@ mod tests {
     use super::*;
     use crate::listening::track;
     #[test]
+    fn large_duplicate_queue_preserves_occurrence_ids_and_restore_order() {
+        let mut db = Connection::open_in_memory().unwrap();
+        migrate(&mut db).unwrap();
+        let mut state = Session {
+            queue: (0..1753).map(|i| track(i % 100)).collect::<Vec<_>>().into(),
+            cursor: 51,
+            position: 42.0,
+            ..Default::default()
+        };
+        let current = state.queue.id_at(state.cursor);
+        state.shuffle_random().unwrap();
+        save(&mut db, &state).unwrap();
+        let mut restored = load(&db).unwrap();
+        assert_eq!(restored, state);
+        assert_eq!(restored.queue.id_at(restored.cursor), current);
+        restored.queue.restore_upcoming(restored.cursor + 1);
+        assert_eq!(restored.queue.len(), 1753);
+        assert!(
+            restored
+                .queue
+                .iter()
+                .filter(|t| t.id == track(0).id)
+                .count()
+                > 1
+        );
+    }
+    #[test]
     fn migration_and_roundtrip_do_not_store_play_intent() {
         let mut db = Connection::open_in_memory().unwrap();
         migrate(&mut db).unwrap();
@@ -230,7 +293,7 @@ mod tests {
         assert_eq!(
             db.pragma_query_value::<u32, _>(None, "user_version", |r| r.get(0))
                 .unwrap(),
-            4
+            5
         );
     }
     #[test]
@@ -242,7 +305,7 @@ mod tests {
         s.equalizer.gains_db = [2.0, -3.0, 4.0];
         s.appearance = 2;
         save(&mut db, &s).unwrap();
-        db.execute_batch("ALTER TABLE preferences DROP COLUMN crossfade; PRAGMA user_version=2;")
+        db.execute_batch("ALTER TABLE preferences DROP COLUMN crossfade; DROP TABLE view_preferences; ALTER TABLE queue RENAME TO queue_v5; CREATE TABLE queue (slot INTEGER PRIMARY KEY,id TEXT NOT NULL UNIQUE,title TEXT NOT NULL,artists TEXT NOT NULL); INSERT INTO queue SELECT slot,id,title,artists FROM queue_v5; DROP TABLE queue_v5; DROP TABLE queue_shuffle_order; PRAGMA user_version=2;")
             .unwrap();
         migrate(&mut db).unwrap();
         assert_eq!(load(&db).unwrap(), s);
@@ -267,6 +330,7 @@ mod tests {
         s.append(track(1), false);
         save(&mut db, &s).unwrap();
         let before = s.clone();
+        db.execute_batch("CREATE TRIGGER fail_queue BEFORE INSERT ON queue WHEN NEW.slot=1 BEGIN SELECT RAISE(FAIL,'Injected write failure'); END;").unwrap();
         s.queue.push(track(1));
         s.volume = 0.1;
         assert!(save(&mut db, &s).is_err());

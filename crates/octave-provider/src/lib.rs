@@ -1,6 +1,7 @@
 //! Experimental unsigned YouTube Music access. No cookies or account state are read.
 pub mod account;
 pub mod lyrics;
+pub mod playlist;
 pub mod range;
 pub mod related;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};

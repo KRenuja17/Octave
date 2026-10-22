@@ -29,7 +29,7 @@ Select a saved playlist and **Load into queue** to replace the queue without
 autoplay. Reorder, remove or add songs with the existing Queue controls, then
 **Edit playlist → Replace with queue** to save the edits. Rename and delete
 also live in **Edit playlist**. Rename uses the name field; deletion
-has a separate confirmation. Up to 20 playlists of 500 unique tracks are stored.
+has a separate confirmation. Up to 20 playlists of 10,000 entries are stored.
 
 These playlists stay on this computer and do not modify your YouTube Music
 account. A separate `listening.playlists.sqlite3` database sits beside the listening
@@ -82,8 +82,8 @@ decode worker, with independent state for each channel.
 
 Choose Dark, Light or High contrast in the same panel. EQ and appearance persist
 alongside listening state. Transition settings upgrade the listening database to
-schema 3, preserving earlier sound/theme settings. Back up the profile before
-upgrading if you may need an older binary: older versions cannot read schema 3
+schema 5, preserving earlier sound/theme settings and queue occurrence identity. Back up the profile before
+upgrading if you may need an older binary: older versions cannot read schema 5
 and database downgrade is unsupported.
 
 The diagnostic example supports `--list-outputs` and
@@ -160,7 +160,7 @@ publisher. Signed update verification groundwork and recovery instructions are d
   radio is requested. Removing the current song stops playback.
 - Queue, current position, volume and repeat mode save atomically to SQLite every
   two seconds and on clean exit. Restart restores them **without autoplay**.
-  Shuffle order is saved exactly as displayed. Maximum queue size: 500 songs.
+  Shuffle order is saved exactly as displayed. Maximum queue size: 10,000 entries.
 - Transient network/time-out/selected HTTP failures re-resolve the stream and
   resume from the retained position, with at most two retries per play action.
   Sign-in/unsupported-stream failures stop for manual action. Retry and Skip are
@@ -400,9 +400,28 @@ queue/lyrics destinations. Drag the divider or use **Narrower/Wider panel**.
 Back/Forward store destinations without replaying listening actions.
 
 Panel width/tab/visibility, lyrics-only and Reduce motion preferences are saved
-in schema 4. Older binaries reject this newer schema instead of overwriting it.
+in schema 5. Older binaries reject this newer schema instead of overwriting it.
 High contrast disables motion. Artwork has separate bounded 160/512px tiers
 (96 small and eight large textures); no artwork work runs on the audio thread.
 Lyrics have an eight-document, 15-minute memory cache. Related has eight
 memory-only result sets; **Load related songs** explicitly requests unsigned
 recommendations and offers queue actions. Neither failure interrupts audio.
+
+
+### Complete playlists and queue entries
+
+Public playlist import in Playlists retrieves every page before replacing the
+queue. Progress distinguishes playable/unavailable entries; cancel or failure
+keeps the old queue. Finite PL/OLAK playlists are supported, up to 10,000 entries;
+oversized sources fail explicitly. **True random** randomizes the complete list
+with OS entropy and unbiased Fisher–Yates, choosing a random opener. Local
+playlists offer the same mode. Upcoming shuffle preserves played/current entries;
+**Restore queue order** restores surviving upcoming originals, then later additions.
+This is separate from YouTube's service shuffle and recommendations.
+
+Each queue occurrence has its own durable ID. Use **Add duplicate** for intentional
+repeats; ordinary Add to queue still prevents accidental duplicates. The companion
+queue supports a drag handle/drop marker, keyboard menu actions, Play next and
+removal/undo. Undo is available until the next queue edit. Neither undo nor view
+navigation starts playback. Local playlist schema 2 preserves duplicates and adds
+filter/sort presentation without changing saved source order.

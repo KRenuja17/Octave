@@ -173,41 +173,167 @@ impl Alpha {
             }
         }
     }
+    pub(super) fn remove_queue_entry(&mut self, index: usize) {
+        if index >= self.session.queue.len() {
+            return;
+        }
+        let before = (
+            self.session.queue.clone(),
+            self.session.cursor,
+            self.session.position,
+        );
+        if self.session.remove(index) {
+            self.halt();
+        }
+        self.undo_queue = Some((before.0, before.1, before.2, self.session.queue.revision()));
+    }
+    pub(super) fn can_undo_removal(&self) -> bool {
+        self.undo_queue
+            .as_ref()
+            .is_some_and(|(_, _, _, revision)| *revision == self.session.queue.revision())
+    }
+    pub(super) fn undo_removal(&mut self) {
+        if !self.can_undo_removal() {
+            self.undo_queue = None;
+            return;
+        }
+        if let Some((queue, cursor, position, _)) = self.undo_queue.take() {
+            let active = self.session.queue.id_at(self.session.cursor);
+            let preserve = matches!(
+                self.player.snapshot().state,
+                PlaybackState::Playing(_) | PlaybackState::Paused(_)
+            );
+            let current = preserve
+                .then(|| {
+                    queue
+                        .iter()
+                        .enumerate()
+                        .position(|(i, _)| queue.id_at(i) == active)
+                })
+                .flatten();
+            self.session.queue = queue;
+            self.session.cursor = current
+                .unwrap_or(cursor)
+                .min(self.session.queue.len().saturating_sub(1));
+            if current.is_none() {
+                self.session.position = position;
+            }
+        }
+    }
+
     pub(super) fn queue_preview(&mut self, ui: &mut egui::Ui) {
         ui.weak(format!(
-            "{} songs · order saved locally",
+            "{} entries · complete loaded queue",
             self.session.queue.len()
         ));
-        let mut select = None;
+        if ui
+            .add_enabled(
+                self.can_undo_removal(),
+                egui::Button::new("Undo queue removal"),
+            )
+            .clicked()
+        {
+            self.undo_removal();
+        }
+        let mut action = None;
+        let mut drop = None;
         egui::ScrollArea::vertical()
             .id_salt("companion-queue")
-            .show_rows(ui, 64.0, self.session.queue.len(), |ui, range| {
+            .show_rows(ui, 72.0, self.session.queue.len(), |ui, range| {
                 for index in range {
-                    let track = &self.session.queue[index];
-                    ui.push_id(index, |ui| {
-                        ui.horizontal(|ui| {
-                            self.artwork.show(ui, &track.id.0, &track.title, 40.0);
-                            ui.vertical(|ui| {
-                                let label = if index == self.session.cursor {
-                                    format!("▶ {}", track.title)
-                                } else {
-                                    track.title.clone()
-                                };
-                                if ui
-                                    .selectable_label(index == self.session.cursor, label)
-                                    .clicked()
-                                {
-                                    select = Some(index);
-                                }
-                                ui.weak(track.artists.join(" · "));
-                            });
-                        });
-                    });
+                    let track = self.session.queue[index].clone();
+                    let entry = self.session.queue.id_at(index).unwrap();
+                    let row = ui
+                        .push_id(entry, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.dnd_drag_source(
+                                    egui::Id::new(("queue-drag", entry)),
+                                    entry,
+                                    |ui| {
+                                        ui.label("⠿");
+                                    },
+                                );
+                                self.artwork.show(ui, &track.id.0, &track.title, 36.0);
+                                ui.vertical(|ui| {
+                                    ui.set_width((ui.available_width() - 46.0).max(90.0));
+                                    let label = if index == self.session.cursor {
+                                        format!("▶ {}", track.title)
+                                    } else {
+                                        track.title.clone()
+                                    };
+                                    if ui
+                                        .add(egui::Button::new(label).frame(false).wrap())
+                                        .clicked()
+                                    {
+                                        action = Some((index, 0));
+                                    }
+                                    ui.add(
+                                        egui::Label::new(
+                                            egui::RichText::new(track.artists.join(" · ")).weak(),
+                                        )
+                                        .truncate(),
+                                    );
+                                });
+                                ui.menu_button("•••", |ui| {
+                                    for (label, code) in [
+                                        ("Move up", 1),
+                                        ("Move down", 2),
+                                        ("Remove", 3),
+                                        ("Add duplicate", 4),
+                                        ("Play next", 5),
+                                    ] {
+                                        if ui.button(label).clicked() {
+                                            action = Some((index, code));
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            })
+                        })
+                        .inner
+                        .response;
+                    if row.dnd_hover_payload::<u64>().is_some() {
+                        ui.painter().hline(
+                            row.rect.x_range(),
+                            row.rect.top(),
+                            egui::Stroke::new(2.0, ui.visuals().selection.stroke.color),
+                        );
+                    }
+                    if let Some(source) = row.dnd_release_payload::<u64>() {
+                        drop = Some((*source, index));
+                    }
                 }
             });
-        if let Some(index) = select {
-            self.session.select(index);
-            self.start(true);
+        if let Some((source, to)) = drop {
+            if let Some(from) = self
+                .session
+                .queue
+                .iter()
+                .enumerate()
+                .position(|(i, _)| self.session.queue.id_at(i) == Some(source))
+            {
+                self.session.move_item(from, to);
+            }
+        } else if let Some((index, code)) = action {
+            match code {
+                0 => {
+                    self.session.select(index);
+                    self.start(true);
+                }
+                1 => self.session.move_item(index, index.saturating_sub(1)),
+                2 => self.session.move_item(index, index + 1),
+                3 => self.remove_queue_entry(index),
+                4 => {
+                    if self.session.queue.len() < crate::listening::MAX_QUEUE {
+                        self.session.queue.push(self.session.queue[index].clone());
+                    }
+                }
+                5 => self.session.move_item(
+                    index,
+                    (self.session.cursor + 1).min(self.session.queue.len() - 1),
+                ),
+                _ => (),
+            }
         }
     }
 }

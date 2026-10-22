@@ -13,6 +13,11 @@ pub struct PlaylistsUi {
     name: String,
     message: String,
     confirm_delete: bool,
+    pub random_on_load: bool,
+    filter: String,
+    sort: u8,
+    visible: Vec<usize>,
+    filter_key: Option<(usize, String, u8, usize)>,
 }
 impl PlaylistsUi {
     pub fn new(path: PathBuf) -> Self {
@@ -26,6 +31,11 @@ impl PlaylistsUi {
             name: String::new(),
             message: String::new(),
             confirm_delete: false,
+            random_on_load: false,
+            filter: String::new(),
+            sort: 0,
+            visible: Vec::new(),
+            filter_key: None,
         }
     }
     pub fn settled(&self) -> bool {
@@ -45,6 +55,7 @@ impl PlaylistsUi {
     pub fn render(&mut self, ui: &mut egui::Ui, queue: &[Track]) -> Option<Vec<Track>> {
         while let Ok(event) = self.store.events.try_recv() {
             self.busy = false;
+            self.filter_key = None;
             let selected = self.selection_after_save.take().unwrap_or(self.selected);
             match event {
                 Ok(data) => {
@@ -57,6 +68,10 @@ impl PlaylistsUi {
         }
         ui.weak("Local library · saved on this computer");
         ui.add_space(6.0);
+        ui.checkbox(
+            &mut self.random_on_load,
+            "True random when loading the entire playlist",
+        );
         let mut loaded = None;
         ui.add_enabled_ui(!self.busy, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -168,11 +183,27 @@ impl PlaylistsUi {
                     });
                 }
                 ui.add_space(16.0);
+                ui.horizontal_wrapped(|ui| {
+                    ui.add(egui::TextEdit::singleline(&mut self.filter).hint_text("Filter this playlist").char_limit(256));
+                    egui::ComboBox::from_label("Sort songs").selected_text(["Playlist order","Song","Artist"][self.sort as usize]).show_ui(ui,|ui| {
+                        for (index,label) in ["Playlist order","Song","Artist"].iter().enumerate() { ui.selectable_value(&mut self.sort,index as u8,*label); }
+                    });
+                });
                 let tracks = &self.data[self.selected].tracks;
+                let key=(self.selected,self.filter.clone(),self.sort,tracks.len());
+                if self.filter_key.as_ref()!=Some(&key) {
+                    let query=self.filter.trim().to_lowercase();
+                    self.visible=(0..tracks.len()).filter(|&index|query.is_empty()||tracks[index].title.to_lowercase().contains(&query)||tracks[index].artists.iter().any(|artist|artist.to_lowercase().contains(&query))).collect();
+                    if self.sort==1 { self.visible.sort_by_cached_key(|&index|tracks[index].title.to_lowercase()); }
+                    if self.sort==2 { self.visible.sort_by_cached_key(|&index|tracks[index].artists.join(" ").to_lowercase()); }
+                    self.filter_key=Some(key);
+                }
+                ui.weak(format!("{} shown · {} songs in complete local playlist",self.visible.len(),tracks.len()));
                 if tracks.is_empty() { ui.weak("This playlist has no songs yet. Add songs to Queue, then use Replace with queue."); }
                 egui::ScrollArea::vertical().id_salt(("playlist-songs", self.selected))
-                    .max_height(320.0).show_rows(ui, 56.0, tracks.len(), |ui, range| {
-                    for index in range {
+                    .max_height(320.0).show_rows(ui, 56.0, self.visible.len(), |ui, range| {
+                    for row in range {
+                        let index=self.visible[row];
                         let track = &tracks[index];
                         ui.horizontal(|ui| {
                             ui.weak(format!("{:02}", index + 1));

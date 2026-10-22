@@ -66,13 +66,18 @@ impl Drop for Store {
 }
 fn migrate(db: &mut Connection) -> rusqlite::Result<()> {
     let version: u32 = db.pragma_query_value(None, "user_version", |r| r.get(0))?;
-    if version > 1 {
+    if version > 2 {
         return Err(rusqlite::Error::InvalidQuery);
     }
     if version == 0 {
         let tx = db.transaction()?;
         tx.execute_batch("CREATE TABLE playlists (slot INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE COLLATE NOCASE);
             CREATE TABLE tracks (playlist INTEGER NOT NULL, slot INTEGER NOT NULL, id TEXT NOT NULL, title TEXT NOT NULL, artists TEXT NOT NULL, PRIMARY KEY(playlist,slot), UNIQUE(playlist,id)); PRAGMA user_version=1;")?;
+        tx.commit()?;
+    }
+    if version < 2 {
+        let tx = db.transaction()?;
+        tx.execute_batch("ALTER TABLE tracks RENAME TO tracks_v1; CREATE TABLE tracks (playlist INTEGER NOT NULL,slot INTEGER NOT NULL,id TEXT NOT NULL,title TEXT NOT NULL,artists TEXT NOT NULL,PRIMARY KEY(playlist,slot)); INSERT INTO tracks SELECT * FROM tracks_v1; DROP TABLE tracks_v1; PRAGMA user_version=2;")?;
         tx.commit()?;
     }
     Ok(())
@@ -120,7 +125,7 @@ fn load(db: &Connection) -> rusqlite::Result<Vec<Playlist>> {
     for row in rows {
         let (id, name) = row?;
         let mut tracks = db.prepare(
-            "SELECT id,title,artists FROM tracks WHERE playlist=?1 ORDER BY slot LIMIT 501",
+            "SELECT id,title,artists FROM tracks WHERE playlist=?1 ORDER BY slot LIMIT 10001",
         )?;
         let tracks = tracks
             .query_map([id], |r| {
@@ -157,6 +162,7 @@ mod tests {
         save(&mut db, &data).unwrap();
         let before = data.clone();
         data[0].tracks.push(track(1));
+        data[0].name = String::new();
         assert!(save(&mut db, &data).is_err());
         assert_eq!(load(&db).unwrap(), before);
         data = before.clone();

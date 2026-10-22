@@ -1,7 +1,7 @@
 //! Durable listening state. Queue order is explicit, including after shuffle.
 use octave_core::Track;
 
-pub const MAX_QUEUE: usize = 500;
+pub const MAX_QUEUE: usize = 10_000;
 #[derive(Clone, Debug, PartialEq)]
 pub struct ViewPreferences {
     pub panel_open: bool,
@@ -43,7 +43,7 @@ pub struct Session {
     pub crossfade: u8,
     pub equalizer: octave_player::Equalizer,
     pub appearance: u8,
-    pub queue: Vec<Track>,
+    pub queue: octave_core::queue::Queue,
     pub cursor: usize,
     pub position: f64,
     pub volume: f32,
@@ -56,7 +56,7 @@ impl Default for Session {
             crossfade: 0,
             equalizer: octave_player::Equalizer::default(),
             appearance: 0,
-            queue: Vec::new(),
+            queue: Default::default(),
             cursor: 0,
             position: 0.0,
             volume: 0.7,
@@ -142,17 +142,19 @@ impl Session {
         if from >= self.queue.len() || to >= self.queue.len() {
             return;
         }
-        let selected = self.current().map(|t| t.id.clone());
-        let track = self.queue.remove(from);
-        self.queue.insert(to, track);
+        let selected = self.queue.id_at(self.cursor);
+        self.queue.move_entry(from, to);
         self.cursor = self
             .queue
             .iter()
-            .position(|t| Some(&t.id) == selected.as_ref())
+            .enumerate()
+            .position(|(index, _)| self.queue.id_at(index) == selected)
             .unwrap_or(0);
     }
     /// Fisher–Yates on upcoming tracks; seed permits reproducible tests.
+    #[cfg(test)]
     pub fn shuffle(&mut self, mut seed: u64) {
+        self.queue.remember_order();
         seed = seed.max(1);
         let start = (self.cursor + 1).min(self.queue.len());
         for i in ((start + 1)..self.queue.len()).rev() {
@@ -162,6 +164,36 @@ impl Session {
             let j = start + seed as usize % (i - start + 1);
             self.queue.swap(i, j);
         }
+    }
+    pub fn shuffle_random(&mut self) -> Result<(), ()> {
+        self.shuffle_range((self.cursor + 1).min(self.queue.len()))
+    }
+    pub fn shuffle_all(&mut self) -> Result<(), ()> {
+        self.shuffle_range(0)?;
+        self.cursor = 0;
+        self.position = 0.0;
+        Ok(())
+    }
+    fn shuffle_range(&mut self, start: usize) -> Result<(), ()> {
+        use ring::rand::SecureRandom;
+        let before = self.queue.clone();
+        self.queue.remember_order();
+        let random = ring::rand::SystemRandom::new();
+        for i in ((start + 1)..self.queue.len()).rev() {
+            let result = octave_core::queue::random_below((i - start + 1) as u64, || {
+                let mut bytes = [0; 8];
+                random.fill(&mut bytes).map_err(|_| ())?;
+                Ok(u64::from_le_bytes(bytes))
+            });
+            match result {
+                Ok(offset) => self.queue.swap(i, start + offset),
+                Err(()) => {
+                    self.queue = before;
+                    return Err(());
+                }
+            }
+        }
+        Ok(())
     }
 }
 #[cfg(test)]

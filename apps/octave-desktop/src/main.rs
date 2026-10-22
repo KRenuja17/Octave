@@ -13,6 +13,7 @@ mod lyrics_ui;
 mod model;
 mod output_ui;
 mod paths;
+mod playlist_import;
 mod playlist_ui;
 mod playlists;
 mod prototype;
