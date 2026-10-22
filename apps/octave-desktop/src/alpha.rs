@@ -49,6 +49,7 @@ pub fn run() -> eframe::Result {
 }
 
 struct Alpha {
+    listening_tab: u8,
     artwork: crate::song_artwork::SongArtwork,
     settings_page: bool,
     playlists_page: bool,
@@ -91,6 +92,11 @@ struct Alpha {
 impl Alpha {
     fn new(path: PathBuf) -> Self {
         Self {
+            listening_tab: match crate::argument("--page").as_deref() {
+                Some("now-playing") => 0,
+                Some("lyrics") => 2,
+                _ => 1,
+            },
             artwork: crate::song_artwork::SongArtwork::default(),
             settings_page: matches!(
                 crate::argument("--page").as_deref(),
@@ -122,7 +128,10 @@ impl Alpha {
             debounce: None,
             searching: false,
             search_message: String::new(),
-            queue_page: crate::argument("--page").as_deref() == Some("queue"),
+            queue_page: matches!(
+                crate::argument("--page").as_deref(),
+                Some("queue" | "now-playing" | "lyrics")
+            ),
             video_id: String::new(),
             message: String::new(),
             retry_at: None,
@@ -495,12 +504,62 @@ impl Alpha {
             })
             .response
             .on_hover_text("Playback options");
-            if ui.button("Queue").clicked() {
+            if ui.button("Now playing").clicked() {
+                self.listening_tab = 0;
                 self.queue_page = true;
                 self.settings_page = false;
                 self.account_page = false;
                 self.playlists_page = false;
             }
+        });
+    }
+    fn now_playing(&mut self, ui: &mut egui::Ui, lyrics: bool) {
+        let Some(track) = self.session.current().cloned() else {
+            ui.heading("Nothing playing yet");
+            ui.weak("Choose a song from Search or load a local playlist.");
+            return;
+        };
+        theme::surface(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                let size = if lyrics {
+                    64.0
+                } else if ui.available_width() < 600.0 {
+                    112.0
+                } else {
+                    224.0
+                };
+                self.artwork.show(ui, &track.id.0, &track.title, size);
+                ui.add_space(12.0);
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.weak(if lyrics { "Lyrics for" } else { "Now playing" });
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&track.title).strong().size(if lyrics {
+                                20.0
+                            } else {
+                                26.0
+                            }),
+                        )
+                        .wrap(),
+                    );
+                    if !track.artists.is_empty() {
+                        ui.label(track.artists.join(" · "));
+                    }
+                    if !lyrics {
+                        ui.add_space(12.0);
+                        ui.weak(match self.player.snapshot().state {
+                            PlaybackState::Playing(_) => "Playing",
+                            PlaybackState::Paused(_) => "Paused",
+                            PlaybackState::Loading(_) => "Connecting…",
+                            PlaybackState::Failed(_, _) => "Playback interrupted",
+                            PlaybackState::Ended(_) => "Finished",
+                            PlaybackState::Idle => "Ready to listen",
+                        });
+                        ui.weak("Playback controls are always available below.");
+                    }
+                });
+            });
         });
     }
     fn navigation(&mut self, ui: &mut egui::Ui) {
@@ -527,6 +586,7 @@ impl Alpha {
             self.playlists_page = false;
             self.account_page = false;
             self.queue_page = true;
+            self.listening_tab = 1;
         }
         if theme::nav(ui, self.account_page, "Account").clicked() {
             self.settings_page = false;
@@ -554,7 +614,7 @@ impl Alpha {
         } else if self.account_page {
             2
         } else if self.queue_page {
-            1
+            10 + self.listening_tab
         } else {
             0
         };
@@ -729,6 +789,7 @@ impl Alpha {
                 self.session.cursor = 0;
                 self.session.position = 0.0;
                 self.queue_page = true;
+                self.listening_tab = 1;
                 self.account_page = false;
                 self.message = "Playlist loaded. Press Resume to start listening.".into();
                 self.playlists_page = false;
@@ -770,8 +831,23 @@ impl Alpha {
         }
         ui.add_space(12.0);
         if self.queue_page {
-            self.lyrics
-                .render(ui, self.session.current().map(|t| &t.id));
+            ui.horizontal_wrapped(|ui| {
+                ui.selectable_value(&mut self.listening_tab, 0, "Now playing");
+                ui.selectable_value(&mut self.listening_tab, 1, "Up next");
+                ui.selectable_value(&mut self.listening_tab, 2, "Lyrics");
+            });
+            ui.add_space(16.0);
+            if self.listening_tab != 1 {
+                self.now_playing(ui, self.listening_tab == 2);
+                if self.listening_tab == 2 {
+                    ui.add_space(16.0);
+                    theme::surface(ui, |ui| {
+                        self.lyrics
+                            .render(ui, self.session.current().map(|t| &t.id))
+                    });
+                }
+                return;
+            }
         }
         if self.queue_page {
             ui.horizontal_wrapped(|ui| {
@@ -1404,6 +1480,28 @@ mod tests {
         assert!(control_after.y0 < control_before.y0);
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn listening_tabs_preserve_queue_position_without_starting_playback() {
+        let path = path("listening-tabs");
+        let mut app = loaded(path.clone());
+        app.add(track(1), false);
+        app.session.position = 42.0;
+        app.queue_page = true;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        click(&ctx, &mut app, "Now playing");
+        assert_eq!(app.listening_tab, 0);
+        click(&ctx, &mut app, "Lyrics");
+        assert_eq!(app.listening_tab, 2);
+        click(&ctx, &mut app, "Queue · 1");
+        assert_eq!(app.listening_tab, 1);
+        assert_eq!(app.session.queue, vec![track(1)]);
+        assert_eq!(app.session.position, 42.0);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
         drop(app);
         std::fs::remove_file(path).unwrap();

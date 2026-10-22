@@ -347,3 +347,11 @@ reported test executable to `packaging/Measure-Playback.ps1 -TestExecutable PATH
 test with generated 48 kHz stereo PCM, EQ, a five-second retained tail, and the
 real playback worker/output queue. It records process memory and CPU. Execution
 is accelerated and emits no audio; real-time network AAC acceptance remains separate.
+
+## Now playing and lyrics
+
+Use **Now playing** in the bottom player for larger artwork and song details.
+The listening view has **Now playing**, **Up next**, and **Lyrics** tabs; switching
+tabs does not start playback or change the queue. Queue navigation opens Up next.
+Lyrics load only when requested, show their source, and are not time-synced.
+Unavailable lyrics can be retried; changing songs discards the old song's text.
