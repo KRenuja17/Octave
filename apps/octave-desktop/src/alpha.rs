@@ -88,6 +88,7 @@ struct Alpha {
     seek: Option<f64>,
     frames: u32,
     capture_requested: bool,
+    capture_load_lyrics: bool,
 }
 impl Alpha {
     fn new(path: PathBuf) -> Self {
@@ -141,6 +142,8 @@ impl Alpha {
             seek: None,
             frames: 0,
             capture_requested: false,
+            capture_load_lyrics: crate::argument("--capture").is_some()
+                && std::env::args().any(|s| s == "--capture-load-lyrics"),
         }
     }
     fn start(&mut self, reset_retry: bool) {
@@ -843,7 +846,14 @@ impl Alpha {
                     ui.add_space(16.0);
                     theme::surface(ui, |ui| {
                         self.lyrics
-                            .render(ui, self.session.current().map(|t| &t.id))
+                            .render(ui, self.session.current().map(|t| &t.id));
+                        if self.capture_load_lyrics
+                            && self.loaded
+                            && self.session.current().is_some()
+                        {
+                            self.capture_load_lyrics = false;
+                            self.lyrics.load_current();
+                        }
                     });
                 }
                 return;
@@ -1274,6 +1284,7 @@ impl eframe::App for Alpha {
             }
             if self.loaded
                 && self.frames >= 30
+                && self.lyrics.settled()
                 && ((self.artwork.settled()
                     && self.playlists.as_ref().is_none_or(|p| p.settled())
                     && !self.searching

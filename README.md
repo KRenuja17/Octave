@@ -355,3 +355,13 @@ The listening view has **Now playing**, **Up next**, and **Lyrics** tabs; switch
 tabs does not start playback or change the queue. Queue navigation opens Up next.
 Lyrics load only when requested, show their source, and are not time-synced.
 Unavailable lyrics can be retried; changing songs discards the old song's text.
+The lyrics page scrolls as one reading surface, with attribution beside the header
+and responsive text sizes. Reloading retains the current text if the request fails.
+
+To explicitly verify the unsigned lyrics worker and panel without audio, run
+`cargo test -p octave-desktop --locked live_unsigned_lyrics_reach_the_panel -- --ignored --nocapture`.
+This opt-in check depends on live song availability and prints counts, not lyrics.
+For native visual verification, use an isolated restored queue profile with
+`--data-dir EXTERNAL_PROFILE --page lyrics --capture EXTERNAL_IMAGE.png --capture-load-lyrics`.
+The last flag explicitly requests lyrics once for the current song; it only applies
+in capture mode. Normal navigation never fetches lyrics automatically.
