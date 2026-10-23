@@ -2,6 +2,9 @@ use super::*;
 use std::collections::VecDeque;
 use transition::Prepared;
 
+#[cfg(test)]
+mod soak;
+
 #[derive(Clone)]
 struct Clock {
     quality: octave_core::AudioQuality,

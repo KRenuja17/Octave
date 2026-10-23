@@ -449,6 +449,18 @@ test with generated 48 kHz stereo PCM, EQ, a twelve-second retained tail, and th
 real playback worker/output queue. It records process memory and CPU. Execution
 is accelerated and emits no audio; real-time network AAC acceptance remains separate.
 
+The same measurement script accepts `-Network` to run the ignored
+`playback::soak::live_aac_network_pipeline` workload. It streams unsigned AAC from
+one exact public recording repeatedly through production preparation, EQ, a
+12-second Standard fade, consumed clocks and the bounded rodio queue. Samples
+are consumed only in memory; it never opens an audio output device. The default
+target is one hour of consumed samples, accelerated at up to ten times real time,
+with a fixed eleven-minute test budget. Set `OCTAVE_NETWORK_SOAK_SECONDS` to
+10–3600 for a shorter diagnostic. The first resolver, range, decoder or preparation
+failure stops the run without retrying. The script retains failure logs and
+resource results, including a wall-budget overrun. This is neither a real-time
+hour nor a long single recording, physical listening or broad-catalog acceptance.
+
 For the maximum Standard blend, run `cargo test -p octave-player --release
 --locked full_twelve_second_fade -- --ignored --nocapture`. This opt-in test
 paces a generated 48 kHz stereo pair through the real output queue and verifies

@@ -2,7 +2,8 @@
 
 Octave is MIT licensed. This Windows x64 GNU build is an unsigned evaluation
 candidate. It is not yet approved for public distribution. No Visual Studio is
-required. Extract the ZIP and run `octave-desktop.exe`, or run the included
+required. This candidate keeps the audio-first scope; native video and production
+Adaptive mixing are deferred. Extract the ZIP and run `octave-desktop.exe`, or run the included
 `Install.ps1` with PowerShell for a per-user installation. Quit before upgrading.
 The installer verifies package checksums before staging the replacement.
 Checksums alone do not authenticate a publisher; obtain packages from a trusted
@@ -67,7 +68,11 @@ the host network or hardware. These checks complement the physical/live gates be
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
-  five-recording unsigned probe decoded and sought one recording successfully;
+  device-free network workload additionally repeats one real unsigned recording
+  through AAC decoding, preparation, EQ, the full fade and consumed-clock queue.
+  Its accelerated sample-hour does not establish a real-time hour, a long single
+  recording, representative catalog access, or physical audio quality.
+  A bounded five-recording unsigned probe decoded and sought one recording successfully;
   four initially returned SignInRequired. A four-client follow-up identified
   bot-verification reasons on all four, with no formats offered. A broader ten-ID
   decoder sample passed one recording; nine returned BotCheckRequired. Octave now
@@ -116,6 +121,11 @@ standard fades have offline fixture coverage. Translation HTTP and Discord IPC
 fixtures pass; real configured LibreTranslate and Discord application/desktop
 acceptance remain open. No default translation server or Discord application ID
 is supplied. API keys/session credentials remain in memory.
+
+Translation and language checks are cancellable in flight. Track/target changes
+cancel obsolete translation work even when the lyrics view is hidden. Changing
+the service clears its previous memory-only API key and cached translations.
+Optional-service requests have separate capacity from playback/catalog requests.
 
 The adaptive module is an isolated local analysis experiment, not production
 adaptive audio. Native video is deferred. Account/Premium, screen-reader/RTL,
