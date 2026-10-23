@@ -467,6 +467,16 @@ paces a generated 48 kHz stereo pair through the real output queue and verifies
 the complete 12-second overlap, untouched tails and consumed-clock handoff. It
 opens no audio device; sound quality and device latency still need listening.
 
+For an explicitly authorized hardware check, run `cargo run -p octave-player
+--release --locked --example muted_playback -- VIDEO_ID --muted-default-output`.
+This opens the default output device with Octave's volume set to zero before
+playing, then measures a 30-second wall-clock window after the first consumed
+sample. Startup has a separate 15-second limit; failures stop without retries.
+It checks clock progression, stable stream quality and Stop returning to Idle.
+It never changes the system volume or output selection. A muted device check
+does not establish audible quality, lyric latency, device switching or long-session
+reliability. `--help` does not access the network or open an audio device.
+
 ## Now playing and lyrics
 
 Use **Now playing** in the bottom player for larger artwork and song details.
