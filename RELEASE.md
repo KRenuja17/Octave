@@ -64,7 +64,17 @@ the host network or hardware. These checks complement the physical/live gates be
   endpoints need a real user-initiated session test; credentials stay in memory.
 - Physical media keys/tray interaction, output-device changes, actual network
   interruption, screen-reader tasks and a fresh Windows machine need acceptance.
-- A one-hour playback/memory workload and representative track matrix remain open.
+- One-hour playback reliability and a representative track matrix remain open.
+  A real-time hour on the default output at zero player volume completed from
+  source `54d9405`, with sixteen gapless repeats of one accessible recording.
+  It failed the predeclared consumption threshold: 3,580.859 seconds observed
+  during a 3,600.020-second window, with 17.916 seconds of sampled buffering.
+  Stop's Idle check passed before the failure was reported. There was no
+  mid-run terminal playback error or automatic retry. Sampled peak private memory
+  was 22.19 MiB for the standalone player process; this excludes the desktop UI.
+  Range-refill coverage and bounded prebuffering need investigation before a
+  further live acceptance run. A single hour-long recording, broader access and
+  physical sound/lyric latency remain unverified.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
