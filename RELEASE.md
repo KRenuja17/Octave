@@ -76,6 +76,13 @@ the host network or hardware. These checks complement the physical/live gates be
   access unchanged. No client fallback or extra runtime was adopted. Unsigned
   lyrics availability does not establish audio access; broader unsigned resolver
   compatibility remains a feasibility gate on this network.
+  Fresh anonymous page bootstrap also failed to broaden access: three isolated
+  guest sessions kept page-issued cookies and server visitor updates coherent,
+  but all four blocked IDs still returned bot verification. The tested Topic's
+  watch-page JSON was blocked too. Those probes are test-only; production has no
+  page bootstrap or automatic cookie handling. No sign-in or page-script execution
+  was used. Anonymous session initialization alone has no demonstrated coverage
+  benefit here.
 - Production signing, update-key custody, hosting, license obligations (including
   bundled font and MPL dependency requirements), and tagged-source reproduction
   must be settled before distribution. The generated dependency inventory includes

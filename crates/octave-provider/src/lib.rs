@@ -191,6 +191,9 @@ impl Provider {
             .pointer("/context/client/visitorData")
             .and_then(Value::as_str)
         {
+            let mut visitor = reqwest::header::HeaderValue::from_str(visitor)
+                .map_err(|_| Error::InvalidResponse)?;
+            visitor.set_sensitive(true);
             request = request.header("X-Goog-Visitor-Id", visitor);
         }
         request.build().map_err(network)
@@ -424,6 +427,31 @@ fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn visitor_headers_are_sensitive_and_invalid_values_never_build_requests() {
+        let provider = Provider::new().unwrap();
+        let request = provider
+            .post_request(
+                "https://www.youtube.com/youtubei/v1/player",
+                json!({"context":{"client":{"visitorData":"visitor-secret"}}}),
+                "1",
+                "2.20261023",
+                WEB_UA,
+            )
+            .unwrap();
+        assert!(request.headers()["X-Goog-Visitor-Id"].is_sensitive());
+        assert!(!format!("{:?}", request.headers()).contains("visitor-secret"));
+        assert!(matches!(
+            provider.post_request(
+                "https://www.youtube.com/youtubei/v1/player",
+                json!({"context":{"client":{"visitorData":"invalid\r\nInjected: value"}}}),
+                "1",
+                "2.20261023",
+                WEB_UA
+            ),
+            Err(Error::InvalidResponse)
+        ));
+    }
     #[test]
     fn operation_cancellation_aborts_metadata_without_canceling_another_operation() {
         use std::{

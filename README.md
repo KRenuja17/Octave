@@ -419,6 +419,16 @@ profiles are excluded; redirects/consent actions are not followed. Output contai
 only counts, presence flags and classified results. This experiment does not
 enable cookies or page bootstrap in the production resolver.
 
+The completed probe isolates Web, visionOS and Web Remix sessions and keeps
+server-issued visitor updates coherent in the header and request context. All
+four previously blocked IDs still hit bot verification across these sessions.
+`anonymous_tests::live_anonymous_watch_bootstrap` is a separate opt-in 55-second
+comparison of a Topic recording and the control: it reads the watch page's
+embedded player JSON and one subsequent visionOS response per recording. The
+Topic stayed blocked in both. No production bootstrap fallback was adopted.
+Visitor headers are marked sensitive for diagnostic redaction in all provider
+requests, including the existing production resolver.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this

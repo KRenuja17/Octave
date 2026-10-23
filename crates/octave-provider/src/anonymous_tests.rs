@@ -14,6 +14,13 @@ const GUEST_NAMES: &[&str] = &[
     "PREF",
     "SOCS",
 ];
+fn valid_visitor(text: &str) -> bool {
+    !text.is_empty()
+        && text.len() <= 2048
+        && text
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_-%=+/".contains(&b))
+}
 
 // Read JSON objects from the known assignment/call sites, ignoring JS strings
 // and comments. This recognizes data; it never evaluates surrounding statements.
@@ -240,11 +247,7 @@ impl GuestConfig {
             return Err(Error::InvalidResponse);
         }
         let visitor = in_context.or(top).ok_or(Error::InvalidResponse)?.to_owned();
-        if visitor.len() > 2048
-            || !visitor
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b"_-%=+/".contains(&b))
-        {
+        if !valid_visitor(&visitor) {
             return Err(Error::InvalidResponse);
         }
         context["client"]["visitorData"] = visitor.clone().into();
@@ -255,6 +258,32 @@ impl GuestConfig {
             client_id,
             logged_out_declared: config.get("LOGGED_IN").and_then(Value::as_bool) == Some(false),
         })
+    }
+    fn accept_response(&mut self, value: &Value) -> Result<bool, Error> {
+        if value
+            .pointer("/responseContext/mainAppWebResponseContext/loggedOut")
+            .and_then(Value::as_bool)
+            == Some(false)
+        {
+            return Err(Error::InvalidResponse);
+        }
+        let Some(visitor) = value
+            .pointer("/responseContext/visitorData")
+            .and_then(Value::as_str)
+        else {
+            return Ok(false);
+        };
+        if !valid_visitor(visitor) {
+            return Err(Error::InvalidResponse);
+        }
+        if visitor == self.visitor.expose() {
+            return Ok(false);
+        }
+        let mut context = self.context.expose().clone();
+        context["client"]["visitorData"] = visitor.into();
+        self.context = Sensitive::new(context);
+        self.visitor = Sensitive::new(visitor.into());
+        Ok(true)
     }
 }
 
@@ -586,22 +615,20 @@ fn bounded_reply_metadata_is_redacted_and_does_not_install_cookies() {
     server.join().unwrap();
 }
 
-#[test]
-#[ignore = "Explicit anonymous page/session bootstrap cohort; metadata only, no sign-in or JS"]
-fn live_anonymous_page_bootstrap() {
+fn page_cohort(host: &'static str, profile: &str, ua: &str, started: Instant, budget: Duration) {
+    if started.elapsed() >= budget {
+        return;
+    }
     let provider = Provider {
         transport: Arc::new(transport::Transport::new().unwrap()),
         cancelled: None,
     };
-    let started = Instant::now();
-    let budget = Duration::from_secs(100);
-    let host = "www.youtube.com";
     let mut cookies = GuestCookies::new(host);
     let request = provider
         .transport
         .client
-        .get("https://www.youtube.com/?hl=en")
-        .header("User-Agent", PLAYER_UA)
+        .get(format!("https://{host}/?hl=en"))
+        .header("User-Agent", ua)
         .header("Accept", "text/html")
         .header("Accept-Encoding", "identity")
         .header("Accept-Language", "en-US,en;q=0.9")
@@ -611,14 +638,14 @@ fn live_anonymous_page_bootstrap() {
         request,
         transport::Expected::Bytes(PAGE_LIMIT),
         transport::Lane::Metadata,
-        transport::REQUEST_TIMEOUT,
+        transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
         || false,
     ) {
         Ok(reply) => reply,
         Err(error) => {
             println!(
                 "bootstrap={}",
-                json!({"stage":"page","error":format!("{error:?}")})
+                json!({"profile":profile,"host":host,"stage":"page","error":format!("{error:?}")})
             );
             return;
         }
@@ -630,12 +657,12 @@ fn live_anonymous_page_bootstrap() {
             return;
         }
     };
-    let config = match GuestConfig::parse(page, host) {
+    let mut config = match GuestConfig::parse(page, host) {
         Ok(config) => config,
         Err(error) => {
             println!(
                 "bootstrap={}",
-                json!({"stage":"config","pageBytes":page.len(),"shape":config_shape(page),"error":format!("{error:?}")})
+                json!({"profile":profile,"host":host,"stage":"config","pageBytes":page.len(),"shape":config_shape(page),"error":format!("{error:?}")})
             );
             return;
         }
@@ -643,8 +670,9 @@ fn live_anonymous_page_bootstrap() {
     cookies.update(&reply.headers, SystemTime::now()).unwrap();
     println!(
         "bootstrap={}",
-        json!({"stage":"ready","pageBytes":page.len(),"guestCookies":cookies.values.len(),"loggedOutDeclared":config.logged_out_declared,"visitorPresent":true,"client":"web","elapsedMs":started.elapsed().as_millis()})
+        json!({"profile":profile,"host":host,"stage":"ready","pageBytes":page.len(),"guestCookies":cookies.values.len(),"loggedOutDeclared":config.logged_out_declared,"visitorPresent":true,"elapsedMs":started.elapsed().as_millis()})
     );
+    drop(reply);
     for raw_id in [
         "hpSrLjc5SMs",
         "6Zt4P1scOwE",
@@ -652,86 +680,310 @@ fn live_anonymous_page_bootstrap() {
         "kJQP7kiw5Fk",
         "dQw4w9WgXcQ",
     ] {
-        for profile in ["page_web", "guest_visionos"] {
-            if started.elapsed() >= budget {
-                println!("bootstrap_budget_exhausted=true");
-                return;
-            }
-            let id = TrackId(raw_id.into());
-            let (mut context, client_id, version) = if profile == "page_web" {
-                (
-                    config.context.expose().clone(),
-                    config.client_id,
-                    config.version.as_str(),
-                )
-            } else {
-                (
-                    json!({"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","visitorData":config.visitor.expose()}}),
-                    "101",
-                    "1.02",
-                )
-            };
-            context["client"]["userAgent"] = PLAYER_UA.into();
-            let mut request = provider
-                .post_request(
-                    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-                    json!({"context":context,"videoId":raw_id}),
-                    client_id,
-                    version,
-                    PLAYER_UA,
-                )
-                .unwrap();
-            request.headers_mut().insert(
-                reqwest::header::ORIGIN,
-                HeaderValue::from_static("https://www.youtube.com"),
-            );
-            request.headers_mut().insert(
-                "X-Goog-Visitor-Id",
-                sensitive_header(config.visitor.expose()).unwrap(),
-            );
-            request.headers_mut().insert(
-                "X-Youtube-Bootstrap-Logged-In",
-                HeaderValue::from_static("false"),
-            );
-            let cookie = cookies.header(request.url(), SystemTime::now()).unwrap();
-            let sent_cookies = cookie.is_some();
-            if let Some(cookie) = cookie {
-                request.headers_mut().insert(COOKIE, cookie);
-            }
-            let attempt = Instant::now();
-            let result = provider.transport.reply(
-                request,
-                transport::Expected::Bytes(JSON_LIMIT as usize),
-                transport::Lane::Media,
-                transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
-                || false,
-            );
-            let result = match result {
-                Ok(reply) => match serde_json::from_slice::<Value>(&reply.bytes) {
-                    Ok(value) => {
-                        let mut summary = super::compatibility_tests::summary(&id, &value);
-                        summary["responseVisitorMatches"] = value
-                            .pointer("/responseContext/visitorData")
-                            .and_then(Value::as_str)
-                            .map(|s| s == config.visitor.expose())
-                            .into();
-                        if summary["responseVisitorMatches"] != false {
-                            cookies.update(&reply.headers, SystemTime::now()).unwrap();
-                        }
-                        summary
-                    }
-                    Err(_) => json!({"error":"InvalidResponse"}),
-                },
-                Err(error) => json!({"error":format!("{error:?}")}),
-            };
-            println!(
-                "anonymous={}",
-                json!({"videoId":raw_id,"profile":profile,"sentGuestCookies":sent_cookies,"elapsedMs":attempt.elapsed().as_millis(),"result":result})
-            );
-            if result["responseVisitorMatches"] == false {
-                println!("bootstrap_stopped=VisitorChanged");
-                return;
-            }
+        if started.elapsed() >= budget {
+            println!("bootstrap_budget_exhausted=true");
+            return;
         }
+        let id = TrackId(raw_id.into());
+        let (mut context, client_id, version) = if profile == "guest_visionos" {
+            (
+                json!({"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","visitorData":config.visitor.expose()}}),
+                "101",
+                "1.02",
+            )
+        } else {
+            (
+                config.context.expose().clone(),
+                config.client_id,
+                config.version.as_str(),
+            )
+        };
+        context["client"]["userAgent"] = ua.into();
+        let mut request = provider
+            .post_request(
+                &format!("https://{host}/youtubei/v1/player?prettyPrint=false"),
+                json!({"context":context,"videoId":raw_id}),
+                client_id,
+                version,
+                ua,
+            )
+            .unwrap();
+        request.headers_mut().insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_str(&format!("https://{host}")).unwrap(),
+        );
+        request.headers_mut().insert(
+            "X-Goog-Visitor-Id",
+            sensitive_header(config.visitor.expose()).unwrap(),
+        );
+        request.headers_mut().insert(
+            "X-Youtube-Bootstrap-Logged-In",
+            HeaderValue::from_static("false"),
+        );
+        let cookie = cookies.header(request.url(), SystemTime::now()).unwrap();
+        let sent_cookies = cookie.is_some();
+        if let Some(cookie) = cookie {
+            request.headers_mut().insert(COOKIE, cookie);
+        }
+        // The response-authoritative visitor must be identical in both places.
+        assert!(
+            request.headers()["X-Goog-Visitor-Id"].to_str().unwrap()
+                == context
+                    .pointer("/client/visitorData")
+                    .and_then(Value::as_str)
+                    .unwrap(),
+            "Guest visitor header and context diverged"
+        );
+        let attempt = Instant::now();
+        let result = provider.transport.reply(
+            request,
+            transport::Expected::Bytes(JSON_LIMIT as usize),
+            transport::Lane::Media,
+            transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
+            || false,
+        );
+        let result = match result {
+            Ok(reply) => match serde_json::from_slice::<Value>(&reply.bytes) {
+                Ok(value) => {
+                    let mut summary = super::compatibility_tests::summary(&id, &value);
+                    summary["responseVisitorMatches"] = value
+                        .pointer("/responseContext/visitorData")
+                        .and_then(Value::as_str)
+                        .map(|s| s == config.visitor.expose())
+                        .into();
+                    match config.accept_response(&value) {
+                        Ok(updated) => {
+                            summary["visitorUpdated"] = updated.into();
+                            cookies.update(&reply.headers, SystemTime::now()).unwrap();
+                            summary
+                        }
+                        Err(error) => {
+                            println!(
+                                "bootstrap={}",
+                                json!({"profile":profile,"stage":"response_state","error":format!("{error:?}")})
+                            );
+                            return;
+                        }
+                    }
+                }
+                Err(_) => json!({"error":"InvalidResponse"}),
+            },
+            Err(error) => json!({"error":format!("{error:?}")}),
+        };
+        println!(
+            "anonymous={}",
+            json!({"videoId":raw_id,"host":host,"profile":profile,"sentGuestCookies":sent_cookies,"elapsedMs":attempt.elapsed().as_millis(),"result":result})
+        );
+    }
+}
+
+#[test]
+fn server_visitor_updates_are_coherent_and_never_generate_new_identities() {
+    let page = r#"<script>ytcfg.set({"LOGGED_IN":false,"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"2.20261023","visitorData":"initial-secret"}}});</script>"#;
+    let mut config = GuestConfig::parse(page, "www.youtube.com").unwrap();
+    assert!(
+        !config
+            .accept_response(&json!({"playabilityStatus":{"status":"LOGIN_REQUIRED"}}))
+            .unwrap()
+    );
+    assert!(
+        config
+            .accept_response(&json!({"responseContext":{"visitorData":"updated-secret"}}))
+            .unwrap()
+    );
+    assert_eq!(config.visitor.expose(), "updated-secret");
+    assert_eq!(
+        config
+            .context
+            .expose()
+            .pointer("/client/visitorData")
+            .and_then(Value::as_str),
+        Some("updated-secret")
+    );
+    assert!(
+        !config
+            .accept_response(&json!({"responseContext":{"visitorData":"updated-secret"}}))
+            .unwrap()
+    );
+    for bad in [
+        json!({"responseContext":{"visitorData":"injected; value"}}),
+        json!({"responseContext":{"visitorData":""}}),
+        json!({"responseContext":{"visitorData":"account-secret","mainAppWebResponseContext":{"loggedOut":false}}}),
+    ] {
+        assert_eq!(config.accept_response(&bad), Err(Error::InvalidResponse));
+        assert_eq!(config.visitor.expose(), "updated-secret");
+    }
+    assert!(!format!("{config:?}").contains("secret"));
+}
+
+#[test]
+#[ignore = "Explicit anonymous page/session bootstrap cohort; metadata only, no sign-in or JS"]
+fn live_anonymous_page_bootstrap() {
+    let started = Instant::now();
+    let budget = Duration::from_secs(100);
+    // Each predeclared client has one fresh, isolated in-memory session. There
+    // is no re-bootstrap/retry loop in response to a bot check.
+    for (host, profile, ua) in [
+        ("www.youtube.com", "page_web", WEB_UA),
+        ("www.youtube.com", "guest_visionos", PLAYER_UA),
+        ("music.youtube.com", "page_remix", WEB_UA),
+    ] {
+        page_cohort(host, profile, ua, started, budget);
+    }
+}
+
+fn inline_player(page: &str, id: &TrackId) -> Result<Value, Error> {
+    let mut players = Vec::new();
+    for marker in [
+        "ytInitialPlayerResponse",
+        "window.ytInitialPlayerResponse",
+        "window[\"ytInitialPlayerResponse\"]",
+        "window['ytInitialPlayerResponse']",
+    ] {
+        players.extend(page_objects(page, marker, b'=').map_err(|_| Error::InvalidResponse)?);
+    }
+    if players.len() != 1 {
+        return Err(Error::InvalidResponse);
+    }
+    let value = &players[0];
+    if value
+        .pointer("/playabilityStatus/status")
+        .and_then(Value::as_str)
+        == Some("OK")
+        && value
+            .pointer("/videoDetails/videoId")
+            .and_then(Value::as_str)
+            != Some(&id.0)
+    {
+        return Err(Error::InvalidResponse);
+    }
+    Ok(super::compatibility_tests::summary(id, value))
+}
+
+#[test]
+fn inline_watch_player_is_data_only_and_must_match_the_requested_recording() {
+    let id = TrackId("abcdefghijk".into());
+    for marker in [
+        "var ytInitialPlayerResponse",
+        "window.ytInitialPlayerResponse",
+        "window[\"ytInitialPlayerResponse\"]",
+    ] {
+        let page = format!(
+            r#"<script>{marker} = {{"playabilityStatus":{{"status":"LOGIN_REQUIRED","reason":"not a bot secret"}}}};</script>"#
+        );
+        let result = inline_player(&page, &id).unwrap();
+        assert_eq!(result["resolver"], "BotCheckRequired");
+        assert!(!result.to_string().contains("secret"));
+    }
+    assert!(inline_player("<script>var ytInitialPlayerResponse = {\"playabilityStatus\":{\"status\":\"OK\"},\"videoDetails\":{\"videoId\":\"wrong-id\"}};</script>", &id).is_err());
+}
+
+#[test]
+#[ignore = "Explicit two-recording anonymous watch-page bootstrap; no sign-in, JS, or audio"]
+fn live_anonymous_watch_bootstrap() {
+    let provider = Provider {
+        transport: Arc::new(transport::Transport::new().unwrap()),
+        cancelled: None,
+    };
+    let started = Instant::now();
+    let budget = Duration::from_secs(55);
+    let mut cookies = GuestCookies::new("www.youtube.com");
+    for raw_id in ["hpSrLjc5SMs", "dQw4w9WgXcQ"] {
+        if started.elapsed() >= budget {
+            println!("watch_budget_exhausted=true");
+            return;
+        }
+        let id = TrackId(raw_id.into());
+        let mut request = provider
+            .transport
+            .client
+            .get(format!("https://www.youtube.com/watch?v={raw_id}&hl=en"))
+            .header("User-Agent", PLAYER_UA)
+            .header("Accept", "text/html")
+            .header("Accept-Encoding", "identity")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .build()
+            .unwrap();
+        if let Some(cookie) = cookies.header(request.url(), SystemTime::now()).unwrap() {
+            request.headers_mut().insert(COOKIE, cookie);
+        }
+        let reply = match provider.transport.reply(
+            request,
+            transport::Expected::Bytes(PAGE_LIMIT),
+            transport::Lane::Metadata,
+            transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
+            || false,
+        ) {
+            Ok(reply) => reply,
+            Err(error) => {
+                println!(
+                    "watch={}",
+                    json!({"videoId":raw_id,"stage":"page","error":format!("{error:?}")})
+                );
+                return;
+            }
+        };
+        let page = std::str::from_utf8(&reply.bytes).unwrap();
+        let config = match GuestConfig::parse(page, "www.youtube.com") {
+            Ok(config) => config,
+            Err(error) => {
+                println!(
+                    "watch={}",
+                    json!({"videoId":raw_id,"stage":"config","shape":config_shape(page),"error":format!("{error:?}")})
+                );
+                return;
+            }
+        };
+        cookies.update(&reply.headers, SystemTime::now()).unwrap();
+        let inline = match inline_player(page, &id) {
+            Ok(result) => result,
+            Err(error) => json!({"error":format!("{error:?}")}),
+        };
+        println!(
+            "watch={}",
+            json!({"videoId":raw_id,"stage":"inline_player","pageBytes":page.len(),"guestCookies":cookies.values.len(),"loggedOutDeclared":config.logged_out_declared,"result":inline})
+        );
+        drop(reply);
+        if started.elapsed() >= budget {
+            return;
+        }
+        let context = json!({"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","userAgent":PLAYER_UA,"visitorData":config.visitor.expose()}});
+        let mut request = provider
+            .post_request(
+                "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                json!({"context":context,"videoId":raw_id}),
+                "101",
+                "1.02",
+                PLAYER_UA,
+            )
+            .unwrap();
+        request.headers_mut().insert(
+            reqwest::header::ORIGIN,
+            HeaderValue::from_static("https://www.youtube.com"),
+        );
+        if let Some(cookie) = cookies.header(request.url(), SystemTime::now()).unwrap() {
+            request.headers_mut().insert(COOKIE, cookie);
+        }
+        let result = provider.transport.reply(
+            request,
+            transport::Expected::Bytes(JSON_LIMIT as usize),
+            transport::Lane::Media,
+            transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
+            || false,
+        );
+        let result = match result {
+            Ok(reply) => {
+                cookies.update(&reply.headers, SystemTime::now()).unwrap();
+                match serde_json::from_slice::<Value>(&reply.bytes) {
+                    Ok(value) => super::compatibility_tests::summary(&id, &value),
+                    Err(_) => json!({"error":"InvalidResponse"}),
+                }
+            }
+            Err(error) => json!({"error":format!("{error:?}")}),
+        };
+        println!(
+            "watch={}",
+            json!({"videoId":raw_id,"stage":"after_watch_visionos","result":result})
+        );
     }
 }
