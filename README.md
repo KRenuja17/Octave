@@ -335,7 +335,12 @@ rotates fixture pages and scrolls for repeatable artwork/browsing measurements.
 
 Network and decoding work stays off the UI and audio callback. Each of the active
 and upcoming transports retains one 256 KiB payload block, independent of track
-duration. Ordinary playback queues three roughly 100 ms PCM blocks. Transitions
+duration. Ordinary playback keeps up to two seconds of unconsumed PCM queued,
+with an 8 MiB ceiling at extreme formats. Queue coverage uses enqueued minus
+consumed samples, rather than source count, so a long mix cannot trigger more
+decoding just because it occupies one source. Current/decoder blocks add bounded
+overhead. Generation cancellation still discards queued audio on Stop or seek.
+Transitions
 add bounded outgoing tail, incoming head and mixed PCM buffers, each at most
 8 MiB (plus a 100 ms block), supporting up to 12 seconds at 48kHz stereo.
 Whole tracks are never buffered. The audio
@@ -373,8 +378,10 @@ Only supported direct AAC/MP4 streams are playable. No authenticated playback, P
 validation, cipher/JavaScript resolver, live-stream support or automatic
 device-switch recovery is implemented. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
-is reported and needs a manual retry. Brief network stalls can exhaust the small
-PCM queue and cause silence before recovery. Searches cancel in-flight HTTP work
+is reported and needs a manual retry. Refills longer than the bounded queued
+coverage can still cause buffering. A loopback HTTP/decoder regression exercises
+repeated 500 ms refills without starving the output; the consumed clock still
+freezes honestly on longer stalls. Searches cancel in-flight HTTP work
 when replaced or cleared; an OS DNS call already dispatched may finish later
 within the fixed resolver pool. Release hardening does not remove service access
 restrictions. The original `--live-preview` remains a minimal diagnostic

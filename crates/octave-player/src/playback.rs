@@ -3,7 +3,18 @@ use std::collections::VecDeque;
 use transition::Prepared;
 
 #[cfg(test)]
+mod refill_tests;
+#[cfg(test)]
 mod soak;
+
+// Cover ordinary range-refill latency with two seconds of unconsumed PCM,
+// capped at 8 MiB for extreme formats. Current/decoder blocks add bounded
+// overhead; the existing long-fade segments retain their separate ceilings.
+const MAX_OUTPUT_SAMPLES: usize = 2 * 1024 * 1024;
+fn output_budget(rate: u32, channels: u16) -> u64 {
+    let channels = usize::from(channels);
+    ((rate as usize * channels * 2).min(MAX_OUTPUT_SAMPLES) / channels * channels) as u64
+}
 
 #[derive(Clone)]
 struct Clock {
@@ -11,6 +22,7 @@ struct Clock {
     id: TrackId,
     sequence: u64,
     consumed: Arc<AtomicU64>,
+    enqueued: Arc<AtomicU64>,
     offset: Duration,
     duration: Duration,
     rate: rodio::SampleRate,
@@ -23,11 +35,17 @@ impl Clock {
             id: audio.id.clone(),
             sequence,
             consumed: Arc::new(AtomicU64::new(0)),
+            enqueued: Arc::new(AtomicU64::new(0)),
             offset: audio.offset,
             duration: audio.duration,
             rate: audio.rate,
             channels: audio.channels,
         }
+    }
+    fn queued_samples(&self) -> u64 {
+        self.enqueued
+            .load(Ordering::Acquire)
+            .saturating_sub(self.consumed.load(Ordering::Acquire))
     }
     fn snapshot(&self, paused: bool, ended: bool) -> Snapshot {
         Snapshot {
@@ -59,6 +77,8 @@ impl Clock {
         samples: Vec<f32>,
     ) {
         if !samples.is_empty() && current(shared, request) {
+            self.enqueued
+                .fetch_add(samples.len() as u64, Ordering::Release);
             output.append(Gated {
                 inner: SamplesBuffer::new(self.channels, self.rate, samples),
                 generation: shared.generation.clone(),
@@ -174,11 +194,16 @@ fn run(
             break;
         }
         // Let the incoming clock become visible before doing more fallible I/O.
-        if paused || output.len() >= 3 || ended || previous.is_some() {
+        let count = audio.block_size();
+        if paused
+            || clock.queued_samples().saturating_add(count as u64)
+                > output_budget(clock.rate.get(), clock.channels.get())
+            || ended
+            || previous.is_some()
+        {
             thread::sleep(Duration::from_millis(10));
             continue;
         }
-        let count = audio.block_size();
         let keep = transition::tail_budget(audio.rate.get(), audio.channels.get(), fade as u8);
         if tail.len() > keep {
             let count = count.min(tail.len() - keep);
@@ -532,7 +557,7 @@ mod tests {
             ));
         }
     }
-    fn fixture(id: &str, value: f32, rate: u32, channels: u16) -> Prepared {
+    pub(super) fn fixture(id: &str, value: f32, rate: u32, channels: u16) -> Prepared {
         let rate = rodio::SampleRate::new(rate).unwrap();
         let channels = rodio::ChannelCount::new(channels).unwrap();
         Prepared {
