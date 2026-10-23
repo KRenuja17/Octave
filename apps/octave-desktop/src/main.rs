@@ -20,6 +20,7 @@ mod playlist_ui;
 mod playlists;
 mod prototype;
 mod related_ui;
+mod request_cancel;
 mod search;
 mod shell;
 mod song_artwork;

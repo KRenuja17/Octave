@@ -4,6 +4,7 @@ use octave_core::{Collection, Track, TrackId};
 use octave_provider::{Error, Provider, catalog::CatalogPage};
 use std::sync::{
     Arc, Condvar, Mutex,
+    atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver},
 };
 enum Request {
@@ -16,14 +17,17 @@ enum Reply {
     Suggest(Vec<String>),
     Order(Option<TrackId>, Vec<Track>),
 }
-type Pending = Arc<(Mutex<(bool, Option<(u64, Request)>)>, Condvar)>;
+type Pending = Arc<(
+    Mutex<(bool, Option<(u64, Request)>, Option<(u64, Arc<AtomicBool>)>)>,
+    Condvar,
+)>;
 struct Worker {
     pending: Pending,
     results: Receiver<(u64, Result<Reply, Error>)>,
 }
 impl Worker {
     fn new() -> Self {
-        let pending: Pending = Arc::new((Mutex::new((false, None)), Condvar::new()));
+        let pending: Pending = Arc::new((Mutex::new((false, None, None)), Condvar::new()));
         let work = pending.clone();
         let (tx, results) = mpsc::channel();
         std::thread::spawn(move || {
@@ -37,20 +41,26 @@ impl Worker {
                     break;
                 }
                 let (generation, request) = state.1.take().unwrap();
+                let cancel = Arc::new(AtomicBool::new(false));
+                state.2 = Some((generation, cancel.clone()));
                 drop(state);
                 let result = if cfg!(test) {
                     Err(Error::Unavailable)
                 } else {
-                    Provider::new().and_then(|p| match request {
-                        Request::Page(id, token) => p
-                            .catalog(&id, token.as_deref())
-                            .map(|page| Reply::Page(Box::new(page))),
-                        Request::Suggest(query) => p.suggestions(&query).map(Reply::Suggest),
-                        Request::Order(id, radio) => p
-                            .service_order(&id, radio)
-                            .map(|tracks| Reply::Order(radio.then_some(TrackId(id)), tracks)),
+                    Provider::new().and_then(|p| {
+                        let p = p.with_cancellation(cancel);
+                        match request {
+                            Request::Page(id, token) => p
+                                .catalog(&id, token.as_deref())
+                                .map(|page| Reply::Page(Box::new(page))),
+                            Request::Suggest(query) => p.suggestions(&query).map(Reply::Suggest),
+                            Request::Order(id, radio) => p
+                                .service_order(&id, radio)
+                                .map(|tracks| Reply::Order(radio.then_some(TrackId(id)), tracks)),
+                        }
                     })
                 };
+                work.0.lock().unwrap().2 = None;
                 if tx.send((generation, result)).is_err() {
                     break;
                 }
@@ -59,11 +69,21 @@ impl Worker {
         Self { pending, results }
     }
     fn send(&self, generation: u64, request: Request) {
-        self.pending.0.lock().unwrap().1 = Some((generation, request));
+        let mut state = self.pending.0.lock().unwrap();
+        if let Some((_, cancel)) = &state.2 {
+            cancel.store(true, Ordering::Release);
+        }
+        state.1 = Some((generation, request));
+        drop(state);
         self.pending.1.notify_one();
     }
     fn cancel_pending(&self, generation: u64) {
         let mut pending = self.pending.0.lock().unwrap();
+        if let Some((id, cancel)) = &pending.2
+            && *id == generation
+        {
+            cancel.store(true, Ordering::Release);
+        }
         if pending.1.as_ref().is_some_and(|(id, _)| *id == generation) {
             pending.1 = None;
         }
@@ -71,7 +91,12 @@ impl Worker {
 }
 impl Drop for Worker {
     fn drop(&mut self) {
-        self.pending.0.lock().unwrap().0 = true;
+        let mut state = self.pending.0.lock().unwrap();
+        state.0 = true;
+        if let Some((_, cancel)) = &state.2 {
+            cancel.store(true, Ordering::Release);
+        }
+        drop(state);
         self.pending.1.notify_one();
     }
 }
@@ -169,6 +194,7 @@ impl CatalogUi {
     ) -> Option<Action> {
         let mut action = None;
         if self.active != self.route {
+            self.worker.cancel_pending(self.generation);
             self.generation = self.generation.wrapping_add(1);
             self.busy = false;
             self.started = None;
@@ -716,6 +742,8 @@ mod tests {
         catalog.busy = true;
         catalog.started = Some(std::time::Instant::now() - std::time::Duration::from_secs(16));
         let generation = catalog.generation;
+        let token = Arc::new(AtomicBool::new(false));
+        catalog.worker.pending.0.lock().unwrap().2 = Some((generation, token.clone()));
         let (tx, rx) = mpsc::channel();
         catalog.worker.results = rx;
         tx.send((
@@ -736,6 +764,7 @@ mod tests {
         });
         output.textures_delta.clear();
         assert!(!catalog.busy && catalog.started.is_none());
+        assert!(token.load(Ordering::Acquire));
         assert_eq!(catalog.page.as_ref().unwrap().page.tracks.len(), 1753);
         assert!(catalog.message.contains("timed out"));
         assert_ne!(catalog.generation, generation);

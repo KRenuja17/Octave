@@ -4,6 +4,7 @@ use octave_provider::{Error, Provider};
 use std::sync::mpsc::{self, Receiver};
 #[derive(Default)]
 pub struct RelatedUi {
+    cancel: crate::request_cancel::RequestCancel,
     id: Option<TrackId>,
     response: Option<Receiver<Result<Vec<Track>, Error>>>,
     tracks: Vec<Track>,
@@ -11,7 +12,15 @@ pub struct RelatedUi {
     cache: std::collections::VecDeque<(TrackId, Vec<Track>)>,
 }
 impl RelatedUi {
+    pub fn cancel_for(&mut self, id: Option<&TrackId>) {
+        if self.id.as_ref() != id {
+            self.cancel.cancel();
+            self.response = None;
+        }
+    }
+
     pub fn render(&mut self, ui: &mut egui::Ui, id: Option<&TrackId>) -> Option<Track> {
+        self.cancel_for(id);
         if self.id.as_ref() != id {
             self.id = id.cloned();
             self.response = None;
@@ -57,10 +66,12 @@ impl RelatedUi {
             .clicked()
             && let Some(id) = self.id.clone()
         {
+            let cancel = self.cancel.begin();
             let (tx, rx) = mpsc::sync_channel(1);
             self.response = Some(rx);
             std::thread::spawn(move || {
-                let _ = tx.send(Provider::new().and_then(|p| p.related(&id)));
+                let _ =
+                    tx.send(Provider::new().and_then(|p| p.with_cancellation(cancel).related(&id)));
             });
         }
         if self.response.is_some() {

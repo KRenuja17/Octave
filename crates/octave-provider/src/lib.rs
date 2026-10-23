@@ -9,7 +9,14 @@ pub mod translation;
 mod transport;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
 use serde_json::{Value, json};
-use std::{fmt, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    time::Duration,
+};
 const WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const PLAYER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 const JSON_LIMIT: u64 = 4 * 1024 * 1024;
@@ -65,8 +72,19 @@ pub struct ResolvedStream {
 #[derive(Clone)]
 pub struct Provider {
     transport: Arc<transport::Transport>,
+    cancelled: Option<Arc<AtomicBool>>,
 }
 impl Provider {
+    /// A per-operation token. It never changes another provider/operation.
+    pub fn with_cancellation(mut self, cancelled: Arc<AtomicBool>) -> Self {
+        self.cancelled = Some(cancelled);
+        self
+    }
+    fn is_cancelled(&self) -> bool {
+        self.cancelled
+            .as_ref()
+            .is_some_and(|flag| flag.load(Ordering::Acquire))
+    }
     pub fn public_artwork(&self, url: &str) -> Result<Vec<u8>, Error> {
         let parsed = reqwest::Url::parse(url).map_err(|_| Error::InvalidResponse)?;
         if parsed.scheme() != "https"
@@ -85,7 +103,7 @@ impl Provider {
             transport::Expected::Bytes(2 * 1024 * 1024),
             transport::Lane::Metadata,
             Duration::from_secs(5),
-            || false,
+            || self.is_cancelled(),
         )
     }
     /// Public video artwork only; never sends account credentials.
@@ -123,12 +141,13 @@ impl Provider {
             transport::Expected::Bytes(2 * 1024 * 1024),
             transport::Lane::Metadata,
             Duration::from_secs(5),
-            || false,
+            || self.is_cancelled(),
         )
     }
     pub fn new() -> Result<Self, Error> {
         Ok(Self {
             transport: transport::shared()?,
+            cancelled: None,
         })
     }
     fn post(
@@ -181,7 +200,7 @@ impl Provider {
             transport::Expected::Bytes(JSON_LIMIT as usize),
             lane,
             transport::REQUEST_TIMEOUT,
-            cancelled,
+            || self.is_cancelled() || cancelled(),
         )?;
         serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse)
     }
@@ -386,6 +405,62 @@ fn collect_tracks(value: &Value, out: &mut Vec<Track>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn operation_cancellation_aborts_metadata_without_canceling_another_operation() {
+        use std::{
+            io::{BufRead, Read, Write},
+            net::TcpListener,
+            sync::mpsc,
+            thread,
+        };
+        let provider = Provider {
+            transport: Arc::new(transport::Transport::new().unwrap()),
+            cancelled: None,
+        };
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/fixture", listener.local_addr().unwrap());
+        let (ready, wait) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut request = std::io::BufReader::new(socket.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                request.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            socket
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000\r\n\r\n{")
+                .unwrap();
+            ready.send(()).unwrap();
+            assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
+        });
+        let flag = Arc::new(AtomicBool::new(false));
+        let cancel = flag.clone();
+        let trigger = thread::spawn(move || {
+            wait.recv_timeout(Duration::from_secs(2)).unwrap();
+            cancel.store(true, Ordering::Release);
+        });
+        let scoped = provider.clone().with_cancellation(flag);
+        let started = std::time::Instant::now();
+        assert_eq!(
+            scoped.json_reply(
+                scoped.transport.client.get(url).build().unwrap(),
+                transport::Lane::Metadata,
+                || false
+            ),
+            Err(Error::Cancelled)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        trigger.join().unwrap();
+        server.join().unwrap();
+        assert!(!provider.is_cancelled());
+        assert!(scoped.is_cancelled());
+    }
     #[test]
     fn highest_direct_supported_aac_is_selected_from_offered_formats() {
         let id = TrackId("abcdefghijk".into());

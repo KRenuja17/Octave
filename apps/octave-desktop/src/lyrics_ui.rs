@@ -7,6 +7,7 @@ use std::{collections::VecDeque, time::Instant};
 type Response = (TrackId, Result<Option<Lyrics>, Error>);
 #[derive(Default)]
 pub struct LyricsUi {
+    cancel: crate::request_cancel::RequestCancel,
     id: Option<TrackId>,
     response: Option<Receiver<Response>>,
     lyrics: Option<Lyrics>,
@@ -45,14 +46,21 @@ impl LyricsUi {
             return;
         };
         self.message.clear();
+        let cancel = self.cancel.begin();
         let (tx, rx) = mpsc::sync_channel(1);
         self.response = Some(rx);
         std::thread::spawn(move || {
-            let result = Provider::new().and_then(|p| p.lyrics(&id));
+            let result = Provider::new().and_then(|p| p.with_cancellation(cancel).lyrics(&id));
             let _ = tx.send((id, result));
         });
     }
 
+    pub fn cancel_for(&mut self, id: Option<&TrackId>) {
+        if self.id.as_ref() != id {
+            self.cancel.cancel();
+            self.response = None;
+        }
+    }
     pub fn playhead(&mut self, position: Duration, can_seek: bool) {
         self.position = position;
         self.can_seek = can_seek;
@@ -84,6 +92,7 @@ impl LyricsUi {
 
     pub fn render(&mut self, ui: &mut egui::Ui, id: Option<&TrackId>) -> Option<Duration> {
         let mut seek = None;
+        self.cancel_for(id);
         if self.id.as_ref() != id {
             if let Some(document) = self.lyrics.take() {
                 self.cache
@@ -360,6 +369,21 @@ mod tests {
             can_seek: true,
             ..Default::default()
         }
+    }
+    #[test]
+    fn changing_track_cancels_pending_lyrics_even_when_the_view_is_hidden() {
+        let mut app = timed_app();
+        let token = app.cancel.begin();
+        let (_tx, rx) = mpsc::channel();
+        app.response = Some(rx);
+        app.cancel_for(Some(&TrackId("bbbbbbbbbbb".into())));
+        assert!(token.load(std::sync::atomic::Ordering::Acquire));
+        assert!(app.settled());
+        // This document remains cached for the old recording; render clears it for a new ID.
+        assert_eq!(
+            app.lyrics.as_ref().unwrap().track_id,
+            TrackId("aaaaaaaaaaa".into())
+        );
     }
     #[test]
     fn timed_click_seeks_but_manual_scroll_and_paging_keep_reading_ownership() {

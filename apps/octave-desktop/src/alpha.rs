@@ -310,6 +310,9 @@ impl Alpha {
         }
         let snapshot = self.player.snapshot();
         self.observe(snapshot);
+        let current = self.session.current().map(|t| &t.id);
+        self.lyrics.cancel_for(current);
+        self.related.cancel_for(current);
         self.player
             .prepare_next(if self.session.continuous && self.session.preload {
                 self.session.upcoming().map(|t| t.id.clone())

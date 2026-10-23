@@ -18,7 +18,8 @@ previous/play/next and volume visible; its options menu holds stop, repeat and
 shuffle. Installed Windows fonts are loaded locally and never redistributed.
 
 Search shows a top-result card and an artwork-led Songs list. **Queue top result**
-adds a song without starting playback; **Clear search** cancels pending results.
+adds a song without starting playback; **Clear search** cancels pending results
+and the obsolete in-flight request.
 You can also launch with `--search "artist or song"` to open a search without autoplay.
 
 ## Expansion: local playlists
@@ -413,6 +414,9 @@ The lyrics page scrolls as one reading surface, with attribution beside the head
 and responsive text sizes. Reloading retains the current text if the request fails.
 Listening tabs stay visible while reading, with **Back to top** available in Lyrics.
 Reading positions are separate for each song; a new song starts at the beginning.
+Track changes cancel pending lyrics/Related requests even while those views are
+hidden. Catalog navigation, playlist cancellation and window cleanup also abort
+their operation-scoped HTTP work without canceling another operation.
 Compact lyrics use a smaller song header to leave more room above the fixed player.
 
 To explicitly verify the unsigned lyrics worker and panel without audio, run

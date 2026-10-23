@@ -40,6 +40,7 @@ impl PlaylistImport {
         self.message = "Loading public playlist…".into();
         std::thread::spawn(move || {
             let result = Provider::new().and_then(|p| {
+                let p = p.with_cancellation(cancel.clone());
                 p.complete_playlist(
                     &input,
                     || cancel.load(Ordering::Acquire),

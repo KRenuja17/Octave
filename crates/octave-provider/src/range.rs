@@ -76,7 +76,10 @@ impl RangeReader {
             },
             transport::Lane::Media,
             transport::REQUEST_TIMEOUT,
-            || self.generation.load(Ordering::Acquire) != self.expected,
+            || {
+                self.generation.load(Ordering::Acquire) != self.expected
+                    || self.provider.is_cancelled()
+            },
         )?;
         self.check()?;
         self.bytes = bytes;
@@ -256,6 +259,7 @@ mod tests {
         RangeReader::new(
             Provider {
                 transport: Arc::new(transport::Transport::new().unwrap()),
+                cancelled: None,
             },
             stream,
             Arc::new(AtomicU64::new(1)),
