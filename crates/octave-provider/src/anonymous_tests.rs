@@ -1,6 +1,7 @@
 //! Isolated maintainer investigation, compiled only for tests. No page JS runs.
 //! Fresh server-issued guest state is scoped to one HTTPS origin and two minutes.
 use super::*;
+use base64::Engine;
 use reqwest::header::{COOKIE, HeaderMap, HeaderValue, SET_COOKIE};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -20,6 +21,60 @@ fn valid_visitor(text: &str) -> bool {
         && text
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"_-%=+/".contains(&b))
+}
+// Read-only check of the observed visitorData envelope. Decode the first
+// length-delimited protobuf field, never log it or construct a replacement ID.
+fn visitor_identity(text: &str) -> Option<Sensitive<Vec<u8>>> {
+    if text.len() > 2048 {
+        return None;
+    }
+    let mut input = text.as_bytes();
+    let mut decoded_url = Vec::with_capacity(input.len());
+    while let Some((&byte, rest)) = input.split_first() {
+        if byte == b'%' {
+            let hex = std::str::from_utf8(rest.get(..2)?).ok()?;
+            decoded_url.push(u8::from_str_radix(hex, 16).ok()?);
+            input = &rest[2..];
+        } else {
+            decoded_url.push(byte);
+            input = rest;
+        }
+    }
+    let settings = base64::engine::GeneralPurposeConfig::new()
+        .with_decode_padding_mode(base64::engine::DecodePaddingMode::Indifferent);
+    let engine = base64::engine::GeneralPurpose::new(&base64::alphabet::URL_SAFE, settings);
+    let bytes = engine.decode(&decoded_url).ok()?;
+    // The supported envelope starts with field1, an eleven-byte visitor ID.
+    // Reject other schemas rather than guessing or exposing their bytes.
+    if bytes.get(..2)? != [0x0a, 11] {
+        return None;
+    }
+    let id = bytes.get(2..13)?;
+    if !id
+        .iter()
+        .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(b))
+    {
+        return None;
+    }
+    Some(Sensitive::new(id.to_vec()))
+}
+
+fn cookie_binding(config: &GuestConfig, cookies: &GuestCookies) -> &'static str {
+    let Some(visitor) = visitor_identity(config.visitor.expose()) else {
+        return "unknown_envelope";
+    };
+    let Some(cookie) = cookies
+        .values
+        .iter()
+        .find(|c| c.name == "VISITOR_INFO1_LIVE" && c.expires > SystemTime::now())
+    else {
+        return "no_visitor_cookie";
+    };
+    if visitor.expose().as_slice() == cookie.value.expose().as_bytes() {
+        "matches"
+    } else {
+        "differs"
+    }
 }
 
 // Read JSON objects from the known assignment/call sites, ignoring JS strings
@@ -615,7 +670,14 @@ fn bounded_reply_metadata_is_redacted_and_does_not_install_cookies() {
     server.join().unwrap();
 }
 
-fn page_cohort(host: &'static str, profile: &str, ua: &str, started: Instant, budget: Duration) {
+fn page_cohort(
+    host: &'static str,
+    profile: &str,
+    ua: &str,
+    ids: &[&str],
+    started: Instant,
+    budget: Duration,
+) {
     if started.elapsed() >= budget {
         return;
     }
@@ -670,16 +732,10 @@ fn page_cohort(host: &'static str, profile: &str, ua: &str, started: Instant, bu
     cookies.update(&reply.headers, SystemTime::now()).unwrap();
     println!(
         "bootstrap={}",
-        json!({"profile":profile,"host":host,"stage":"ready","pageBytes":page.len(),"guestCookies":cookies.values.len(),"loggedOutDeclared":config.logged_out_declared,"visitorPresent":true,"elapsedMs":started.elapsed().as_millis()})
+        json!({"profile":profile,"host":host,"stage":"ready","pageBytes":page.len(),"guestCookies":cookies.values.len(),"visitorCookieBinding":cookie_binding(&config,&cookies),"loggedOutDeclared":config.logged_out_declared,"visitorPresent":true,"elapsedMs":started.elapsed().as_millis()})
     );
     drop(reply);
-    for raw_id in [
-        "hpSrLjc5SMs",
-        "6Zt4P1scOwE",
-        "fJ9rUzIMcZQ",
-        "kJQP7kiw5Fk",
-        "dQw4w9WgXcQ",
-    ] {
+    for &raw_id in ids {
         if started.elapsed() >= budget {
             println!("bootstrap_budget_exhausted=true");
             return;
@@ -755,6 +811,8 @@ fn page_cohort(host: &'static str, profile: &str, ua: &str, started: Instant, bu
                         Ok(updated) => {
                             summary["visitorUpdated"] = updated.into();
                             cookies.update(&reply.headers, SystemTime::now()).unwrap();
+                            summary["visitorCookieBindingAfter"] =
+                                cookie_binding(&config, &cookies).into();
                             summary
                         }
                         Err(error) => {
@@ -828,8 +886,75 @@ fn live_anonymous_page_bootstrap() {
         ("www.youtube.com", "guest_visionos", PLAYER_UA),
         ("music.youtube.com", "page_remix", WEB_UA),
     ] {
-        page_cohort(host, profile, ua, started, budget);
+        page_cohort(
+            host,
+            profile,
+            ua,
+            &[
+                "hpSrLjc5SMs",
+                "6Zt4P1scOwE",
+                "fJ9rUzIMcZQ",
+                "kJQP7kiw5Fk",
+                "dQw4w9WgXcQ",
+            ],
+            started,
+            budget,
+        );
     }
+}
+
+#[test]
+fn visitor_cookie_identity_check_is_bounded_and_never_rewrites_guest_state() {
+    let id = b"abcdefghijk";
+    let mut envelope = vec![0x0a, 11];
+    envelope.extend(id);
+    envelope.extend([0x28, 1]);
+    let text = base64::engine::general_purpose::URL_SAFE.encode(&envelope);
+    assert_eq!(visitor_identity(&text).unwrap().expose(), id);
+    let escaped = text.replace('=', "%3D");
+    assert_eq!(visitor_identity(&escaped).unwrap().expose(), id);
+    assert!(!format!("{:?}", visitor_identity(&escaped)).contains("abcdefghijk"));
+    let page = format!(
+        r#"<script>ytcfg.set({{"INNERTUBE_CONTEXT":{{"client":{{"clientName":"WEB","clientVersion":"2.20261023","visitorData":"{escaped}"}}}}}});</script>"#
+    );
+    let config = GuestConfig::parse(&page, "www.youtube.com").unwrap();
+    let mut cookies = GuestCookies::new("www.youtube.com");
+    assert_eq!(cookie_binding(&config, &cookies), "no_visitor_cookie");
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_static("VISITOR_INFO1_LIVE=abcdefghijk; Path=/; Secure"),
+    );
+    cookies.update(&headers, SystemTime::now()).unwrap();
+    assert_eq!(cookie_binding(&config, &cookies), "matches");
+    headers.insert(
+        SET_COOKIE,
+        HeaderValue::from_static("VISITOR_INFO1_LIVE=differentID; Path=/; Secure"),
+    );
+    cookies.update(&headers, SystemTime::now()).unwrap();
+    assert_eq!(cookie_binding(&config, &cookies), "differs");
+    for bad in [
+        "%ZZ".into(),
+        "%".into(),
+        "".into(),
+        "x".repeat(2049),
+        base64::engine::general_purpose::URL_SAFE.encode([0x0a, 50, 0]),
+    ] {
+        assert!(visitor_identity(&bad).is_none());
+    }
+}
+
+#[test]
+#[ignore = "Explicit anonymous visitor/cookie identity comparison; no sign-in or identity synthesis"]
+fn live_anonymous_visitor_cookie_binding() {
+    page_cohort(
+        "www.youtube.com",
+        "guest_visionos",
+        PLAYER_UA,
+        &["hpSrLjc5SMs", "dQw4w9WgXcQ"],
+        Instant::now(),
+        Duration::from_secs(40),
+    );
 }
 
 fn inline_player(page: &str, id: &TrackId) -> Result<Value, Error> {

@@ -429,6 +429,13 @@ Topic stayed blocked in both. No production bootstrap fallback was adopted.
 Visitor headers are marked sensitive for diagnostic redaction in all provider
 requests, including the existing production resolver.
 
+`anonymous_tests::live_anonymous_visitor_cookie_binding` compares one blocked Topic
+and the control in a single 40-second guest session. It decodes the observed
+visitor-data identity only to compare it with the guest cookie in memory; output
+contains match flags. Both stayed matched after a server visitor-data update,
+while the Topic remained blocked. The test uses the already-locked Rust base64
+crate as a dev dependency; no new production dependency or crate version is added.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this

@@ -2686,6 +2686,7 @@ dependencies = [
 name = "octave-provider"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "octave-core",
  "reqwest",
  "ring",
