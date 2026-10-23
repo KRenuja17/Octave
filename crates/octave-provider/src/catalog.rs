@@ -142,7 +142,10 @@ fn image(value: &Value) -> Option<String> {
     }
 }
 fn normalize(value: &Value, route: &str) -> Result<CatalogPage, Error> {
-    let page = parse_page(value).map_err(|_| Error::InvalidResponse)?;
+    let mut page = parse_page(value).map_err(|_| Error::InvalidResponse)?;
+    // Account rows omit navigation parameters. Build public collection routes
+    // once below so their cover keys and navigation identity cannot diverge.
+    page.collections.clear();
     let title = match route {
         "FEmusic_home" => "Home",
         "FEmusic_explore" => "Explore",
@@ -292,6 +295,45 @@ fn suggestions(value: &Value, out: &mut Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn collection_routes_and_covers_use_the_same_parameter_identity() {
+        let page = normalize(&json!({"contents":[{"musicTwoRowItemRenderer":{
+            "title":{"runs":[{"text":"Original collection"}]},
+            "navigationEndpoint":{"browseEndpoint":{"browseId":"VLPLfixture","params":"fixture"}},
+            "thumbnailRenderer":{"musicThumbnailRenderer":{"thumbnail":{"thumbnails":[{"url":"https://lh3.googleusercontent.com/fixture"}]}}}
+        }}]}),"FEmusic_home").unwrap();
+        assert_eq!(page.page.collections.len(), 1);
+        assert_eq!(page.page.collections[0].id, "VLPLfixture~fixture");
+        assert!(page.covers.contains_key(&page.page.collections[0].id));
+    }
+    #[test]
+    #[ignore = "explicit unsigned catalog/artwork metadata, no audio or sign-in"]
+    fn live_unsigned_catalog_artwork() {
+        let provider = Provider::new().unwrap();
+        let page = provider.catalog("FEmusic_home", None).unwrap();
+        println!(
+            "collections={} covers={}",
+            page.page.collections.len(),
+            page.covers.len()
+        );
+        let covered = page
+            .page
+            .collections
+            .iter()
+            .filter(|c| page.covers.contains_key(&c.id))
+            .count();
+        println!("collections_with_matched_artwork={covered}");
+        if let Some(url) = page.covers.values().next() {
+            match provider.public_artwork(url) {
+                Ok(bytes) => println!(
+                    "public_art_bytes={} format_header={:02x?}",
+                    bytes.len(),
+                    &bytes[..bytes.len().min(12)]
+                ),
+                Err(error) => println!("public_art_error={error:?}"),
+            }
+        }
+    }
     #[test]
     fn public_catalog_keeps_genre_parameters_and_song_metadata() {
         let page=normalize(&json!({"contents":[{"musicNavigationButtonRenderer":{"buttonText":{"runs":[{"text":"Original genre"}]},"navigationEndpoint":{"browseEndpoint":{"browseId":"FEmusic_moods_and_genres_category","params":"fixture"}}}},{"musicTwoRowItemRenderer":{"title":{"runs":[{"text":"Original song"}]},"navigationEndpoint":{"watchEndpoint":{"videoId":"abcdefghijk"}}}}]}),"FEmusic_home").unwrap();

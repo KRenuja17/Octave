@@ -521,9 +521,9 @@ impl CatalogUi {
     ) {
         egui::ScrollArea::horizontal()
             .id_salt(("catalog-collections", &self.route))
-            .max_height(165.0)
+            .max_height(220.0)
             .show_viewport(ui, |ui, viewport| {
-                const STRIDE: f32 = 145.0;
+                const STRIDE: f32 = 158.0;
                 ui.set_min_width(collections.len() as f32 * STRIDE);
                 let start = (viewport.min.x / STRIDE).floor().max(0.0) as usize;
                 let end = ((viewport.max.x / STRIDE).ceil() as usize + 1).min(collections.len());
@@ -532,17 +532,17 @@ impl CatalogUi {
                     ui.add_space(start as f32 * STRIDE);
                     for collection in collections.iter().take(end).skip(start) {
                         ui.allocate_ui_with_layout(
-                            egui::vec2(135.0, 145.0),
+                            egui::vec2(148.0, 200.0),
                             egui::Layout::top_down(egui::Align::Min),
                             |ui| {
                                 if let Some(url) = page.and_then(|p| p.covers.get(&collection.id)) {
-                                    self.artwork.show(ui, url, &collection.title, 88.0);
+                                    self.artwork.show(ui, url, &collection.title, 148.0);
                                 } else {
-                                    crate::theme::cover(ui, 88.0);
+                                    crate::theme::cover(ui, 148.0);
                                 }
                                 if ui
                                     .add_sized(
-                                        [135.0, 34.0],
+                                        [148.0, 36.0],
                                         egui::Button::new(&collection.title)
                                             .truncate()
                                             .frame(false),
