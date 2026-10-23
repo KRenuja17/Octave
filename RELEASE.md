@@ -68,8 +68,14 @@ the host network or hardware. These checks complement the physical/live gates be
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
   five-recording unsigned probe decoded and sought one recording successfully;
-  four returned SignInRequired. Unsigned lyrics availability does not establish
-  audio access, and broader resolver compatibility remains a feasibility gate.
+  four initially returned SignInRequired. A four-client follow-up identified
+  bot-verification reasons on all four, with no formats offered. A broader ten-ID
+  decoder sample passed one recording; nine returned BotCheckRequired. Octave now
+  distinguishes those checks from ordinary sign-in requirements and does not
+  automatically retry either. Matching endpoint Origin and User-Agent also left
+  access unchanged. No client fallback or extra runtime was adopted. Unsigned
+  lyrics availability does not establish audio access; broader unsigned resolver
+  compatibility remains a feasibility gate on this network.
 - Production signing, update-key custody, hosting, license obligations (including
   bundled font and MPL dependency requirements), and tagged-source reproduction
   must be settled before distribution. The generated dependency inventory includes

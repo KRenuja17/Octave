@@ -31,6 +31,7 @@ pub enum Error {
     Http(u16),
     InvalidResponse,
     SignInRequired,
+    BotCheckRequired,
     Unavailable,
     UnsupportedStream,
     InvalidTrack,
@@ -47,8 +48,9 @@ impl fmt::Display for Error {
    Self::Http(code) => write!(f, "YouTube returned HTTP {code}."),
    Self::InvalidResponse => f.write_str("YouTube returned an unexpected response."),
    Self::SignInRequired => f.write_str("YouTube requires sign-in for this request. Account playback is not available yet."),
+   Self::BotCheckRequired => f.write_str("YouTube blocked this unsigned request with a bot-verification check. Try another recording or retry later."),
    Self::Unavailable => f.write_str("This track is unavailable to this unsigned client."),
-   Self::UnsupportedStream => f.write_str("No direct AAC stream is available. This prototype cannot resolve ciphered streams."),
+   Self::UnsupportedStream => f.write_str("No supported direct AAC stream was offered. Ciphered streams and manifest-only playback are not supported."),
    Self::InvalidTrack => f.write_str("Enter an 11-character YouTube video ID."),
    Self::Cancelled => f.write_str("Playback cancelled."),
    Self::InvalidRange => f.write_str("The audio server did not return the requested byte range."),
@@ -267,7 +269,20 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
         .and_then(Value::as_str)
     {
         Some("OK") => (),
-        Some("LOGIN_REQUIRED") => return Err(Error::SignInRequired),
+        Some("LOGIN_REQUIRED") => {
+            let reason = value
+                .pointer("/playabilityStatus/reason")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_lowercase();
+            return Err(
+                if reason.contains("not a bot") || reason.contains("automated") {
+                    Error::BotCheckRequired
+                } else {
+                    Error::SignInRequired
+                },
+            );
+        }
         Some(_) => return Err(Error::Unavailable),
         None => return Err(Error::InvalidResponse),
     }
@@ -517,6 +532,50 @@ mod tests {
             Error::SignInRequired
         );
         assert_eq!(parse_stream(&id, &json!({"playabilityStatus":{"status":"OK"},"streamingData":{"adaptiveFormats":[{"itag":140,"signatureCipher":"secret"}]}})).unwrap_err(), Error::UnsupportedStream);
+    }
+    #[test]
+    fn bot_verification_is_distinct_from_account_required_and_remains_redacted() {
+        let id = TrackId("abcdefghijk".into());
+        for reason in [
+            "Sign in to confirm you're not a bot. secret",
+            "SIGN IN TO CONFIRM YOU ARE NOT A BOT. secret",
+            "Automated queries detected. secret",
+        ] {
+            let error = parse_stream(
+                &id,
+                &json!({"playabilityStatus":{"status":"LOGIN_REQUIRED","reason":reason}}),
+            )
+            .unwrap_err();
+            assert_eq!(error, Error::BotCheckRequired);
+            assert!(error.to_string().contains("bot-verification"));
+            assert!(!format!("{error:?} {error}").contains("secret"));
+        }
+        for reason in ["Sign in to confirm your age", "Private video", "secret", ""] {
+            assert_eq!(
+                parse_stream(
+                    &id,
+                    &json!({"playabilityStatus":{"status":"LOGIN_REQUIRED","reason":reason}})
+                )
+                .unwrap_err(),
+                Error::SignInRequired
+            );
+        }
+        assert_eq!(
+            parse_stream(
+                &id,
+                &json!({"playabilityStatus":{"status":"LOGIN_REQUIRED"}})
+            )
+            .unwrap_err(),
+            Error::SignInRequired
+        );
+        assert_eq!(
+            parse_stream(
+                &id,
+                &json!({"playabilityStatus":{"status":"UNPLAYABLE","reason":"not a bot"}})
+            )
+            .unwrap_err(),
+            Error::Unavailable
+        );
     }
     #[test]
     fn stream_debug_redacts_url_and_rejects_foreign_hosts() {

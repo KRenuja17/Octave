@@ -31,7 +31,7 @@ fn run() -> Result<(), String> {
     let provider = Provider::new().map_err(|e| e.to_string())?;
     let stream = provider
         .resolve(&TrackId(id.clone()))
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| format!("resolve_error={e:?}: {e}"))?;
     let length = stream.content_length;
     let duration = stream.duration;
     let reader = RangeReader::new(provider, stream, Arc::new(AtomicU64::new(1)), 1);

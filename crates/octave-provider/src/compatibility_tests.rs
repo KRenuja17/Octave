@@ -73,7 +73,7 @@ fn compatibility_summary_never_exposes_service_text_or_media_urls() {
     assert_eq!(result["status"], "login_required");
     assert_eq!(result["reasonCategory"], "bot_check");
     assert_eq!(result["cipheredAudio"], 1);
-    assert_eq!(result["resolver"], "SignInRequired");
+    assert_eq!(result["resolver"], "BotCheckRequired");
     assert!(!result.to_string().contains("secret"));
     assert!(!result.to_string().contains("https"));
 }
@@ -178,5 +178,56 @@ fn live_unsigned_profile_compatibility() {
                 json!({"videoId":raw_id,"profile":name,"elapsedMs":attempt.elapsed().as_millis(),"result":result})
             );
         }
+    }
+}
+
+#[test]
+#[ignore = "Explicit unsigned request-consistency experiment; no accounts/audio/response text"]
+fn live_unsigned_request_consistency() {
+    let provider = Provider::new().unwrap();
+    let started = Instant::now();
+    let budget = Duration::from_secs(50);
+    let visitor = provider.post("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
+        json!({"context":{"client":{"clientName":"WEB","clientVersion":"2.20260707.00.00","hl":"en"}}}),
+        "1", "2.20260707.00.00", WEB_UA).unwrap();
+    let visitor = visitor
+        .pointer("/responseContext/visitorData")
+        .and_then(Value::as_str)
+        .unwrap();
+    // Isolate two ordinary request-shape differences from the baseline: endpoint
+    // Origin and a body User-Agent matching the header. Retain the same visitor;
+    // do not rotate identities, acknowledge age/content checks or add tokens.
+    for raw_id in ["hpSrLjc5SMs", "6Zt4P1scOwE", "dQw4w9WgXcQ"] {
+        if started.elapsed() >= budget {
+            println!("consistency_budget_exhausted=true");
+            return;
+        }
+        let id = TrackId(raw_id.into());
+        let mut request = provider.post_request("https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+            json!({"context":{"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","userAgent":PLAYER_UA,"visitorData":visitor}},"videoId":raw_id}),
+            "101", "1.02", PLAYER_UA).unwrap();
+        request.headers_mut().insert(
+            reqwest::header::ORIGIN,
+            reqwest::header::HeaderValue::from_static("https://www.youtube.com"),
+        );
+        let attempt = Instant::now();
+        let result = provider
+            .transport
+            .bytes(
+                request,
+                transport::Expected::Bytes(JSON_LIMIT as usize),
+                transport::Lane::Media,
+                transport::REQUEST_TIMEOUT.min(budget.saturating_sub(started.elapsed())),
+                || false,
+            )
+            .and_then(|bytes| serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse));
+        let result = match result {
+            Ok(value) => summary(&id, &value),
+            Err(error) => json!({"error":format!("{error:?}")}),
+        };
+        println!(
+            "consistency={}",
+            json!({"videoId":raw_id,"elapsedMs":attempt.elapsed().as_millis(),"result":result})
+        );
     }
 }

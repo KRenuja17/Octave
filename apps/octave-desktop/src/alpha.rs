@@ -2268,18 +2268,22 @@ mod tests {
             app.session.position, 42.0,
             "Stale track events must be ignored"
         );
-        app.retry_count = 0;
-        app.failure_seen = false;
-        app.observe(Snapshot {
-            buffering: false,
-            quality: None,
-            sequence: 0,
-            state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::SignInRequired)),
-            position: Duration::from_secs(42),
-            duration: Duration::ZERO,
-        });
-        assert!(app.retry_at.is_none());
-        assert_eq!(app.retry_count, 0);
+        for error in [Error::SignInRequired, Error::BotCheckRequired] {
+            app.retry_count = 0;
+            app.failure_seen = false;
+            app.observe(Snapshot {
+                buffering: false,
+                quality: None,
+                sequence: 0,
+                state: PlaybackState::Failed(track(1).id, Failure::Provider(error)),
+                position: Duration::from_secs(42),
+                duration: Duration::ZERO,
+            });
+            assert!(app.retry_at.is_none());
+            assert_eq!(app.retry_count, 0);
+            assert_eq!(app.session.position, 42.0);
+            assert_eq!(app.session.queue, queue);
+        }
         drop(app);
         std::fs::remove_file(path).unwrap();
     }

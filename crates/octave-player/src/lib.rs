@@ -502,6 +502,7 @@ mod tests {
         }
         for error in [
             Error::SignInRequired,
+            Error::BotCheckRequired,
             Error::UnsupportedStream,
             Error::InvalidTrack,
             Error::Http(404),

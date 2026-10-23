@@ -393,6 +393,22 @@ it prints allowlisted status/reason categories, format counts and capability
 flags. It never logs response text, visitor data or stream URLs and opens no audio
 device. This diagnostic is opt-in; it does not change the production resolver.
 
+The 23 October comparison found bot-verification responses for all four previously
+failing IDs under every tested client, with no audio formats returned. A separate
+ten-ID decoder/seek sample passed one recording; nine hit bot verification. These
+are results on the current network, not proof that those recordings always require
+accounts. Octave reports **BotCheckRequired** separately from **SignInRequired**,
+keeps the queue/position and requires an explicit retry for either response.
+No profile fallback improved access, so the production resolver stays unchanged.
+Ciphered and manifest-only responses remain unsupported in the Rust-only path.
+
+`cargo test -p octave-provider --locked
+compatibility_tests::live_unsigned_request_consistency -- --ignored --exact
+--nocapture` isolates matching endpoint Origin and body/header User-Agent on the
+two Topic references and the control, within 50 seconds. It did not improve
+access. Both opt-in diagnostics keep only a single anonymous visitor in memory;
+no account credentials, attestation solver or script runtime are used.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
