@@ -62,6 +62,12 @@ impl Worker {
         self.pending.0.lock().unwrap().1 = Some((generation, request));
         self.pending.1.notify_one();
     }
+    fn cancel_pending(&self, generation: u64) {
+        let mut pending = self.pending.0.lock().unwrap();
+        if pending.1.as_ref().is_some_and(|(id, _)| *id == generation) {
+            pending.1 = None;
+        }
+    }
 }
 impl Drop for Worker {
     fn drop(&mut self) {
@@ -84,6 +90,7 @@ pub struct CatalogUi {
     worker: Worker,
     generation: u64,
     busy: bool,
+    started: Option<std::time::Instant>,
     page: Option<CatalogPage>,
     cache: std::collections::VecDeque<(String, CatalogPage)>,
     filter: String,
@@ -105,6 +112,7 @@ impl Default for CatalogUi {
             worker: Worker::new(),
             generation: 0,
             busy: false,
+            started: None,
             page: None,
             cache: Default::default(),
             filter: String::new(),
@@ -133,8 +141,24 @@ impl CatalogUi {
     fn submit(&mut self, request: Request) {
         self.generation = self.generation.wrapping_add(1);
         self.busy = true;
+        self.started = Some(std::time::Instant::now());
         self.message.clear();
         self.worker.send(self.generation, request);
+    }
+    fn expire_request(&mut self) {
+        if self.busy
+            && self
+                .started
+                .is_some_and(|started| started.elapsed() >= std::time::Duration::from_secs(15))
+        {
+            // A platform resolver/body read can outlive the transport's timeout.
+            // Keep one worker, retract queued work, and reject any late result.
+            self.worker.cancel_pending(self.generation);
+            self.generation = self.generation.wrapping_add(1);
+            self.busy = false;
+            self.started = None;
+            self.message = "Public catalog request timed out. Retry when the connection is ready; the queue is unchanged.".into();
+        }
     }
     pub fn render(
         &mut self,
@@ -147,6 +171,7 @@ impl CatalogUi {
         if self.active != self.route {
             self.generation = self.generation.wrapping_add(1);
             self.busy = false;
+            self.started = None;
             self.page = self
                 .cache
                 .iter()
@@ -161,11 +186,13 @@ impl CatalogUi {
                 self.submit(Request::Page(self.route.clone(), None));
             }
         }
+        self.expire_request();
         while let Ok((generation, result)) = self.worker.results.try_recv() {
             if generation != self.generation {
                 continue;
             }
             self.busy = false;
+            self.started = None;
             match result {
                 Ok(Reply::Page(page)) => {
                     self.filter_signature = None;
@@ -626,6 +653,36 @@ mod tests {
             .collect();
         catalog.page = Some(page);
         catalog
+    }
+    #[test]
+    fn wall_clock_deadline_preserves_page_and_rejects_late_queue_changes() {
+        let mut catalog = fixture();
+        catalog.busy = true;
+        catalog.started = Some(std::time::Instant::now() - std::time::Duration::from_secs(16));
+        let generation = catalog.generation;
+        let (tx, rx) = mpsc::channel();
+        catalog.worker.results = rx;
+        tx.send((
+            generation,
+            Ok(Reply::Order(
+                None,
+                vec![Track {
+                    id: TrackId("late".into()),
+                    title: "Late queue".into(),
+                    artists: Vec::new(),
+                }],
+            )),
+        ))
+        .unwrap();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            assert!(catalog.render(ui, &[], &[], None).is_none());
+        });
+        output.textures_delta.clear();
+        assert!(!catalog.busy && catalog.started.is_none());
+        assert_eq!(catalog.page.as_ref().unwrap().page.tracks.len(), 1753);
+        assert!(catalog.message.contains("timed out"));
+        assert_ne!(catalog.generation, generation);
     }
     #[test]
     fn large_catalog_virtualizes_rows_filters_without_replacing_queue_and_routes_safely() {
