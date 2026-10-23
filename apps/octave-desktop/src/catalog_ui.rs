@@ -271,28 +271,51 @@ impl CatalogUi {
                 }
             }
         }
-        ui.horizontal_wrapped(|ui| {
-            for (name, id) in [
-                ("Home", "FEmusic_home"),
-                ("Explore", "FEmusic_explore"),
-                ("Charts", "FEmusic_charts"),
-                ("Moods & genres", "FEmusic_moods_and_genres"),
-                ("History", "local:history"),
-                ("Pinned", "local:pinned"),
-            ] {
-                if ui.selectable_label(self.route == id, name).clicked() {
-                    self.route = id.into();
+        let compact = ui.available_width() < 650.0;
+        let destinations = [
+            ("Home", "FEmusic_home"),
+            ("Explore", "FEmusic_explore"),
+            ("Charts", "FEmusic_charts"),
+            ("Moods & genres", "FEmusic_moods_and_genres"),
+            ("History", "local:history"),
+            ("Pinned", "local:pinned"),
+        ];
+        if compact {
+            egui::ComboBox::from_label("Browse")
+                .selected_text(
+                    destinations
+                        .iter()
+                        .find(|(_, id)| *id == self.route)
+                        .map_or("Collection", |(name, _)| *name),
+                )
+                .show_ui(ui, |ui| {
+                    for (name, id) in destinations {
+                        ui.selectable_value(&mut self.route, id.into(), name);
+                    }
+                });
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                for (name, id) in destinations {
+                    if ui.selectable_label(self.route == id, name).clicked() {
+                        self.route = id.into();
+                    }
                 }
-            }
-        });
+            });
+        }
         ui.horizontal_wrapped(|ui| {
             let input = ui.add(
                 egui::TextEdit::singleline(&mut self.query)
                     .hint_text("Search songs, albums, artists and playlists")
                     .char_limit(512)
-                    .desired_width(320.0),
+                    .desired_width(if compact {
+                        (ui.available_width() - 200.0).clamp(120.0, 320.0)
+                    } else {
+                        320.0
+                    }),
             );
-            if (ui.button("Search catalog").clicked()
+            if (ui
+                .button(if compact { "Search" } else { "Search catalog" })
+                .clicked()
                 || (input.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))))
                 && !self.query.trim().is_empty()
             {
@@ -413,13 +436,26 @@ impl CatalogUi {
             ui.add(
                 egui::TextEdit::singleline(&mut self.filter)
                     .hint_text("Filter loaded results")
-                    .char_limit(256),
+                    .char_limit(256)
+                    .desired_width(if compact {
+                        (ui.available_width() - 160.0).clamp(120.0, 320.0)
+                    } else {
+                        280.0
+                    }),
             );
-            for (index, label) in ["All", "Songs", "Albums", "Artists", "Playlists"]
-                .iter()
-                .enumerate()
-            {
-                ui.selectable_value(&mut self.kind, index as u8, *label);
+            let kinds = ["All", "Songs", "Albums", "Artists", "Playlists"];
+            if compact {
+                egui::ComboBox::from_id_salt("catalog-kind")
+                    .selected_text(kinds[self.kind as usize])
+                    .show_ui(ui, |ui| {
+                        for (index, name) in kinds.iter().enumerate() {
+                            ui.selectable_value(&mut self.kind, index as u8, *name);
+                        }
+                    });
+            } else {
+                for (index, name) in kinds.iter().enumerate() {
+                    ui.selectable_value(&mut self.kind, index as u8, *name);
+                }
             }
         });
         if let Some(current) = current
@@ -441,7 +477,14 @@ impl CatalogUi {
             ui.weak(&self.message);
         }
         if ui
-            .add_enabled(!self.busy, egui::Button::new("Refresh public page"))
+            .add_enabled(
+                !self.busy,
+                egui::Button::new(if compact {
+                    "Refresh"
+                } else {
+                    "Refresh public page"
+                }),
+            )
             .clicked()
         {
             self.page = None;
@@ -575,11 +618,17 @@ impl CatalogUi {
                     ui.push_id(index, |ui| {
                         ui.horizontal(|ui| {
                             self.artwork.show(ui, &track.id.0, &track.title, 44.0);
-                            if ui
+                            let play = ui
                                 .button("▶")
-                                .on_hover_text(format!("Play {}", track.title))
-                                .clicked()
-                            {
+                                .on_hover_text(format!("Play {}", track.title));
+                            play.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!("Play {}", track.title),
+                                )
+                            });
+                            if play.clicked() {
                                 *action = Some(Action::Play(track.clone()));
                             }
                             let wide = ui.available_width() > 600.0;
@@ -611,7 +660,7 @@ impl CatalogUi {
                                 }
                                 ui.weak(&details.duration);
                             }
-                            ui.menu_button("•••", |ui| {
+                            let menu = ui.menu_button("•••", |ui| {
                                 if ui.button("Play next").clicked() {
                                     *action = Some(Action::Append(track.clone(), true));
                                     ui.close();
@@ -620,6 +669,13 @@ impl CatalogUi {
                                     *action = Some(Action::Append(track.clone(), false));
                                     ui.close();
                                 }
+                            });
+                            menu.response.widget_info(|| {
+                                egui::WidgetInfo::labeled(
+                                    egui::WidgetType::Button,
+                                    true,
+                                    format!("Actions for {}", track.title),
+                                )
                             });
                         });
                     });

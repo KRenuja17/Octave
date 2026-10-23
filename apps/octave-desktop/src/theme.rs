@@ -72,6 +72,8 @@ fn install_fonts(ctx: &egui::Context) {
         ("Segoe", "C:/Windows/Fonts/segoeui.ttf", true),
         ("Japanese", "C:/Windows/Fonts/msgothic.ttc", false),
         ("Korean", "C:/Windows/Fonts/malgun.ttf", false),
+        ("Thai and Lao", "C:/Windows/Fonts/LeelawUI.ttf", false),
+        ("Indic", "C:/Windows/Fonts/Nirmala.ttf", false),
     ] {
         if let Ok(bytes) = std::fs::read(path) {
             fonts
