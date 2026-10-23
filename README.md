@@ -477,6 +477,22 @@ It never changes the system volume or output selection. A muted device check
 does not establish audible quality, lyric latency, device switching or long-session
 reliability. `--help` does not access the network or open an audio device.
 
+For an explicitly authorized real-time hour, append `--one-hour`. It repeats the
+same exact recording through production preparation and gapless joins on the
+default device, always at zero player volume. Any resolver, preparation, decoder
+or device failure ends the run without retries. The one-hour wall-clock window
+starts at the first consumed sample; startup still has its own 15-second limit.
+Progress is logged once a minute. Consumption is conservative at handoffs: only
+observed increments are counted, and unobserved outgoing tails are omitted rather
+than estimated from track duration. The hour must remain within two seconds of
+observed consumption and end with Stop returning to Idle. This is a repeated
+recording workload, not a single hour-long track or a representative catalog test.
+For externally recorded CPU/memory samples, use `packaging/Measure-MutedPlayback.ps1
+-Executable PATH_TO_MUTED_PLAYBACK -VideoId VIDEO_ID -OutputDir EXTERNAL_DIRECTORY
+-OpenMutedDefaultOutput -OneHour`. It streams samples to CSV, preserves progress
+and final results beside sanitized logs, and enforces an outer startup/cleanup
+budget. Both the script and Rust executable require explicit device opt-in.
+
 ## Now playing and lyrics
 
 Use **Now playing** in the bottom player for larger artwork and song details.
