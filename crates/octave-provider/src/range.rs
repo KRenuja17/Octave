@@ -1,5 +1,5 @@
 //! Bounded, seekable transport. Only call from a decoding worker, never the audio callback.
-use crate::{Error, PLAYER_UA, Provider, ResolvedStream, network};
+use crate::{Error, PLAYER_UA, Provider, ResolvedStream, network, transport};
 use std::{
     io::{self, Read, Seek, SeekFrom},
     sync::{
@@ -8,7 +8,8 @@ use std::{
     },
 };
 const BLOCK: u64 = 256 * 1024;
-/// A generation change cancels the reader; an in-flight HTTP request has a 12s timeout.
+/// Generation changes abort in-flight HTTP; each whole range transaction has
+/// a 12s wall-clock deadline, including its response body.
 pub struct RangeReader {
     provider: Provider,
     stream: ResolvedStream,
@@ -56,40 +57,29 @@ impl RangeReader {
             .position
             .saturating_add(BLOCK - 1)
             .min(self.length() - 1);
-        let response = self
+        let request = self
             .provider
+            .transport
             .client
             .get(self.stream.url.expose())
             .header("User-Agent", PLAYER_UA)
+            .header("Accept-Encoding", "identity")
             .header("Range", format!("bytes={}-{}", self.position, end))
-            .send()
+            .build()
             .map_err(network)?;
-        if response.status().as_u16() != 206 {
-            return Err(if response.status().is_success() {
-                Error::InvalidRange
-            } else {
-                Error::Http(response.status().as_u16())
-            });
-        }
-        let expected_header = format!("bytes {}-{}/{}", self.position, end, self.length());
-        if response
-            .headers()
-            .get("content-range")
-            .and_then(|v| v.to_str().ok())
-            != Some(expected_header.as_str())
-        {
-            return Err(Error::InvalidRange);
-        }
-        self.bytes.clear();
-        response
-            .take(BLOCK + 1)
-            .read_to_end(&mut self.bytes)
-            .map_err(|_| Error::Network)?;
+        let bytes = self.provider.transport.bytes(
+            request,
+            transport::Expected::Range {
+                start: self.position,
+                end,
+                total: self.length(),
+            },
+            transport::Lane::Media,
+            transport::REQUEST_TIMEOUT,
+            || self.generation.load(Ordering::Acquire) != self.expected,
+        )?;
         self.check()?;
-        if self.bytes.len() as u64 != end - self.position + 1 {
-            self.bytes.clear();
-            return Err(Error::InvalidRange);
-        }
+        self.bytes = bytes;
         self.start = self.position;
         Ok(())
     }
@@ -264,7 +254,9 @@ mod tests {
             duration: std::time::Duration::from_secs(1),
         };
         RangeReader::new(
-            Provider::new().unwrap(),
+            Provider {
+                transport: Arc::new(transport::Transport::new().unwrap()),
+            },
             stream,
             Arc::new(AtomicU64::new(1)),
             1,
@@ -291,6 +283,45 @@ mod tests {
                 .to_lowercase()
                 .contains("range: bytes=42-99")
         );
+    }
+    #[test]
+    fn a_new_generation_aborts_an_inflight_range_without_returning_stale_bytes() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut reader = reader();
+        reader.stream.url =
+            Sensitive::new(format!("http://{}/audio", listener.local_addr().unwrap()));
+        let generation = reader.generation.clone();
+        let (ready, wait) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+                .unwrap();
+            let mut request = BufReader::new(socket.try_clone().unwrap());
+            loop {
+                let mut line = String::new();
+                request.read_line(&mut line).unwrap();
+                if line == "\r\n" {
+                    break;
+                }
+            }
+            socket.write_all(b"HTTP/1.1 206 Partial Content\r\nContent-Range: bytes 0-99/100\r\nContent-Length: 100\r\n\r\n").unwrap();
+            ready.send(()).unwrap();
+            assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
+        });
+        let cancel = thread::spawn(move || {
+            wait.recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            generation.store(2, Ordering::Release);
+        });
+        let started = std::time::Instant::now();
+        assert!(reader.read(&mut [0; 8]).is_err());
+        assert_eq!(*reader.fault.lock().unwrap(), Some(Error::Cancelled));
+        assert_eq!(reader.position, 0);
+        assert!(reader.bytes.is_empty());
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        cancel.join().unwrap();
+        server.join().unwrap();
     }
     #[test]
     fn seek_bounds_eof_and_cancellation() {

@@ -67,7 +67,10 @@ impl Failure {
         matches!(
             self,
             Self::Provider(
-                Error::Network | Error::Timeout | Error::Http(403 | 408 | 429 | 500..=599)
+                Error::Network
+                    | Error::Busy
+                    | Error::Timeout
+                    | Error::Http(403 | 408 | 429 | 500..=599)
             )
         )
     }

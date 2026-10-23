@@ -5,7 +5,6 @@ use reqwest::header::HeaderValue;
 use serde_json::{Value, json};
 use std::{
     fmt,
-    io::Read,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -116,7 +115,8 @@ impl Account {
         cookie.set_sensitive(true);
         let provider = Provider::new().map_err(|_| Error::Network)?;
         self.active()?;
-        let response = provider
+        let request = provider
+            .transport
             .client
             .post(format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
             .header("Origin", ORIGIN)
@@ -128,23 +128,24 @@ impl Account {
             .header("Authorization", authorization)
             .header("Cookie", cookie)
             .json(&body)
-            .send()
+            .build()
             .map_err(|_| Error::Network)?;
-        if matches!(response.status().as_u16(), 401 | 403) {
-            return Err(Error::Expired);
-        }
-        if !response.status().is_success() {
-            return Err(Error::Network);
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(JSON_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Network)?;
+        let bytes = provider
+            .transport
+            .bytes(
+                request,
+                crate::transport::Expected::Bytes(JSON_LIMIT as usize),
+                crate::transport::Lane::Metadata,
+                crate::transport::REQUEST_TIMEOUT,
+                || self.active().is_err(),
+            )
+            .map_err(|error| match error {
+                crate::Error::Http(401 | 403) => Error::Expired,
+                crate::Error::Cancelled => Error::Cancelled,
+                crate::Error::InvalidResponse => Error::Unexpected,
+                _ => Error::Network,
+            })?;
         self.active()?;
-        if bytes.len() as u64 > JSON_LIMIT {
-            return Err(Error::Unexpected);
-        }
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unexpected)?;
         if value
             .pointer("/responseContext/mainAppWebResponseContext/loggedOut")

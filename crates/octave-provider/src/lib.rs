@@ -6,10 +6,10 @@ pub mod playlist;
 pub mod range;
 pub mod related;
 pub mod translation;
+mod transport;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
-use reqwest::blocking::Client;
 use serde_json::{Value, json};
-use std::{fmt, io::Read, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 const WEB_UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
 const PLAYER_UA: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.0 Safari/605.1.15";
 const JSON_LIMIT: u64 = 4 * 1024 * 1024;
@@ -17,6 +17,7 @@ const JSON_LIMIT: u64 = 4 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     Network,
+    Busy,
     Timeout,
     Http(u16),
     InvalidResponse,
@@ -31,6 +32,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
    Self::Network => f.write_str("Network request failed. Check your connection and retry."),
+   Self::Busy => f.write_str("Network workers are busy. Retry shortly."),
    Self::Timeout => f.write_str("Network request timed out. Retry playback."),
    Self::Http(403) => f.write_str("YouTube rejected the stream (403). Retry to resolve a fresh URL."),
    Self::Http(code) => write!(f, "YouTube returned HTTP {code}."),
@@ -62,7 +64,7 @@ pub struct ResolvedStream {
 }
 #[derive(Clone)]
 pub struct Provider {
-    client: Client,
+    transport: Arc<transport::Transport>,
 }
 impl Provider {
     pub fn public_artwork(&self, url: &str) -> Result<Vec<u8>, Error> {
@@ -77,24 +79,14 @@ impl Provider {
         {
             return Err(Error::InvalidResponse);
         }
-        let response = self
-            .client
-            .get(parsed)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .map_err(network)?;
-        if !response.status().is_success() {
-            return Err(Error::Http(response.status().as_u16()));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(2 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Network)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(bytes)
+        let request = self.transport.client.get(parsed).build().map_err(network)?;
+        self.transport.bytes(
+            request,
+            transport::Expected::Bytes(2 * 1024 * 1024),
+            transport::Lane::Metadata,
+            Duration::from_secs(5),
+            || false,
+        )
     }
     /// Public video artwork only; never sends account credentials.
     pub fn thumbnail(&self, id: &TrackId) -> Result<Vec<u8>, Error> {
@@ -116,38 +108,28 @@ impl Provider {
         {
             return Err(Error::InvalidTrack);
         }
-        let response = self
+        let request = self
+            .transport
             .client
             .get(format!(
                 "https://i.ytimg.com/vi/{}/{}.jpg",
                 id.0,
                 if large { "maxresdefault" } else { "hqdefault" }
             ))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .map_err(network)?;
-        if !response.status().is_success() {
-            return Err(Error::Http(response.status().as_u16()));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(2 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Network)?;
-        if bytes.len() > 2 * 1024 * 1024 {
-            return Err(Error::InvalidResponse);
-        }
-        Ok(bytes)
-    }
-    pub fn new() -> Result<Self, Error> {
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(12))
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(WEB_UA)
             .build()
             .map_err(network)?;
-        Ok(Self { client })
+        self.transport.bytes(
+            request,
+            transport::Expected::Bytes(2 * 1024 * 1024),
+            transport::Lane::Metadata,
+            Duration::from_secs(5),
+            || false,
+        )
+    }
+    pub fn new() -> Result<Self, Error> {
+        Ok(Self {
+            transport: transport::shared()?,
+        })
     }
     fn post(
         &self,
@@ -157,7 +139,22 @@ impl Provider {
         version: &str,
         ua: &str,
     ) -> Result<Value, Error> {
+        self.json_reply(
+            self.post_request(url, body, client_id, version, ua)?,
+            transport::Lane::Metadata,
+            || false,
+        )
+    }
+    fn post_request(
+        &self,
+        url: &str,
+        body: Value,
+        client_id: &str,
+        version: &str,
+        ua: &str,
+    ) -> Result<reqwest::Request, Error> {
         let mut request = self
+            .transport
             .client
             .post(url)
             .header("Origin", "https://music.youtube.com")
@@ -171,18 +168,21 @@ impl Provider {
         {
             request = request.header("X-Goog-Visitor-Id", visitor);
         }
-        let response = request.send().map_err(network)?;
-        if !response.status().is_success() {
-            return Err(Error::Http(response.status().as_u16()));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(JSON_LIMIT + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Network)?;
-        if bytes.len() as u64 > JSON_LIMIT {
-            return Err(Error::InvalidResponse);
-        }
+        request.build().map_err(network)
+    }
+    fn json_reply(
+        &self,
+        request: reqwest::Request,
+        lane: transport::Lane,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Value, Error> {
+        let bytes = self.transport.bytes(
+            request,
+            transport::Expected::Bytes(JSON_LIMIT as usize),
+            lane,
+            transport::REQUEST_TIMEOUT,
+            cancelled,
+        )?;
         serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse)
     }
     pub fn search(&self, query: &str) -> Result<Vec<Track>, Error> {
@@ -204,7 +204,8 @@ impl Provider {
     pub fn resolve(&self, id: &TrackId) -> Result<ResolvedStream, Error> {
         self.resolve_cancellable(id, || false)
     }
-    /// Cancellation is checked between requests; each request has a 12s timeout.
+    /// Cancellation aborts pending HTTP within a 20ms polling interval. Each
+    /// visitor/player transaction has a 12s absolute deadline including its body.
     pub fn resolve_cancellable(
         &self,
         id: &TrackId,
@@ -216,8 +217,8 @@ impl Provider {
         if !valid_id(&id.0) {
             return Err(Error::InvalidTrack);
         }
-        let visitor = self.post("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
-   json!({"context":{"client":{"clientName":"WEB","clientVersion":"2.20260707.00.00","hl":"en"}}}), "1", "2.20260707.00.00", WEB_UA)?;
+        let visitor = self.json_reply(self.post_request("https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
+   json!({"context":{"client":{"clientName":"WEB","clientVersion":"2.20260707.00.00","hl":"en"}}}), "1", "2.20260707.00.00", WEB_UA)?, transport::Lane::Media, &cancelled)?;
         if cancelled() {
             return Err(Error::Cancelled);
         }
@@ -225,8 +226,8 @@ impl Provider {
             .pointer("/responseContext/visitorData")
             .and_then(Value::as_str)
             .ok_or(Error::InvalidResponse)?;
-        let value = self.post("https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
-   json!({"context":{"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","visitorData":visitor}},"videoId":id.0}), "101", "1.02", PLAYER_UA)?;
+        let value = self.json_reply(self.post_request("https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+   json!({"context":{"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","visitorData":visitor}},"videoId":id.0}), "101", "1.02", PLAYER_UA)?, transport::Lane::Media, &cancelled)?;
         if cancelled() {
             return Err(Error::Cancelled);
         }

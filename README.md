@@ -339,8 +339,14 @@ add bounded outgoing tail, incoming head and mixed PCM buffers, each at most
 8 MiB (plus a 100 ms block), supporting up to 12 seconds at 48kHz stereo.
 Whole tracks are never buffered. The audio
 callback reads PCM only. New commands replace pending work; generation checks
-reject stale audio and results. In-flight HTTP work may take up to its 12-second
-timeout to relinquish the worker, while stop silences queued audio immediately.
+reject stale audio and results. Provider HTTP uses one shared Rust/Tokio runtime,
+with four media and eight metadata request slots. Each complete request/body has
+an absolute 12-second budget (artwork: five seconds). Playback generation changes
+abort pending resolver/range futures at a 20ms cancellation poll; Stop also
+silences queued PCM immediately. DNS has at most two blocking runtime threads;
+an OS lookup may finish later, without holding the caller or creating a runtime
+per retry. Account requests retain explicit headers and revocation checks;
+no cookie jar or default credentials are installed on the shared client.
 
 `cargo run -p octave-player --example transitions --release --locked -- VIDEO_ID`
 runs an opt-in muted gapless/crossfade probe by repeating an accessible track from

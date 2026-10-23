@@ -2690,6 +2690,7 @@ dependencies = [
  "reqwest",
  "ring",
  "serde_json",
+ "tokio",
  "zeroize",
 ]
 
