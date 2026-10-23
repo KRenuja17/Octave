@@ -56,6 +56,7 @@ impl LyricsUi {
     }
 
     pub fn cancel_for(&mut self, id: Option<&TrackId>) {
+        self.translation.cancel_for(id);
         if self.id.as_ref() != id {
             self.cancel.cancel();
             self.response = None;

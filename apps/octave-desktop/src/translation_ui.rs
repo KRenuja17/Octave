@@ -9,7 +9,7 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, Receiver},
 };
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 type LanguageResponse = (String, Receiver<Result<Vec<Language>, Error>>);
 #[derive(Clone, Copy, Default, PartialEq)]
 enum Mode {
@@ -34,6 +34,7 @@ pub struct TranslationUi {
     languages: Vec<Language>,
     language_endpoint: String,
     language_rx: Option<LanguageResponse>,
+    language_cancel: Arc<AtomicBool>,
     language_message: String,
 }
 impl Default for TranslationUi {
@@ -54,6 +55,7 @@ impl Default for TranslationUi {
             languages: Vec::new(),
             language_endpoint: String::new(),
             language_rx: None,
+            language_cancel: Default::default(),
             language_message: String::new(),
         }
     }
@@ -61,15 +63,47 @@ impl Default for TranslationUi {
 impl Drop for TranslationUi {
     fn drop(&mut self) {
         self.cancel.store(true, Ordering::Release);
+        self.language_cancel.store(true, Ordering::Release);
     }
 }
 impl TranslationUi {
-    fn poll_languages(&mut self, ctx: &egui::Context) {
-        if self.language_endpoint != self.endpoint {
-            self.languages.clear();
-            self.language_message.clear();
-            self.language_endpoint = self.endpoint.clone();
+    fn sync_endpoint(&mut self) {
+        if self.language_endpoint == self.endpoint {
+            return;
         }
+        if !self.language_endpoint.is_empty() {
+            self.key.zeroize();
+        }
+        self.cancel.store(true, Ordering::Release);
+        self.language_cancel.store(true, Ordering::Release);
+        self.rx = None;
+        self.language_rx = None;
+        self.result = None;
+        self.cache.clear();
+        self.languages.clear();
+        self.message.clear();
+        self.language_message.clear();
+        self.language_endpoint = self.endpoint.clone();
+        self.context = (self.endpoint.clone(), self.target.clone());
+    }
+    pub fn cancel_for(&mut self, id: Option<&octave_core::TrackId>) {
+        self.sync_endpoint();
+        if self.context.1 != self.target {
+            self.cancel.store(true, Ordering::Release);
+            self.rx = None;
+            self.result = None;
+            self.message.clear();
+        }
+        if self.original.as_ref().map(|document| &document.track_id) != id {
+            self.cancel.store(true, Ordering::Release);
+            self.rx = None;
+            self.original = None;
+            self.result = None;
+            self.message.clear();
+        }
+    }
+    fn poll_languages(&mut self, ctx: &egui::Context) {
+        self.sync_endpoint();
         let result = self
             .language_rx
             .as_ref()
@@ -137,16 +171,26 @@ impl TranslationUi {
             .clicked()
         {
             let endpoint = self.endpoint.clone();
+            self.language_cancel.store(true, Ordering::Release);
+            let cancel = Arc::new(AtomicBool::new(false));
+            self.language_cancel = cancel.clone();
             let (tx, rx) = mpsc::sync_channel(1);
             self.language_rx = Some((endpoint.clone(), rx));
             std::thread::spawn(move || {
                 let _ = tx.send(
-                    Translator::new(&endpoint, String::new()).and_then(|server| server.languages()),
+                    Translator::new(&endpoint, String::new()).and_then(|server| {
+                        server.languages_cancellable(|| cancel.load(Ordering::Acquire))
+                    }),
                 );
             });
         }
         if self.language_rx.is_some() {
             ui.spinner();
+            if ui.small_button("Cancel language check").clicked() {
+                self.language_cancel.store(true, Ordering::Release);
+                self.language_rx = None;
+                self.language_message = "Language check canceled.".into();
+            }
         }
         if !self.language_message.is_empty() {
             ui.weak(&self.language_message);
@@ -170,6 +214,13 @@ impl TranslationUi {
                 "https://docs.libretranslate.com/guides/installation/",
             );
         });
+        if (!self.endpoint.is_empty() || !self.key.is_empty())
+            && ui.button("Clear translation service and key").clicked()
+        {
+            self.endpoint.clear();
+            self.key.zeroize();
+        }
+        self.sync_endpoint();
     }
     pub fn header(&mut self, ui: &mut egui::Ui, document: Option<&Lyrics>) -> bool {
         self.poll_languages(ui.ctx());
@@ -296,6 +347,11 @@ impl TranslationUi {
         if self.rx.is_some() {
             ui.spinner();
             ui.weak("Translating · original stays available");
+            if ui.small_button("Cancel translation").clicked() {
+                self.cancel.store(true, Ordering::Release);
+                self.rx = None;
+                self.message = "Translation canceled. Original lyrics remain available.".into();
+            }
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_millis(100));
         }
@@ -339,6 +395,33 @@ mod tests {
             app.header(ui, Some(document));
         });
         output.textures_delta.clear();
+    }
+    #[test]
+    fn hidden_track_changes_cancel_translation_and_endpoint_changes_clear_old_keys() {
+        let mut app = TranslationUi::default();
+        app.endpoint = "https://first.example.com".into();
+        let first = doc("first");
+        frame(&mut app, &first);
+        app.key = Zeroizing::new("first-service-secret".into());
+        let pending = Arc::new(AtomicBool::new(false));
+        app.cancel = pending.clone();
+        let (_, rx) = mpsc::channel();
+        app.rx = Some(rx);
+        app.cancel_for(Some(&doc("second").track_id));
+        assert!(pending.load(Ordering::Acquire) && app.rx.is_none());
+        assert!(
+            !app.key.is_empty(),
+            "Changing track does not change the service key"
+        );
+        let metadata = Arc::new(AtomicBool::new(false));
+        app.language_cancel = metadata.clone();
+        let (_, rx) = mpsc::channel();
+        app.language_rx = Some((app.endpoint.clone(), rx));
+        app.endpoint = "https://second.example.com".into();
+        app.cancel_for(None);
+        assert!(metadata.load(Ordering::Acquire));
+        assert!(app.key.is_empty() && app.language_rx.is_none() && app.languages.is_empty());
+        assert!(app.result.is_none() && app.cache.is_empty());
     }
     #[test]
     fn language_metadata_from_a_previous_endpoint_is_discarded() {

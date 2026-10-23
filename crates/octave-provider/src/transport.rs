@@ -15,6 +15,7 @@ const CANCEL_POLL: Duration = Duration::from_millis(20);
 pub(crate) enum Lane {
     Media,
     Metadata,
+    Optional,
 }
 #[derive(Clone, Copy)]
 pub(crate) enum Expected {
@@ -77,6 +78,7 @@ pub(crate) struct Transport {
     runtime: Runtime,
     media: Arc<Semaphore>,
     metadata: Arc<Semaphore>,
+    optional: Arc<Semaphore>,
 }
 // Header access is needed only by the opt-in anonymous bootstrap investigation.
 // Production byte callers do not retain response metadata or gain a cookie jar.
@@ -121,6 +123,7 @@ impl Transport {
             runtime,
             media: Arc::new(Semaphore::new(4)),
             metadata: Arc::new(Semaphore::new(8)),
+            optional: Arc::new(Semaphore::new(2)),
         })
     }
     pub fn bytes(
@@ -148,6 +151,7 @@ impl Transport {
         let permit = match lane {
             Lane::Media => &self.media,
             Lane::Metadata => &self.metadata,
+            Lane::Optional => &self.optional,
         }
         .clone()
         .try_acquire_owned()
@@ -259,6 +263,47 @@ mod tests {
             handler(socket);
         });
         (url, task)
+    }
+    #[test]
+    fn optional_service_saturation_leaves_media_and_metadata_capacity_available() {
+        let transport = Transport::new().unwrap();
+        let _optional = transport
+            .optional
+            .clone()
+            .try_acquire_many_owned(2)
+            .unwrap();
+        assert_eq!(
+            transport.bytes(
+                transport.client.get("http://127.0.0.1:1").build().unwrap(),
+                Expected::Bytes(2),
+                Lane::Optional,
+                Duration::from_secs(1),
+                || false
+            ),
+            Err(Error::Busy)
+        );
+        for lane in [Lane::Media, Lane::Metadata] {
+            let (url, task) = server(|mut socket| {
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK",
+                    )
+                    .unwrap();
+            });
+            assert_eq!(
+                transport
+                    .bytes(
+                        transport.client.get(url).build().unwrap(),
+                        Expected::Bytes(2),
+                        lane,
+                        Duration::from_secs(1),
+                        || false
+                    )
+                    .unwrap(),
+                b"OK"
+            );
+            task.join().unwrap();
+        }
     }
     #[test]
     fn absolute_deadline_includes_a_body_that_keeps_making_progress() {

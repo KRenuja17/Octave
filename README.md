@@ -560,9 +560,17 @@ keys are masked and kept only in memory; the endpoint and target language are
 saved. **Translate via LibreTranslate** explicitly sends lyric text to that service.
 Original / Translation / Both keep original cue identity; unexpected line counts,
 old-song responses and failures preserve the original text. Batches contain at
-most 24 lines / 4,000 characters, with bounded response size and deadlines. Service
+most 24 lines / 2,000 characters, with bounded response size and deadlines. Service
 language coverage, terms and limits are those of your configured endpoint.
 See the [LibreTranslate API](https://docs.libretranslate.com/api/operations/translate/).
+
+Translation and language checks use two dedicated optional-service HTTP slots,
+separate from playback/catalog capacity. Each complete request/body has an
+eight-second absolute budget; the full lyric job has a 30-second budget. Cancel,
+track changes (including hidden lyrics), endpoint changes and closing Octave abort
+in-flight work. Changing the endpoint clears the previous service key and cached
+translations. **Clear translation service and key** removes the configuration;
+keys remain memory-only. Language checks never submit lyrics or keys.
 
 Discord Rich Presence is off by default and needs Octave's public application ID
 and a running Discord desktop client. No bot token is used. Enabling shares current

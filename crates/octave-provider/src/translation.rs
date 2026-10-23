@@ -1,10 +1,10 @@
 //! Explicit LibreTranslate-compatible requests; no implicit public endpoint.
-use crate::{Error, network};
+use crate::{Error, network, transport};
 use octave_core::lyrics::Lyrics;
-use reqwest::{Url, blocking::Client};
+use reqwest::Url;
 use serde_json::{Value, json};
 use std::{
-    io::Read,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
@@ -13,7 +13,7 @@ const MAX_BATCH_CHARS: usize = 2000;
 
 pub struct Translator {
     endpoint: Url,
-    client: Client,
+    transport: Arc<transport::Transport>,
     key: Zeroizing<String>,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -94,34 +94,36 @@ impl Translator {
         Ok(Self {
             endpoint: endpoint_url(endpoint).ok_or(Error::InvalidResponse)?,
             key,
-            client: Client::builder()
-                .timeout(Duration::from_secs(8))
-                .connect_timeout(Duration::from_secs(4))
-                .redirect(reqwest::redirect::Policy::none())
-                .user_agent("Octave/0.2 lyrics translation")
-                .build()
-                .map_err(network)?,
+            transport: transport::shared()?,
         })
     }
     /// Explicit public metadata lookup; no lyrics, cookies or API key submitted.
     pub fn languages(&self) -> Result<Vec<Language>, Error> {
+        self.languages_cancellable(|| false)
+    }
+    pub fn languages_cancellable(
+        &self,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<Language>, Error> {
         let mut url = self.endpoint.clone();
         url.set_path(&format!(
             "{}/languages",
             self.endpoint.path().trim_end_matches("/translate")
         ));
-        let response = self.client.get(url).send().map_err(network)?;
-        if !response.status().is_success() {
-            return Err(Error::Http(response.status().as_u16()));
-        }
-        let mut bytes = Vec::new();
-        response
-            .take(256 * 1024 + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::Network)?;
-        if bytes.len() > 256 * 1024 {
-            return Err(Error::InvalidResponse);
-        }
+        let request = self
+            .transport
+            .client
+            .get(url)
+            .header("User-Agent", "Octave/0.2 lyrics translation")
+            .build()
+            .map_err(network)?;
+        let bytes = self.transport.bytes(
+            request,
+            transport::Expected::Bytes(256 * 1024),
+            transport::Lane::Optional,
+            Duration::from_secs(8),
+            cancelled,
+        )?;
         parse_languages(
             &serde_json::from_slice::<Value>(&bytes).map_err(|_| Error::InvalidResponse)?,
         )
@@ -132,6 +134,9 @@ impl Translator {
         target: &str,
         cancelled: impl Fn() -> bool,
     ) -> Result<TranslatedLyrics, Error> {
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         if !language_code(target) {
             return Err(Error::InvalidResponse);
         }
@@ -186,23 +191,21 @@ impl Translator {
             if !self.key.is_empty() {
                 body["api_key"] = json!(self.key.as_str());
             }
-            let response = self
+            let request = self
+                .transport
                 .client
                 .post(self.endpoint.clone())
+                .header("User-Agent", "Octave/0.2 lyrics translation")
                 .json(&body)
-                .send()
+                .build()
                 .map_err(network)?;
-            if !response.status().is_success() {
-                return Err(Error::Http(response.status().as_u16()));
-            }
-            let mut bytes = Vec::new();
-            response
-                .take(256 * 1024 + 1)
-                .read_to_end(&mut bytes)
-                .map_err(|_| Error::Network)?;
-            if bytes.len() > 256 * 1024 {
-                return Err(Error::InvalidResponse);
-            }
+            let bytes = self.transport.bytes(
+                request,
+                transport::Expected::Bytes(256 * 1024),
+                transport::Lane::Optional,
+                Duration::from_secs(8).min(deadline.saturating_duration_since(Instant::now())),
+                &cancelled,
+            )?;
             let value: Value =
                 serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse)?;
             let translated = parse_lines(&value, batch.len())?;
@@ -243,6 +246,97 @@ fn parse_lines(value: &Value, count: usize) -> Result<Vec<String>, Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
+    fn fixture_translator(endpoint: &str, key: String) -> Translator {
+        let mut translator = Translator::new(endpoint, key).unwrap();
+        translator.transport = Arc::new(transport::Transport::new().unwrap());
+        translator
+    }
+    #[test]
+    fn stalled_translation_and_language_requests_abort_without_waiting_for_timeout() {
+        use std::{
+            io::{BufRead, Write},
+            net::TcpListener,
+            sync::{
+                atomic::{AtomicBool, Ordering},
+                mpsc,
+            },
+            thread,
+        };
+        for translate in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let (ready, wait) = mpsc::sync_channel(1);
+            let server = thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(2)))
+                    .unwrap();
+                let mut reader = std::io::BufReader::new(socket.try_clone().unwrap());
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse::<usize>().unwrap();
+                    }
+                    assert!(
+                        !line.to_ascii_lowercase().starts_with("cookie:")
+                            && !line.to_ascii_lowercase().starts_with("authorization:")
+                            && !line.to_ascii_lowercase().starts_with("x-goog-visitor-id:")
+                    );
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                if translate {
+                    assert_eq!(
+                        serde_json::from_slice::<Value>(&body).unwrap()["q"],
+                        json!(["Original fixture"])
+                    );
+                } else {
+                    assert!(body.is_empty());
+                }
+                socket
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\nx",
+                    )
+                    .unwrap();
+                ready.send(()).unwrap();
+                assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
+            });
+            let cancel = Arc::new(AtomicBool::new(false));
+            let flag = cancel.clone();
+            let trigger = thread::spawn(move || {
+                wait.recv_timeout(Duration::from_secs(2)).unwrap();
+                flag.store(true, Ordering::Release);
+            });
+            let translator = fixture_translator(&endpoint, String::new());
+            let started = Instant::now();
+            if translate {
+                let document = Lyrics {
+                    track_id: octave_core::TrackId("abcdefghijk".into()),
+                    text: "Original fixture".into(),
+                    source: "Test".into(),
+                    cues: Vec::new(),
+                };
+                assert_eq!(
+                    translator.translate(&document, "en", || cancel.load(Ordering::Acquire)),
+                    Err(Error::Cancelled)
+                );
+            } else {
+                assert_eq!(
+                    translator.languages_cancellable(|| cancel.load(Ordering::Acquire)),
+                    Err(Error::Cancelled)
+                );
+            }
+            assert!(started.elapsed() < Duration::from_secs(1));
+            trigger.join().unwrap();
+            server.join().unwrap();
+        }
+    }
     #[test]
     fn explicit_http_translation_keeps_cue_identity_and_instrumental_lines() {
         use std::io::{BufRead, Write};
@@ -302,7 +396,7 @@ mod tests {
                 },
             ],
         };
-        let translator = Translator::new(&endpoint, "fixture-key".into()).unwrap();
+        let translator = fixture_translator(&endpoint, "fixture-key".into());
         let result = translator.translate(&original, "es", || false).unwrap();
         worker.join().unwrap();
         assert_eq!(result.original, original);
@@ -365,7 +459,7 @@ mod tests {
             source: "Original fixture".into(),
             cues: Vec::new(),
         };
-        let translator = Translator::new(&endpoint, String::new()).unwrap();
+        let translator = fixture_translator(&endpoint, String::new());
         assert_eq!(
             translator
                 .translate(&document, "en", || false)
@@ -412,8 +506,7 @@ mod tests {
             let payload = r#"[{"code":"en","name":"English"},{"code":"zh-Hans","name":"Chinese"},{"code":"en","name":"Duplicate"}]"#;
             write!(socket,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",payload.len()).unwrap();
         });
-        let languages = Translator::new(&endpoint, "fixture-secret".into())
-            .unwrap()
+        let languages = fixture_translator(&endpoint, "fixture-secret".into())
             .languages()
             .unwrap();
         server.join().unwrap();
