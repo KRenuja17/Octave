@@ -1,6 +1,8 @@
 //! Experimental unsigned YouTube Music access. No cookies or account state are read.
 pub mod account;
 pub mod catalog;
+#[cfg(test)]
+mod compatibility_tests;
 pub mod lyrics;
 pub mod playlist;
 pub mod range;

@@ -385,6 +385,14 @@ The unsigned client profile is a compatibility experiment informed by
 contract. Provider changes remain isolated here. Sensitive values redact Debug
 output, but explicit secret access must never be passed to a logger.
 
+Maintainers can run `cargo test -p octave-provider --locked
+compatibility_tests::live_unsigned_profile_compatibility -- --ignored --exact
+--nocapture` for a bounded metadata-only comparison of four unsigned clients on
+five reference IDs. Its 85-second overall budget includes complete request bodies;
+it prints allowlisted status/reason categories, format counts and capability
+flags. It never logs response text, visitor data or stream URLs and opens no audio
+device. This diagnostic is opt-in; it does not change the production resolver.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
