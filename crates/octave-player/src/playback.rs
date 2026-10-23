@@ -2,6 +2,7 @@ use super::*;
 use std::collections::VecDeque;
 use transition::Prepared;
 
+#[derive(Clone)]
 struct Clock {
     quality: octave_core::AudioQuality,
     id: TrackId,
@@ -27,6 +28,7 @@ impl Clock {
     }
     fn snapshot(&self, paused: bool, ended: bool) -> Snapshot {
         Snapshot {
+            buffering: !paused && !ended && self.consumed.load(Ordering::Acquire) == 0,
             quality: Some(self.quality),
             sequence: self.sequence,
             state: if ended {
@@ -61,6 +63,26 @@ impl Clock {
                 consumed: self.consumed.clone(),
             });
         }
+    }
+}
+/// Audio-callback counters remain readable while the decoder is blocked in I/O.
+#[derive(Clone)]
+pub(super) struct Timeline {
+    generation: u64,
+    current: Clock,
+    previous: Option<Clock>,
+}
+impl Timeline {
+    pub(super) fn snapshot(&self, generation: u64, paused: bool) -> Option<Snapshot> {
+        if self.generation != generation {
+            return None;
+        }
+        let clock = if self.current.consumed.load(Ordering::Acquire) == 0 {
+            self.previous.as_ref().unwrap_or(&self.current)
+        } else {
+            &self.current
+        };
+        Some(clock.snapshot(paused, false))
     }
 }
 pub(crate) fn play(shared: &Shared, request: &Request) -> Result<(), Failure> {
@@ -111,6 +133,16 @@ fn run(
         .load(Ordering::Acquire)
         .min(u32::from(transition::MAX_FADE)) as usize;
     let mut clock = Clock::new(&audio, 0);
+    let mut timeline = shared.timeline.lock().unwrap();
+    if !current(shared, request) {
+        return Ok(());
+    }
+    *timeline = Some(Timeline {
+        generation: request.generation,
+        current: clock.clone(),
+        previous: None,
+    });
+    drop(timeline);
     let mut previous: Option<Clock> = None;
     let mut tail = VecDeque::new();
     let mut ended = false;
@@ -188,6 +220,15 @@ fn run(
             );
             clock.append(output, shared, request, remaining);
             let next_clock = Clock::new(&next, clock.sequence + 1);
+            let mut timeline = shared.timeline.lock().unwrap();
+            if current(shared, request) {
+                *timeline = Some(Timeline {
+                    generation: request.generation,
+                    current: next_clock.clone(),
+                    previous: Some(clock.clone()),
+                });
+            }
+            drop(timeline);
             *shared.mix.lock().unwrap() = Some(Mix {
                 generation: request.generation,
                 sequence: next_clock.sequence,
@@ -219,6 +260,160 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    struct Stall {
+        inner: SamplesBuffer,
+        count: usize,
+        ready: Option<std::sync::mpsc::Sender<()>>,
+        release: Arc<AtomicBool>,
+    }
+    impl Iterator for Stall {
+        type Item = f32;
+        fn next(&mut self) -> Option<f32> {
+            if self.count == 6400
+                && let Some(ready) = self.ready.take()
+            {
+                ready.send(()).unwrap();
+                while !self.release.load(Ordering::Acquire) {
+                    thread::sleep(Duration::from_millis(1));
+                }
+            }
+            let next = self.inner.next();
+            if next.is_some() {
+                self.count += 1;
+            }
+            next
+        }
+    }
+    impl Source for Stall {
+        fn current_span_len(&self) -> Option<usize> {
+            self.inner.current_span_len()
+        }
+        fn channels(&self) -> rodio::ChannelCount {
+            self.inner.channels()
+        }
+        fn sample_rate(&self) -> rodio::SampleRate {
+            self.inner.sample_rate()
+        }
+        fn total_duration(&self) -> Option<Duration> {
+            self.inner.total_duration()
+        }
+    }
+    #[test]
+    fn blocked_decoder_keeps_live_consumed_clock_and_paused_retry_position() {
+        let shared = Arc::new(Shared::default());
+        let request = Request {
+            id: TrackId("stalled".into()),
+            offset: Duration::ZERO,
+            generation: 0,
+            equalizer: Equalizer::default(),
+            device: None,
+        };
+        let mut audio = fixture("stalled", 0.5, 8000, 2);
+        audio.duration = Duration::from_secs(2);
+        let (ready, wait) = std::sync::mpsc::channel();
+        let release = Arc::new(AtomicBool::new(false));
+        let fault = audio.fault.clone();
+        audio.decoder = Box::new(Stall {
+            inner: SamplesBuffer::new(audio.channels, audio.rate, vec![0.5; 32000]),
+            count: 0,
+            ready: Some(ready),
+            release: release.clone(),
+        });
+        let (output, mut source) = rodio::Player::new();
+        let output = Arc::new(output);
+        *shared.output.lock().unwrap() = Some(output.clone());
+        let active = shared.clone();
+        let sink = output.clone();
+        let worker = thread::spawn(move || {
+            if let Err(error) = run(&active, &request, audio, &sink, &AtomicBool::new(false)) {
+                publish_failure(&active, &request, error);
+            }
+        });
+        // Always release a deliberately stalled fixture, including on assertion failure.
+        struct Release(Arc<AtomicBool>);
+        impl Drop for Release {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let _release = Release(release.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if wait.try_recv().is_ok() {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline);
+            if !output.empty() {
+                source.by_ref().take(1600).for_each(drop);
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        source.by_ref().take(16000).for_each(drop); // drain queued audio, then silence
+        let player = Player {
+            shared: shared.clone(),
+        };
+        let live = player.snapshot();
+        assert_eq!(live.position, Duration::from_millis(400));
+        assert!(live.buffering);
+        assert!(
+            shared.snapshot.lock().unwrap().position < live.position,
+            "I/O worker's stored snapshot should be deliberately stale"
+        );
+        assert_eq!(
+            player.snapshot().position,
+            live.position,
+            "Output silence cannot advance lyrics"
+        );
+        player.toggle_pause();
+        let paused = player.snapshot();
+        assert!(matches!(paused.state, PlaybackState::Paused(_)) && !paused.buffering);
+        assert_eq!(paused.position, live.position);
+        *fault.lock().unwrap() = Some(octave_provider::Error::Timeout);
+        release.store(true, Ordering::Release);
+        worker.join().unwrap();
+        let failed = player.snapshot();
+        assert!(matches!(
+            failed.state,
+            PlaybackState::Failed(_, Failure::Provider(octave_provider::Error::Timeout))
+        ));
+        assert_eq!(
+            failed.position, live.position,
+            "Recovery must retain the last consumed sample"
+        );
+        player.retry_at(TrackId("stalled".into()), failed.position);
+        assert!(shared.paused.load(Ordering::Acquire));
+        assert_eq!(
+            shared.pending.lock().unwrap().as_ref().unwrap().offset,
+            live.position
+        );
+        assert_eq!(player.snapshot().position, live.position);
+        player.stop();
+        assert!(shared.timeline.lock().unwrap().is_none());
+    }
+    #[test]
+    fn timeline_handoff_follows_first_consumed_incoming_sample_and_rejects_old_generation() {
+        let a = Clock::new(&fixture("outgoing", 0.5, 8000, 2), 0);
+        let b = Clock::new(&fixture("incoming", 0.5, 8000, 2), 1);
+        a.consumed.store(8000, Ordering::Release);
+        let timeline = Timeline {
+            generation: 7,
+            current: b.clone(),
+            previous: Some(a),
+        };
+        assert_eq!(
+            timeline.snapshot(7, false).unwrap().state,
+            PlaybackState::Playing(TrackId("outgoing".into()))
+        );
+        b.consumed.store(1600, Ordering::Release);
+        let live = timeline.snapshot(7, false).unwrap();
+        assert_eq!(live.sequence, 1);
+        assert_eq!(live.position, Duration::from_millis(100));
+        assert_eq!(
+            live.state,
+            PlaybackState::Playing(TrackId("incoming".into()))
+        );
+        assert!(timeline.snapshot(8, false).is_none());
+    }
     #[test]
     #[ignore = "Account-free accelerated one-hour pipeline soak; run optimized, takes several minutes"]
     fn one_hour_pipeline_soak() {

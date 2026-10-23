@@ -85,6 +85,8 @@ impl std::fmt::Display for Failure {
 }
 #[derive(Clone, Debug, Default)]
 pub struct Snapshot {
+    /// Play intent is active but the output queue currently has no audio.
+    pub buffering: bool,
     pub quality: Option<octave_core::AudioQuality>,
     /// Increments when prepared audio for another queue entry starts being consumed.
     pub sequence: u64,
@@ -102,6 +104,7 @@ struct Request {
 }
 #[derive(Default)]
 struct Shared {
+    timeline: Mutex<Option<playback::Timeline>>,
     mix: Mutex<Option<Mix>>,
     preparation: Mutex<transition::Preparation>,
     crossfade: AtomicU32,
@@ -242,6 +245,15 @@ impl Player {
     pub fn play_at(&self, id: TrackId, offset: Duration) {
         self.request(id, offset, false, Duration::ZERO);
     }
+    /// Recovery re-resolves media without changing a pause made during I/O.
+    pub fn retry_at(&self, id: TrackId, offset: Duration) {
+        self.request(
+            id,
+            offset,
+            self.shared.paused.load(Ordering::Acquire),
+            self.snapshot().duration,
+        );
+    }
     pub fn set_volume(&self, volume: f32) {
         let volume = if volume.is_finite() {
             volume.clamp(0.0, 1.0)
@@ -273,6 +285,7 @@ impl Player {
     fn request(&self, id: TrackId, offset: Duration, paused: bool, duration: Duration) {
         let mut pending = self.shared.pending.lock().unwrap();
         let generation = self.shared.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        *self.shared.timeline.lock().unwrap() = None;
         self.shared.preparation.lock().unwrap().set(None);
         *self.shared.mix.lock().unwrap() = None;
         if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
@@ -280,6 +293,7 @@ impl Player {
         }
         self.shared.paused.store(paused, Ordering::Release);
         *self.shared.snapshot.lock().unwrap() = Snapshot {
+            buffering: false,
             quality: None,
             sequence: 0,
             state: PlaybackState::Loading(id.clone()),
@@ -307,6 +321,7 @@ impl Player {
     pub fn stop(&self) {
         let mut pending = self.shared.pending.lock().unwrap();
         self.shared.generation.fetch_add(1, Ordering::AcqRel);
+        *self.shared.timeline.lock().unwrap() = None;
         self.shared.preparation.lock().unwrap().set(None);
         *pending = None;
         if let Some(output) = self.shared.output.lock().unwrap().as_ref() {
@@ -315,7 +330,30 @@ impl Player {
         *self.shared.snapshot.lock().unwrap() = Snapshot::default();
     }
     pub fn snapshot(&self) -> Snapshot {
-        self.shared.snapshot.lock().unwrap().clone()
+        let snapshot = self.shared.snapshot.lock().unwrap().clone();
+        if matches!(
+            snapshot.state,
+            PlaybackState::Playing(_) | PlaybackState::Paused(_)
+        ) {
+            let timeline = self.shared.timeline.lock().unwrap().clone();
+            if let Some(mut live) = timeline.and_then(|t| {
+                t.snapshot(
+                    self.shared.generation.load(Ordering::Acquire),
+                    self.shared.paused.load(Ordering::Acquire),
+                )
+            }) {
+                live.buffering |= matches!(live.state, PlaybackState::Playing(_))
+                    && self
+                        .shared
+                        .output
+                        .lock()
+                        .unwrap()
+                        .as_ref()
+                        .is_some_and(|out| out.empty());
+                return live;
+            }
+        }
+        snapshot
     }
 }
 impl Drop for Player {
@@ -334,19 +372,32 @@ fn publish(shared: &Shared, request: &Request, snapshot: Snapshot) {
         *state = snapshot;
     }
 }
+fn publish_failure(shared: &Shared, request: &Request, failure: Failure) {
+    let live = shared
+        .timeline
+        .lock()
+        .unwrap()
+        .as_ref()
+        .and_then(|t| t.snapshot(request.generation, shared.paused.load(Ordering::Acquire)));
+    let mut snapshot = shared.snapshot.lock().unwrap();
+    if current(shared, request) {
+        if let Some(live) = live {
+            *snapshot = live;
+        }
+        let id = match &snapshot.state {
+            PlaybackState::Playing(id) | PlaybackState::Paused(id) => id.clone(),
+            _ => request.id.clone(),
+        };
+        snapshot.buffering = false;
+        snapshot.state = PlaybackState::Failed(id, failure);
+    }
+}
 fn work(shared: Arc<Shared>) {
     while !shared.closed.load(Ordering::Acquire) {
         let request = shared.pending.lock().unwrap().take();
         if let Some(request) = request {
             if let Err(message) = playback::play(&shared, &request) {
-                let mut snapshot = shared.snapshot.lock().unwrap();
-                if current(&shared, &request) {
-                    let id = match &snapshot.state {
-                        PlaybackState::Playing(id) | PlaybackState::Paused(id) => id.clone(),
-                        _ => request.id.clone(),
-                    };
-                    snapshot.state = PlaybackState::Failed(id, message);
-                }
+                publish_failure(&shared, &request, message);
             }
             *shared.output.lock().unwrap() = None;
         } else {
@@ -521,6 +572,7 @@ mod tests {
         player.play(id.clone());
         let old = player.shared.pending.lock().unwrap().clone().unwrap();
         *player.shared.snapshot.lock().unwrap() = Snapshot {
+            buffering: false,
             sequence: 0,
             quality: None,
             state: PlaybackState::Playing(id),

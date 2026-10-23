@@ -22,7 +22,8 @@ pub fn valid_id(id: &str) -> bool {
 }
 fn activity(track: Option<&Track>, snapshot: &Snapshot) -> Option<Value> {
     let track = track?;
-    if !matches!(&snapshot.state,PlaybackState::Playing(id) if id==&track.id) {
+    if snapshot.buffering || !matches!(&snapshot.state,PlaybackState::Playing(id) if id==&track.id)
+    {
         return None;
     }
     let clip = |s: &str| {
@@ -385,6 +386,8 @@ mod tests {
         assert_eq!(activity(Some(&track), &snapshot), None);
         snapshot.state = PlaybackState::Playing(track.id.clone());
         assert!(activity(Some(&track), &snapshot).is_some());
+        snapshot.buffering = true;
+        assert!(activity(Some(&track), &snapshot).is_none());
         assert!(!valid_id(""));
     }
 }

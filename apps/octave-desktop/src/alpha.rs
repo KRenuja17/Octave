@@ -183,10 +183,13 @@ impl Alpha {
     fn start(&mut self, reset_retry: bool) {
         self.transition_sequence = 0;
         if let Some(track) = self.session.current() {
-            self.player.play_at(
-                track.id.clone(),
-                Duration::from_secs_f64(self.session.position.max(0.0)),
-            );
+            let id = track.id.clone();
+            let position = Duration::from_secs_f64(self.session.position.max(0.0));
+            if reset_retry {
+                self.player.play_at(id, position);
+            } else {
+                self.player.retry_at(id, position);
+            }
             self.player.set_volume(self.session.volume);
             self.retry_at = None;
             self.failure_seen = false;
@@ -372,6 +375,7 @@ impl Alpha {
         };
         if same_track {
             if matches!(snapshot.state, PlaybackState::Playing(_))
+                && !snapshot.buffering
                 && !snapshot.position.is_zero()
                 && let Some(track) = self.session.current().cloned()
                 && self.last_history.as_ref() != Some(&(track.id.clone(), snapshot.sequence))
@@ -469,6 +473,7 @@ impl Alpha {
                 }
             }
             PlaybackState::Loading(_) => "Connecting…",
+            PlaybackState::Playing(_) if snapshot.buffering => "Buffering…",
             PlaybackState::Playing(_) => "Playing",
             PlaybackState::Paused(_) => "Paused",
             PlaybackState::Ended(_) => "Finished",
@@ -647,7 +652,9 @@ impl Alpha {
                     }
                     if !lyrics {
                         ui.add_space(12.0);
-                        ui.weak(match self.player.snapshot().state {
+                        let snapshot = self.player.snapshot();
+                        ui.weak(match snapshot.state {
+                            PlaybackState::Playing(_) if snapshot.buffering => "Buffering…",
                             PlaybackState::Playing(_) => "Playing",
                             PlaybackState::Paused(_) => "Paused",
                             PlaybackState::Loading(_) => "Connecting…",
@@ -2141,6 +2148,7 @@ mod tests {
         app.add(track(2), false);
         app.retry_count = 2;
         app.observe(Snapshot {
+            buffering: false,
             quality: None,
             sequence: 1,
             state: PlaybackState::Playing(track(2).id),
@@ -2152,6 +2160,7 @@ mod tests {
         assert_eq!(app.session.position, 0.25);
         app.session.repeat = Repeat::One;
         app.observe(Snapshot {
+            buffering: false,
             quality: None,
             sequence: 2,
             state: PlaybackState::Paused(track(2).id),
@@ -2161,6 +2170,7 @@ mod tests {
         assert_eq!(app.session.cursor, 1);
         assert_eq!(app.session.position, 0.1);
         app.observe(Snapshot {
+            buffering: false,
             quality: None,
             sequence: 0,
             state: PlaybackState::Loading(track(2).id),
@@ -2214,6 +2224,7 @@ mod tests {
         app.add(track(2), false);
         let queue = app.session.queue.clone();
         let failed = Snapshot {
+            buffering: false,
             quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::Timeout)),
@@ -2243,6 +2254,7 @@ mod tests {
         assert_eq!(app.session.position, 42.0);
         app.failure_seen = false;
         app.observe(Snapshot {
+            buffering: false,
             quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(2).id, Failure::Provider(Error::Timeout)),
@@ -2256,6 +2268,7 @@ mod tests {
         app.retry_count = 0;
         app.failure_seen = false;
         app.observe(Snapshot {
+            buffering: false,
             quality: None,
             sequence: 0,
             state: PlaybackState::Failed(track(1).id, Failure::Provider(Error::SignInRequired)),

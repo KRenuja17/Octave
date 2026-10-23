@@ -343,7 +343,11 @@ reject stale audio and results. Provider HTTP uses one shared Rust/Tokio runtime
 with four media and eight metadata request slots. Each complete request/body has
 an absolute 12-second budget (artwork: five seconds). Playback generation changes
 abort pending resolver/range futures at a 20ms cancellation poll; Stop also
-silences queued PCM immediately. DNS has at most two blocking runtime threads;
+silences queued PCM immediately. Player snapshots read the output's consumed-sample
+counters even while decoding/network work waits. An empty output queue shows
+**Buffering**, leaves the playhead/lyrics at consumed time, and does not add an
+unheard seek offset to listening history. Recovery keeps the final consumed
+position and a pause made during the stall. DNS has at most two blocking runtime threads;
 an OS lookup may finish later, without holding the caller or creating a runtime
 per retry. Account requests retain explicit headers and revocation checks;
 no cookie jar or default credentials are installed on the shared client.
