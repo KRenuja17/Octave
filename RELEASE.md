@@ -72,9 +72,23 @@ the host network or hardware. These checks complement the physical/live gates be
   Stop's Idle check passed before the failure was reported. There was no
   mid-run terminal playback error or automatic retry. Sampled peak private memory
   was 22.19 MiB for the standalone player process; this excludes the desktop UI.
-  Range-refill coverage and bounded prebuffering need investigation before a
-  further live acceptance run. A single hour-long recording, broader access and
-  physical sound/lyric latency remain unverified.
+  The refill regression is fixed in `8794d2b`: sample-counted output targets two
+  seconds of ordinary unconsumed PCM, capped at 8 MiB, with bounded decoder and
+  current-block overhead. Four real loopback range refills delayed 500 ms caused
+  122 empty callback reads before the fix and zero afterward. Queue bounds,
+  cancellation, consumed clocks and the full 12-second fade pass offline.
+  Two matched live retests on that clean source retained the same recording,
+  default output, zero player volume, no sign-in/retries and original two-second
+  allowance. Neither reached an hour: the first stopped after 1,286.055 seconds
+  of process time on next-track preparation Timeout; one manual confirmation
+  stopped after 299.129 seconds on an active-stream Timeout. Their last minute
+  checkpoints, at 1,260 and 240 seconds respectively, recorded no buffering.
+  Those partial checkpoints do not establish zero buffering over the complete
+  attempts or a successful live hour. Both failed results are retained; no
+  timeout extension, recording substitution or retry-until-pass was used.
+  Diagnose the separate network timeout path before another acceptance run.
+  A single hour-long recording, broader access and physical sound/lyric latency
+  remain unverified.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
