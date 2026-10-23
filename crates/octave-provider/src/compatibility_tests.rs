@@ -5,7 +5,7 @@
 use super::*;
 use std::time::Instant;
 
-fn summary(id: &TrackId, value: &Value) -> Value {
+pub(super) fn summary(id: &TrackId, value: &Value) -> Value {
     let status = match value
         .pointer("/playabilityStatus/status")
         .and_then(Value::as_str)

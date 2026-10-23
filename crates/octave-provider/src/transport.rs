@@ -78,6 +78,18 @@ pub(crate) struct Transport {
     media: Arc<Semaphore>,
     metadata: Arc<Semaphore>,
 }
+// Header access is needed only by the opt-in anonymous bootstrap investigation.
+// Production byte callers do not retain response metadata or gain a cookie jar.
+pub(crate) struct Reply {
+    pub bytes: Vec<u8>,
+    #[cfg(test)]
+    pub headers: reqwest::header::HeaderMap,
+}
+impl std::fmt::Debug for Reply {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Reply { body: [REDACTED], headers: [REDACTED] }")
+    }
+}
 pub(crate) fn shared() -> Result<Arc<Transport>, Error> {
     static TRANSPORT: OnceLock<Result<Arc<Transport>, Error>> = OnceLock::new();
     TRANSPORT
@@ -119,6 +131,17 @@ impl Transport {
         timeout: Duration,
         cancelled: impl Fn() -> bool,
     ) -> Result<Vec<u8>, Error> {
+        self.reply(request, expected, lane, timeout, cancelled)
+            .map(|reply| reply.bytes)
+    }
+    pub fn reply(
+        &self,
+        request: Request,
+        expected: Expected,
+        lane: Lane,
+        timeout: Duration,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Reply, Error> {
         if cancelled() {
             return Err(Error::Cancelled);
         }
@@ -137,6 +160,14 @@ impl Transport {
             let result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
                 let mut response = client.execute(request).await.map_err(network)?;
                 expected.validate(&response)?;
+                #[cfg(test)]
+                let headers = {
+                    let mut headers = response.headers().clone();
+                    for value in headers.values_mut() {
+                        value.set_sensitive(true);
+                    }
+                    headers
+                };
                 let mut bytes = Vec::with_capacity(
                     response
                         .content_length()
@@ -158,7 +189,11 @@ impl Transport {
                 if matches!(expected, Expected::Range { .. }) && bytes.len() != expected.limit() {
                     return Err(Error::InvalidRange);
                 }
-                Ok(bytes)
+                Ok(Reply {
+                    bytes,
+                    #[cfg(test)]
+                    headers,
+                })
             })
             .await
             .unwrap_or(Err(Error::Timeout));

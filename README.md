@@ -409,6 +409,16 @@ two Topic references and the control, within 50 seconds. It did not improve
 access. Both opt-in diagnostics keep only a single anonymous visitor in memory;
 no account credentials, attestation solver or script runtime are used.
 
+`cargo test -p octave-provider --locked
+anonymous_tests::live_anonymous_page_bootstrap -- --ignored --exact --nocapture`
+investigates a fresh anonymous public-page session in Rust, within a 100-second
+budget. The test-only parser reads bounded JSON configuration without evaluating
+JavaScript. Only five guest-cookie names are eligible, kept in memory for at most
+two minutes and sent to the bootstrap's HTTPS origin. Login cookies and browser
+profiles are excluded; redirects/consent actions are not followed. Output contains
+only counts, presence flags and classified results. This experiment does not
+enable cookies or page bootstrap in the production resolver.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
