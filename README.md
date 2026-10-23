@@ -374,9 +374,10 @@ validation, cipher/JavaScript resolver, live-stream support or automatic
 device-switch recovery is implemented. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
 is reported and needs a manual retry. Brief network stalls can exhaust the small
-PCM queue and cause silence before recovery. An in-flight search cannot be
-interrupted until its bounded HTTP request returns. Release hardening does not
-remove these limitations. The original `--live-preview` remains a minimal diagnostic
+PCM queue and cause silence before recovery. Searches cancel in-flight HTTP work
+when replaced or cleared; an OS DNS call already dispatched may finish later
+within the fixed resolver pool. Release hardening does not remove service access
+restrictions. The original `--live-preview` remains a minimal diagnostic
 window without the alpha's persistence or automatic recovery.
 
 The unsigned client profile is a compatibility experiment informed by
@@ -393,9 +394,15 @@ For a repeatable account-free pipeline workload, build optimized player tests
 with `cargo test -p octave-player --release --no-run --locked`, then pass the
 reported test executable to `packaging/Measure-Playback.ps1 -TestExecutable PATH
 -OutputDir EXTERNAL_DIRECTORY`. This runs the ignored `one_hour_pipeline_soak`
-test with generated 48 kHz stereo PCM, EQ, a five-second retained tail, and the
+test with generated 48 kHz stereo PCM, EQ, a twelve-second retained tail, and the
 real playback worker/output queue. It records process memory and CPU. Execution
 is accelerated and emits no audio; real-time network AAC acceptance remains separate.
+
+For the maximum Standard blend, run `cargo test -p octave-player --release
+--locked full_twelve_second_fade -- --ignored --nocapture`. This opt-in test
+paces a generated 48 kHz stereo pair through the real output queue and verifies
+the complete 12-second overlap, untouched tails and consumed-clock handoff. It
+opens no audio device; sound quality and device latency still need listening.
 
 ## Now playing and lyrics
 

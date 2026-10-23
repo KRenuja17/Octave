@@ -64,6 +64,12 @@ the host network or hardware. These checks complement the physical/live gates be
 - Physical media keys/tray interaction, output-device changes, actual network
   interruption, screen-reader tasks and a fresh Windows machine need acceptance.
 - A one-hour playback/memory workload and representative track matrix remain open.
+  The silent accelerated pipeline workload now uses the maximum 12-second tail;
+  a separate output-queue fixture verifies the full 12-second Standard overlap.
+  These generated checks do not establish an hour of live AAC playback. A bounded
+  five-recording unsigned probe decoded and sought one recording successfully;
+  four returned SignInRequired. Unsigned lyrics availability does not establish
+  audio access, and broader resolver compatibility remains a feasibility gate.
 - Production signing, update-key custody, hosting, license obligations (including
   bundled font and MPL dependency requirements), and tagged-source reproduction
   must be settled before distribution. The generated dependency inventory includes

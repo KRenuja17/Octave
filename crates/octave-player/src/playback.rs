@@ -418,7 +418,7 @@ mod tests {
     #[ignore = "Account-free accelerated one-hour pipeline soak; run optimized, takes several minutes"]
     fn one_hour_pipeline_soak() {
         let shared = Arc::new(Shared::default());
-        shared.crossfade.store(5, Ordering::Release);
+        shared.crossfade.store(12, Ordering::Release);
         let request = Request {
             id: TrackId("synthetic".into()),
             offset: Duration::ZERO,
@@ -477,7 +477,7 @@ mod tests {
             PlaybackState::Ended(TrackId("synthetic".into()))
         );
         println!(
-            "pipeline_hour=passed samples=345600000 eq=true retained_tail_seconds=5 elapsed_ms={}",
+            "pipeline_hour=passed samples=345600000 eq=true retained_tail_seconds=12 elapsed_ms={}",
             started.elapsed().as_millis()
         );
     }
@@ -651,6 +651,104 @@ mod tests {
             );
             assert_eq!(snapshot.position, Duration::from_secs(1));
         }
+    }
+    #[test]
+    #[ignore = "Opt-in paced full 12s output-queue fade; no audio device"]
+    fn full_twelve_second_fade_keeps_exact_audio_and_consumed_handoff_timing() {
+        let shared = Arc::new(Shared::default());
+        shared.crossfade.store(12, Ordering::Release);
+        let request = Request {
+            id: TrackId("first".into()),
+            offset: Duration::ZERO,
+            generation: 0,
+            equalizer: Equalizer::default(),
+            device: None,
+        };
+        let long = |id, value| {
+            let mut p = fixture(id, value, 48000, 2);
+            p.duration = Duration::from_secs(30);
+            p.decoder = Box::new(SamplesBuffer::new(
+                p.channels,
+                p.rate,
+                vec![value; 48000 * 2 * 30],
+            ));
+            p
+        };
+        let mut next = long("second", -0.5);
+        next.head = next.read(48000 * 2 * 12 + 9600).unwrap().into();
+        {
+            let mut prep = shared.preparation.lock().unwrap();
+            prep.set(Some(transition::Plan {
+                generation: 0,
+                sequence: 0,
+                next: next.id.clone(),
+                seconds: 12,
+            }));
+            prep.ready = Some(next);
+        }
+        let (output, mut source) = rodio::Player::new();
+        let output = Arc::new(output);
+        let active = shared.clone();
+        let sink = output.clone();
+        let worker = thread::spawn(move || {
+            run(
+                &active,
+                &request,
+                long("first", 0.5),
+                &sink,
+                &AtomicBool::new(false),
+            )
+        });
+        let player = Player {
+            shared: shared.clone(),
+        };
+        let mut samples = Vec::new();
+        let mut mixing = false;
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        while !worker.is_finished() {
+            assert!(std::time::Instant::now() < deadline);
+            if let TransitionStatus::Mixing {
+                elapsed, duration, ..
+            } = player.transition_status()
+            {
+                assert_eq!(duration, Duration::from_secs(12));
+                assert!(elapsed < duration);
+                mixing = true;
+            }
+            if !output.empty() {
+                samples.extend(source.by_ref().take(960));
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+        worker.join().unwrap().unwrap();
+        assert!(mixing);
+        let first = 48000 * 2 * 18;
+        let overlap = 48000 * 2 * 12;
+        let total = 48000 * 2 * 48;
+        assert!(samples.len() >= total);
+        assert!(
+            samples[..first].iter().all(|s| *s == 0.5),
+            "first mismatch={:?}",
+            samples[..first]
+                .iter()
+                .enumerate()
+                .find(|(_, s)| **s != 0.5)
+        );
+        for (frame, pair) in samples[first..first + overlap]
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .enumerate()
+        {
+            let expected = 0.5 - (frame + 1) as f32 / (48000 * 12) as f32;
+            assert!((pair[0] - expected).abs() < 0.000001);
+            assert_eq!(pair[0], pair[1]);
+        }
+        assert!(samples[first + overlap..total].iter().all(|s| *s == -0.5));
+        let end = player.snapshot();
+        assert_eq!(end.position, Duration::from_secs(30));
+        assert_eq!(end.sequence, 1);
+        assert_eq!(end.state, PlaybackState::Ended(TrackId("second".into())));
     }
     #[test]
     fn unprepared_next_retains_the_full_tail_and_format_change_skips_fade() {

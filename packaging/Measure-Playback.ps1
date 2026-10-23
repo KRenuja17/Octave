@@ -32,7 +32,7 @@ try {
         cpuPercentMachine=100*($last.cpuSeconds-$first.cpuSeconds)/($last.seconds-$first.seconds)/[Environment]::ProcessorCount
         executableSha256=(Get-FileHash -LiteralPath $TestExecutable).Hash
         measuredAtUtc=[DateTime]::UtcNow.ToString('o')
-        caveat='Accelerated generated PCM through the real playback worker, EQ, five-second tail and rodio queue. No network, AAC decoding, physical output or wall-clock hour. Not live playback acceptance.'
+        caveat='Accelerated generated PCM through the real playback worker, EQ, twelve-second tail and rodio queue. No network, AAC decoding, physical output or wall-clock hour. Not live playback acceptance.'
     } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $run 'measurement.json') -Encoding utf8
     Write-Output $stdout
     Write-Output $run
