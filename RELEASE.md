@@ -103,6 +103,16 @@ the host network or hardware. These checks complement the physical/live gates be
   Opt-in private diagnostics recorded 489 successful HTTP transactions and no
   reconnect attempts. The earlier remote timeout cause remains unproven; this
   healthy hour did not exercise recovery, which is covered by socket fixtures.
+  A later predeclared 13-recording breadth matrix from clean `25aa803` resolved
+  only the control. Its three 30-second default-output, zero-volume windows
+  at 0, 106 and 178 seconds passed with no buffering, stable AAC quality and
+  Stop returning to Idle. Twelve other entries returned BotCheckRequired before
+  audio was offered, including both finite long classical recordings. Therefore
+  no continuous long-recording hour ran and catalog acceptance remains open.
+  No failed row was replaced or retried to pass. The completed investigation
+  is not a successful capability matrix, a population estimate or proof that
+  the recordings inherently require an account. Natural EOF and full-recording
+  playback were not tested by the short seek windows.
   A single hour-long recording, broader access and physical sound/lyric latency
   remain unverified.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
