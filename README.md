@@ -473,8 +473,19 @@ are retained separately in external research. Neither diagnostic opens a decoder
 or audio device; no working approach emerged to trigger another playback matrix.
 These experiments and their safe format counts remain test-only.
 
-Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
-obligations and any JavaScript resolver remain decisions to settle before release.
+Pure-Rust attestation remains a feasibility gate. The audited native Rust
+[reCAPTCHA parser](https://github.com/0xBBFF/recaptcha-botguard) lacks token
+generation; the updated RustyPipe helper still embeds Deno/V8. A
+[cold-start token](https://github.com/LuanRT/BgUtils#when-to-use-a-po-token) is a
+temporary placeholder, not completed integrity attestation. No working generator
+was adopted. A candidate must produce fresh signed-out proof without a JavaScript
+runtime and unlock supported audio for blocked references, with correct identity
+and real media reads beyond initial grace limits, before the frozen zero-volume
+matrix and continuous long-recording test can establish playback acceptance.
+
+Windows x64 is the initial target. Octave is MIT licensed. Playback and attestation
+retain the Rust-only, no-JavaScript-runtime scope; third-party distribution
+obligations remain tracked before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
 repository in `D:\Octave-Research`.
 
