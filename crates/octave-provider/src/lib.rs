@@ -204,13 +204,21 @@ impl Provider {
         lane: transport::Lane,
         cancelled: impl Fn() -> bool,
     ) -> Result<Value, Error> {
-        let bytes = self.transport.bytes(
-            request,
-            transport::Expected::Bytes(JSON_LIMIT as usize),
-            lane,
-            transport::REQUEST_TIMEOUT,
-            || self.is_cancelled() || cancelled(),
-        )?;
+        let expected = transport::Expected::Bytes(JSON_LIMIT as usize);
+        let cancelled = || self.is_cancelled() || cancelled();
+        let bytes = match lane {
+            transport::Lane::Media => {
+                self.transport
+                    .media_bytes(request, expected, transport::REQUEST_TIMEOUT, cancelled)
+            }
+            _ => self.transport.bytes(
+                request,
+                expected,
+                lane,
+                transport::REQUEST_TIMEOUT,
+                cancelled,
+            ),
+        }?;
         serde_json::from_slice(&bytes).map_err(|_| Error::InvalidResponse)
     }
     pub fn search(&self, query: &str) -> Result<Vec<Track>, Error> {

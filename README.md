@@ -464,7 +464,7 @@ are consumed only in memory; it never opens an audio output device. The default
 target is one hour of consumed samples, accelerated at up to ten times real time,
 with a fixed eleven-minute test budget. Set `OCTAVE_NETWORK_SOAK_SECONDS` to
 10–3600 for a shorter diagnostic. The first resolver, range, decoder or preparation
-failure stops the run without retrying. The script retains failure logs and
+failure stops the run without restarting playback. The script retains failure logs and
 resource results, including a wall-budget overrun. This is neither a real-time
 hour nor a long single recording, physical listening or broad-catalog acceptance.
 
@@ -478,7 +478,8 @@ For an explicitly authorized hardware check, run `cargo run -p octave-player
 --release --locked --example muted_playback -- VIDEO_ID --muted-default-output`.
 This opens the default output device with Octave's volume set to zero before
 playing, then measures a 30-second wall-clock window after the first consumed
-sample. Startup has a separate 15-second limit; failures stop without retries.
+sample. Startup has a separate 15-second limit; terminal failures stop without
+restarting playback.
 It checks clock progression, stable stream quality and Stop returning to Idle.
 It never changes the system volume or output selection. A muted device check
 does not establish audible quality, lyric latency, device switching or long-session
@@ -487,13 +488,15 @@ reliability. `--help` does not access the network or open an audio device.
 For an explicitly authorized real-time hour, append `--one-hour`. It repeats the
 same exact recording through production preparation and gapless joins on the
 default device, always at zero player volume. Any resolver, preparation, decoder
-or device failure ends the run without retries. The one-hour wall-clock window
+or device failure ends the run without restarting playback. The one-hour wall-clock window
 starts at the first consumed sample; startup still has its own 15-second limit.
 Progress is logged once a minute. Consumption is conservative at handoffs: only
 observed increments are counted, and unobserved outgoing tails are omitted rather
 than estimated from track duration. The hour must remain within two seconds of
 observed consumption and end with Stop returning to Idle. This is a repeated
 recording workload, not a single hour-long track or a representative catalog test.
+Early errors also stop the player and print a final partial measurement; these
+remain failures and cannot satisfy the hour's consumption requirement.
 For externally recorded CPU/memory samples, use `packaging/Measure-MutedPlayback.ps1
 -Executable PATH_TO_MUTED_PLAYBACK -VideoId VIDEO_ID -OutputDir EXTERNAL_DIRECTORY
 -OpenMutedDefaultOutput -OneHour`. It streams samples to CSV, preserves progress
@@ -507,7 +510,16 @@ whether a failure occurred before headers or during the body. No URL, host,
 query, header value, visitor token, response content or credentials are retained
 by those events. Before-headers timing includes DNS, connection, TLS and server
 work; it cannot identify which of those caused a stall. Diagnostics are off by
-default and do not extend deadlines or retry failed requests.
+default and do not alter transport behavior.
+
+Unsigned visitor/player reads and strict audio byte ranges can reconnect once
+after a network error or stalled first attempt. The first attempt has a one-second
+budget; a fresh, unpooled connection gets only the time remaining in the original
+12-second whole-transaction deadline. Partial bodies are discarded, and the same
+request/range is replayed. HTTP rejections, invalid ranges/responses, cancellation,
+credentialed requests and optional-service/account traffic are not replayed.
+There is no automatic playback restart, URL refresh or retry-until-pass. Diagnostic
+events mark the fresh connection; measurement metadata declares this policy.
 
 ## Now playing and lyrics
 

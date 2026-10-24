@@ -22,7 +22,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source state.' }
 $record = @{
     state='starting'; requestedPlaybackSeconds=$seconds; startupBudgetSeconds=15
     recordingId=$VideoId; outputSelection='default'; playerVolume=0
-    signIn=$false; automaticRetries=$false; systemVolumeChanged=$false
+    signIn=$false; automaticPlaybackRetries=$false; systemVolumeChanged=$false
+    transportReconnectPolicy='One network-only replay for unsigned media reads within the original request deadline; no playback restart or URL refresh.'
+    httpDiagnostics=($env:OCTAVE_HTTP_DIAGNOSTICS -eq '1')
     sourceCommit=$commit; sourceDirty=$dirty
     executableSha256=(Get-FileHash -LiteralPath $Executable).Hash
     requestedAtUtc=[DateTime]::UtcNow.ToString('o')
@@ -85,6 +87,14 @@ try {
         $record.bufferingMs = [int]$Matches[4]
         $record.transitions = [int]$Matches[5]
         $record.qualityChanges = [int]$Matches[6]
+    } elseif ($out -match 'muted_probe_partial wall_seconds=([0-9.]+) consumed_delta_seconds=([0-9.]+) buffer_events=(\d+) buffering_ms=(\d+) transitions=(\d+) quality_changes=(\d+) stopped_idle=(true|false)') {
+        $record.partialWindowSeconds = [double]::Parse($Matches[1],$culture)
+        $record.partialConsumedSeconds = [double]::Parse($Matches[2],$culture)
+        $record.bufferEvents = [int]$Matches[3]
+        $record.bufferingMs = [int]$Matches[4]
+        $record.transitions = [int]$Matches[5]
+        $record.qualityChanges = [int]$Matches[6]
+        $record.stoppedIdle = $Matches[7] -eq 'true'
     }
     $record.exitCode = $process.ExitCode
     $record.wallBudgetExceeded = $timedOut
@@ -99,7 +109,7 @@ try {
     }
     $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'result.json') -Encoding utf8
     $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'run.json') -Encoding utf8
-    if (-not $record.passed) { throw "Muted playback failed without retries; see $run" }
+    if (-not $record.passed) { throw "Muted playback failed without playback retries; see $run" }
     Write-Output $out
     Write-Output "measurement=passed evidence=$run"
 } catch {

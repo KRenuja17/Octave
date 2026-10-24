@@ -12,20 +12,31 @@ pub(super) struct Trace {
     started: Instant,
     kind: &'static str,
     lane: &'static str,
+    fresh: bool,
     headers_ms: AtomicU64,
     status: AtomicU16,
     bytes: AtomicUsize,
 }
 impl Trace {
-    pub fn begin(request: &reqwest::Request, expected: Expected, lane: Lane) -> Option<Arc<Self>> {
+    pub fn begin(
+        request: &reqwest::Request,
+        expected: Expected,
+        lane: Lane,
+        fresh: bool,
+    ) -> Option<Arc<Self>> {
         // Exact opt-in only. Disabled operation adds no allocation or event output.
         if std::env::var_os("OCTAVE_HTTP_DIAGNOSTICS").as_deref() != Some(std::ffi::OsStr::new("1"))
         {
             return None;
         }
-        Some(Arc::new(Self::new(request, expected, lane)))
+        Some(Arc::new(Self::new(request, expected, lane, fresh)))
     }
-    pub(super) fn new(request: &reqwest::Request, expected: Expected, lane: Lane) -> Self {
+    pub(super) fn new(
+        request: &reqwest::Request,
+        expected: Expected,
+        lane: Lane,
+        fresh: bool,
+    ) -> Self {
         Self {
             started: Instant::now(),
             kind: if matches!(expected, Expected::Range { .. }) {
@@ -42,6 +53,7 @@ impl Trace {
                 Lane::Metadata => "metadata",
                 Lane::Optional => "optional",
             },
+            fresh,
             headers_ms: AtomicU64::new(u64::MAX),
             status: AtomicU16::new(0),
             bytes: AtomicUsize::new(0),
@@ -73,7 +85,7 @@ impl Trace {
         };
         // Only fixed tokens and numeric measurements can reach this line.
         format!(
-            "octave_http kind={} lane={} outcome={outcome} phase={phase} elapsed_ms={} headers_ms={} status={} body_bytes={}",
+            "octave_http kind={} lane={} outcome={outcome} phase={phase} elapsed_ms={} headers_ms={} status={} body_bytes={} fresh_connection={}",
             self.kind,
             self.lane,
             self.started.elapsed().as_millis(),
@@ -84,6 +96,7 @@ impl Trace {
             },
             self.status.load(Ordering::Relaxed),
             self.bytes.load(Ordering::Relaxed),
+            self.fresh,
         )
     }
     pub fn finish(&self, error: Option<Error>) {
@@ -106,7 +119,7 @@ mod tests {
             .header("Authorization", "Bearer credential")
             .build()
             .unwrap();
-        let trace = Trace::new(&request, Expected::Bytes(100), Lane::Media);
+        let trace = Trace::new(&request, Expected::Bytes(100), Lane::Media, false);
         let before = trace.line(Some(Error::Timeout));
         assert!(before.contains("kind=player lane=media outcome=timeout phase=before_headers"));
         assert!(before.contains("headers_ms=-1 status=0 body_bytes=0"));

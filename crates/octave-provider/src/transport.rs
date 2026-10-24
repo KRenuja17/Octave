@@ -10,8 +10,11 @@ use std::{
 use tokio::{runtime::Runtime, sync::Semaphore};
 mod diagnostics;
 use diagnostics::Trace;
+#[cfg(test)]
+mod recovery_tests;
 
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
+const FIRST_MEDIA_ATTEMPT: Duration = Duration::from_secs(1);
 const CANCEL_POLL: Duration = Duration::from_millis(20);
 #[derive(Clone, Copy)]
 pub(crate) enum Lane {
@@ -77,10 +80,20 @@ impl Expected {
 }
 pub(crate) struct Transport {
     pub client: Client,
+    reconnect_client: Client,
     runtime: Runtime,
     media: Arc<Semaphore>,
     metadata: Arc<Semaphore>,
     optional: Arc<Semaphore>,
+}
+struct Exchange {
+    client: Client,
+    trace: Option<Arc<Trace>>,
+}
+#[derive(Clone, Copy)]
+struct Route {
+    lane: Lane,
+    fresh: bool,
 }
 // Header access is needed only by the opt-in anonymous bootstrap investigation.
 // Production byte callers do not retain response metadata or gain a cookie jar.
@@ -109,19 +122,33 @@ impl Transport {
             .thread_name("octave-http")
             .build()
             .map_err(|_| Error::Network)?;
-        let client = {
+        let (client, reconnect_client) = {
             let _entered = runtime.enter();
-            Client::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(REQUEST_TIMEOUT)
-                .pool_max_idle_per_host(2)
-                .redirect(reqwest::redirect::Policy::none())
-                .user_agent(WEB_UA)
-                .build()
-                .map_err(network)?
+            let builder = || {
+                Client::builder()
+                    .connect_timeout(Duration::from_secs(5))
+                    .timeout(REQUEST_TIMEOUT)
+                    .retry(reqwest::retry::never())
+                    .redirect(reqwest::redirect::Policy::none())
+                    .user_agent(WEB_UA)
+            };
+            (
+                builder()
+                    .pool_max_idle_per_host(2)
+                    .build()
+                    .map_err(network)?,
+                // One shared fallback client, but no pooled socket reuse. A
+                // retry must not return to the stalled keep-alive connection.
+                builder()
+                    .http1_only()
+                    .pool_max_idle_per_host(0)
+                    .build()
+                    .map_err(network)?,
+            )
         };
         Ok(Self {
             client,
+            reconnect_client,
             runtime,
             media: Arc::new(Semaphore::new(4)),
             metadata: Arc::new(Semaphore::new(8)),
@@ -139,6 +166,66 @@ impl Transport {
         self.reply(request, expected, lane, timeout, cancelled)
             .map(|reply| reply.bytes)
     }
+    /// Only explicit unsigned visitor/player reads and strict media ranges use
+    /// this path. One network-only replay; all attempts share the original
+    /// whole-transaction deadline. No playback restart or URL refresh.
+    pub fn media_bytes(
+        &self,
+        request: Request,
+        expected: Expected,
+        timeout: Duration,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Vec<u8>, Error> {
+        let deadline = Instant::now() + timeout;
+        let can_replay = !request.headers().contains_key("authorization")
+            && !request.headers().contains_key("cookie")
+            && ((request.method() == reqwest::Method::GET
+                && matches!(expected, Expected::Range { .. }))
+                || (request.method() == reqwest::Method::POST
+                    && matches!(
+                        request.url().path(),
+                        "/youtubei/v1/visitor_id" | "/youtubei/v1/player"
+                    )));
+        if !can_replay {
+            return self.bytes(request, expected, Lane::Media, timeout, cancelled);
+        }
+        let Some(retry) = request.try_clone() else {
+            return self.bytes(request, expected, Lane::Media, timeout, cancelled);
+        };
+        let first = self.reply_on(
+            request,
+            expected,
+            Route {
+                lane: Lane::Media,
+                fresh: false,
+            },
+            deadline
+                .saturating_duration_since(Instant::now())
+                .min(FIRST_MEDIA_ATTEMPT),
+            &cancelled,
+        );
+        if !matches!(first, Err(Error::Network | Error::Timeout)) {
+            return first.map(|reply| reply.bytes);
+        }
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(Error::Timeout);
+        }
+        self.reply_on(
+            retry,
+            expected,
+            Route {
+                lane: Lane::Media,
+                fresh: true,
+            },
+            remaining,
+            cancelled,
+        )
+        .map(|reply| reply.bytes)
+    }
     pub fn reply(
         &self,
         request: Request,
@@ -147,8 +234,34 @@ impl Transport {
         timeout: Duration,
         cancelled: impl Fn() -> bool,
     ) -> Result<Reply, Error> {
-        let trace = Trace::begin(&request, expected, lane);
-        let result = self.reply_traced(request, expected, lane, timeout, cancelled, trace.clone());
+        self.reply_on(
+            request,
+            expected,
+            Route { lane, fresh: false },
+            timeout,
+            cancelled,
+        )
+    }
+    fn reply_on(
+        &self,
+        request: Request,
+        expected: Expected,
+        route: Route,
+        timeout: Duration,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Reply, Error> {
+        let Route { lane, fresh } = route;
+        let trace = Trace::begin(&request, expected, lane, fresh);
+        let exchange = Exchange {
+            client: if fresh {
+                &self.reconnect_client
+            } else {
+                &self.client
+            }
+            .clone(),
+            trace: trace.clone(),
+        };
+        let result = self.reply_traced(request, expected, lane, timeout, cancelled, exchange);
         if let Some(trace) = trace {
             trace.finish(result.as_ref().err().copied());
         }
@@ -161,7 +274,7 @@ impl Transport {
         lane: Lane,
         timeout: Duration,
         cancelled: impl Fn() -> bool,
-        trace: Option<Arc<Trace>>,
+        exchange: Exchange,
     ) -> Result<Reply, Error> {
         if cancelled() {
             return Err(Error::Cancelled);
@@ -175,7 +288,7 @@ impl Transport {
         .try_acquire_owned()
         .map_err(|_| Error::Busy)?;
         let deadline = Instant::now() + timeout;
-        let client = self.client.clone();
+        let Exchange { client, trace } = exchange;
         let (tx, rx) = mpsc::sync_channel(1);
         let task = self.runtime.spawn(async move {
             let _permit = permit;
@@ -345,7 +458,12 @@ mod tests {
                 assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
             });
             let request = transport.client.get(url).build().unwrap();
-            let trace = Arc::new(Trace::new(&request, Expected::Bytes(64), Lane::Media));
+            let trace = Arc::new(Trace::new(
+                &request,
+                Expected::Bytes(64),
+                Lane::Media,
+                false,
+            ));
             let started = Instant::now();
             let result = transport.reply_traced(
                 request,
@@ -353,7 +471,10 @@ mod tests {
                 Lane::Media,
                 Duration::from_millis(150),
                 || false,
-                Some(trace.clone()),
+                Exchange {
+                    client: transport.client.clone(),
+                    trace: Some(trace.clone()),
+                },
             );
             assert_eq!(result.unwrap_err(), Error::Timeout);
             assert!(started.elapsed() < Duration::from_secs(1));

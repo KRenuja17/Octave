@@ -1,5 +1,5 @@
 //! Explicit default-device probe: 30 seconds, or one real-time hour on repeat.
-//! Always zero player volume; no account, system setting changes or retries.
+//! Always zero player volume; no account, system changes or playback restarts.
 use octave_core::TrackId;
 use octave_player::{PlaybackState, Player};
 use std::{
@@ -41,7 +41,7 @@ impl Consumed {
 }
 
 fn run() -> Result<(), String> {
-    const USAGE: &str = "Usage: muted_playback VIDEO_ID --muted-default-output [--one-hour]\nOpens the default audio device at player volume zero. The default window is 30 seconds; --one-hour repeats the exact recording gaplessly for 3600 wall-clock seconds. No sign-in or automatic retries.";
+    const USAGE: &str = "Usage: muted_playback VIDEO_ID --muted-default-output [--one-hour]\nOpens the default audio device at player volume zero. The default window is 30 seconds; --one-hour repeats the exact recording gaplessly for 3600 wall-clock seconds. No sign-in or automatic playback restarts. Production unsigned media requests may reconnect once within their original deadline.";
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] {
         println!("{USAGE}");
@@ -77,7 +77,7 @@ fn run() -> Result<(), String> {
     let mut polled = Instant::now();
     let interval = if repeat { 60 } else { 10 };
     let mut milestone = interval;
-    loop {
+    let result = (|| loop {
         let snapshot = player.snapshot();
         let now = Instant::now();
         if buffering {
@@ -103,7 +103,7 @@ fn run() -> Result<(), String> {
                             return Err("Stream quality is missing".into());
                         }
                         println!(
-                            "playback_started startup_ms={} quality={} requested_seconds={seconds} repeat={repeat} output=default player_volume=0 sign_in=false automatic_retries=false",
+                            "playback_started startup_ms={} quality={} requested_seconds={seconds} repeat={repeat} output=default player_volume=0 sign_in=false automatic_playback_retries=false transport_reconnect=once_within_deadline",
                             requested.elapsed().as_millis(),
                             quality.unwrap()
                         );
@@ -172,7 +172,23 @@ fn run() -> Result<(), String> {
             return Err("No consumed audio within the 15-second startup budget".into());
         }
         thread::sleep(Duration::from_millis(20));
+    })();
+    if result.is_err() {
+        // Preserve a final partial measurement on terminal failures, too. It is
+        // never a pass and never replaces the original consumed-clock threshold.
+        player.stop();
+        println!(
+            "muted_probe_partial wall_seconds={:.3} consumed_delta_seconds={:.3} buffer_events={buffer_events} buffering_ms={} transitions={} quality_changes={quality_changes} stopped_idle={} output=default player_volume=0",
+            started
+                .map_or(Duration::ZERO, |start| start.elapsed())
+                .as_secs_f64(),
+            consumed.total.as_secs_f64(),
+            buffer_time.as_millis(),
+            consumed.previous.map_or(0, |(sequence, _)| sequence),
+            player.snapshot().state == PlaybackState::Idle,
+        );
     }
+    result
 }
 
 #[cfg(test)]

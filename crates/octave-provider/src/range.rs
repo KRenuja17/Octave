@@ -67,14 +67,13 @@ impl RangeReader {
             .header("Range", format!("bytes={}-{}", self.position, end))
             .build()
             .map_err(network)?;
-        let bytes = self.provider.transport.bytes(
+        let bytes = self.provider.transport.media_bytes(
             request,
             transport::Expected::Range {
                 start: self.position,
                 end,
                 total: self.length(),
             },
-            transport::Lane::Media,
             transport::REQUEST_TIMEOUT,
             || {
                 self.generation.load(Ordering::Acquire) != self.expected
