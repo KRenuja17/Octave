@@ -148,6 +148,18 @@ the host network or hardware. These checks complement the physical/live gates be
   neither installed nor executed. No runtime/dependency/license change was
   adopted. 146 offline tests and strict checks pass; production unsigned access,
   catalog acceptance and the continuous long-recording hour remain unresolved.
+  A subsequent pure-Rust attestation audit pinned eight repositories and verified
+  71 selected source files. The relevant native reCAPTCHA parser omits token
+  generation; the newer RustyPipe fork still embeds Deno/V8. Other matching
+  projects use external helpers or address unrelated bot protection. Cold-start
+  placeholders do not provide completed attestation or sustained playback proof.
+  No working native generator was identified or integrated. The conditional
+  zero-volume matrix was not triggered; no token/player request or output device
+  was used in this source-only audit. Documentation records the requirement for
+  fresh signed-out proof and real media validation before playback acceptance.
+  Production code/dependencies are unchanged; existing bot-check and long-source
+  gates remain open. Source/hash verification and diff checks passed; application
+  tests were not rerun for these documentation-only changes.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
