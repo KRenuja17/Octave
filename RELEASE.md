@@ -64,7 +64,8 @@ the host network or hardware. These checks complement the physical/live gates be
   endpoints need a real user-initiated session test; credentials stay in memory.
 - Physical media keys/tray interaction, output-device changes, actual network
   interruption, screen-reader tasks and a fresh Windows machine need acceptance.
-- One-hour playback reliability and a representative track matrix remain open.
+- One repeated-recording live hour now passes; representative catalog and
+  broader listening reliability remain open.
   A real-time hour on the default output at zero player volume completed from
   source `54d9405`, with sixteen gapless repeats of one accessible recording.
   It failed the predeclared consumption threshold: 3,580.859 seconds observed
@@ -86,7 +87,22 @@ the host network or hardware. These checks complement the physical/live gates be
   Those partial checkpoints do not establish zero buffering over the complete
   attempts or a successful live hour. Both failed results are retained; no
   timeout extension, recording substitution or retry-until-pass was used.
-  Diagnose the separate network timeout path before another acceptance run.
+  `4208617` adds one fresh-connection replay for unsigned visitor/player reads
+  and strict media ranges after Network/Timeout. A one-second initial attempt
+  and its reconnect share the original 12-second whole-transaction deadline.
+  Partial bodies are discarded. HTTP errors, invalid responses/ranges,
+  cancellation, credentials, account and optional-service traffic are not
+  replayed. Real socket fixtures verify recovery, cancellation and the shared
+  deadline; 141 offline all-target tests and strict checks pass.
+  A subsequent matched run from clean `4208617` passed: 3,600.013 seconds wall
+  time, 3,599.847 seconds conservatively observed, zero sampled buffering,
+  sixteen gapless handoffs, stable reported AAC 129 kb/s / 44.1 kHz stereo,
+  and Stop returning to Idle. It used default output at zero player volume,
+  no sign-in, no playback restarts and the unchanged two-second allowance.
+  Peak private memory was 22.72 MiB for the standalone player, excluding UI.
+  Opt-in private diagnostics recorded 489 successful HTTP transactions and no
+  reconnect attempts. The earlier remote timeout cause remains unproven; this
+  healthy hour did not exercise recovery, which is covered by socket fixtures.
   A single hour-long recording, broader access and physical sound/lyric latency
   remain unverified.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
