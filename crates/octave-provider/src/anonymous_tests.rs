@@ -15,6 +15,9 @@ const GUEST_NAMES: &[&str] = &[
     "PREF",
     "SOCS",
 ];
+// Upstream client metadata added in yt-dlp commit 817450d (#17723). This
+// diagnostic does not import/run its extractor, scripts or token providers.
+const TV_SAMSUNG_UA: &str = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1";
 fn valid_visitor(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 2048
@@ -690,7 +693,17 @@ fn page_cohort(
         .transport
         .client
         .get(format!("https://{host}/?hl=en"))
-        .header("User-Agent", ua)
+        // The TV UA redirects the public homepage (302). Obtain guest state
+        // from the standard Web page, then use the TV UA consistently in the
+        // player header/body. Do not follow/submit a consent or login redirect.
+        .header(
+            "User-Agent",
+            if profile == "guest_tv_samsung" {
+                WEB_UA
+            } else {
+                ua
+            },
+        )
         .header("Accept", "text/html")
         .header("Accept-Encoding", "identity")
         .header("Accept-Language", "en-US,en;q=0.9")
@@ -746,6 +759,12 @@ fn page_cohort(
                 json!({"client":{"clientName":"VISIONOS","clientVersion":"1.02","deviceMake":"Apple","deviceModel":"RealityDevice17,1","osName":"visionOS","osVersion":"26.5.23O471","hl":"en","visitorData":config.visitor.expose()}}),
                 "101",
                 "1.02",
+            )
+        } else if profile == "guest_tv_samsung" {
+            (
+                json!({"client":{"clientName":"TVHTML5","clientVersion":"5.20260707","deviceMake":"Samsung","deviceModel":"UKS9800","osName":"Tizen","osVersion":"2.4.0","hl":"en","visitorData":config.visitor.expose()}}),
+                "7",
+                "5.20260707",
             )
         } else {
             (
@@ -901,6 +920,30 @@ fn live_anonymous_page_bootstrap() {
             budget,
         );
     }
+}
+
+#[test]
+#[ignore = "Explicit bounded TV guest comparison, including long recordings; no audio/sign-in"]
+fn live_anonymous_tv_compatibility() {
+    // Fixed before outcomes: a Topic, two official videos, two long publisher
+    // recordings and the control. Exactly one guest session; never
+    // rotate/rebootstrap after a denial, substitute a recording or solve a
+    // challenge. An OK harness means completion, not accepted audio playback.
+    page_cohort(
+        "www.youtube.com",
+        "guest_tv_samsung",
+        TV_SAMSUNG_UA,
+        &[
+            "hpSrLjc5SMs",
+            "fJ9rUzIMcZQ",
+            "kJQP7kiw5Fk",
+            "u6LLP7kTbJ0",
+            "yBmcoLAFlAQ",
+            "dQw4w9WgXcQ",
+        ],
+        Instant::now(),
+        Duration::from_secs(90),
+    );
 }
 
 #[test]

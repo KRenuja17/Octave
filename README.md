@@ -443,6 +443,18 @@ contains match flags. Both stayed matched after a server visitor-data update,
 while the Topic remained blocked. The test uses the already-locked Rust base64
 crate as a dev dependency; no new production dependency or crate version is added.
 
+`cargo test -p octave-provider --locked
+anonymous_tests::live_anonymous_tv_compatibility -- --ignored --exact --nocapture`
+checks a newer TVHTML5/Samsung client description against the same Topic, two
+official videos, two long recordings and control, within 90 seconds. A standard
+Web page supplies server-issued guest state; the TV header/body use matching
+client metadata and User-Agent. No redirects or consent actions are followed.
+The 24 October check left all five previously blocked recordings at bot
+verification with no formats; the TV control was unplayable. A contemporary
+visionOS cohort still offered AAC only for the control. No TV fallback was
+promoted. Safe summaries include DRM audio counts without license data, service
+text or URLs. Completion of this metadata diagnostic is not a playback pass.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this

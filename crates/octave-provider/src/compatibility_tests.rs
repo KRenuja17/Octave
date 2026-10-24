@@ -55,6 +55,7 @@ pub(super) fn summary(id: &TrackId, value: &Value) -> Value {
         "status": status, "reasonCategory": category,
         "directAudio": formats.iter().filter(audio).filter(|v| v["url"].is_string()).count(),
         "cipheredAudio": formats.iter().filter(audio).filter(|v| v["signatureCipher"].is_string() || v["cipher"].is_string()).count(),
+        "drmAudio": formats.iter().filter(audio).filter(|v| v["drmFamilies"].as_array().is_some_and(|values| !values.is_empty())).count(),
         "hls": value.pointer("/streamingData/hlsManifestUrl").is_some(),
         "dash": value.pointer("/streamingData/dashManifestUrl").is_some(),
         "sabr": value.pointer("/streamingData/serverAbrStreamingUrl").is_some(),
@@ -74,6 +75,25 @@ fn compatibility_summary_never_exposes_service_text_or_media_urls() {
     assert_eq!(result["reasonCategory"], "bot_check");
     assert_eq!(result["cipheredAudio"], 1);
     assert_eq!(result["resolver"], "BotCheckRequired");
+    assert!(!result.to_string().contains("secret"));
+    assert!(!result.to_string().contains("https"));
+}
+
+#[test]
+fn compatibility_summary_counts_drm_without_exposing_license_data() {
+    let id = TrackId("abcdefghijk".into());
+    let value = json!({"playabilityStatus":{"status":"OK"},
+    "streamingData":{"licenseInfos":[{"licenseUrl":"https://secret.invalid/license"}],
+    "adaptiveFormats":[
+        {"mimeType":"audio/mp4", "drmFamilies":["secret"], "signatureCipher":"secret"},
+        {"mimeType":"audio/webm", "drmFamilies":[]},
+        {"mimeType":"video/mp4", "drmFamilies":["secret"]}
+    ]}});
+    let result = summary(&id, &value);
+    assert_eq!(result["drmAudio"], 1);
+    assert_eq!(result["cipheredAudio"], 1);
+    assert_eq!(result["directAudio"], 0);
+    assert_eq!(result["resolver"], "UnsupportedStream");
     assert!(!result.to_string().contains("secret"));
     assert!(!result.to_string().contains("https"));
 }
