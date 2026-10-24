@@ -133,6 +133,21 @@ the host network or hardware. These checks complement the physical/live gates be
   remains distinct from network failure. No long hour could start, no recording
   was substituted, and catalog/long-source acceptance stays open. Diagnostic
   fixtures bring validation to 145 offline tests with strict Clippy/format checks.
+  Further test-only investigation at `97e3d2e` compared ordinary content
+  acknowledgement fields and HTML5 playback context against matched minimal
+  visionOS requests. All fifteen requests for five blocked references still
+  returned bot checks with zero audio formats; three control responses offered
+  AAC. Both long references stayed blocked under all three variants. Public
+  embed pages provided logged-out configuration but no supported inline player
+  shape; those initial parser observations remain separate. Six follow-up
+  embedded-player requests using page-supplied context/host flags returned
+  Unavailable/ERROR with no audio, including the control. No fabricated embed
+  host or script execution was used. No working path emerged, so the requested
+  conditional playback matrix was not rerun and no output device was opened.
+  The audited rustypipe-botguard 0.1.2 helper embeds Deno/V8 JavaScript; it was
+  neither installed nor executed. No runtime/dependency/license change was
+  adopted. 146 offline tests and strict checks pass; production unsigned access,
+  catalog acceptance and the continuous long-recording hour remain unresolved.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
