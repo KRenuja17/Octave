@@ -8,6 +8,8 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::{runtime::Runtime, sync::Semaphore};
+mod diagnostics;
+use diagnostics::Trace;
 
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const CANCEL_POLL: Duration = Duration::from_millis(20);
@@ -145,6 +147,22 @@ impl Transport {
         timeout: Duration,
         cancelled: impl Fn() -> bool,
     ) -> Result<Reply, Error> {
+        let trace = Trace::begin(&request, expected, lane);
+        let result = self.reply_traced(request, expected, lane, timeout, cancelled, trace.clone());
+        if let Some(trace) = trace {
+            trace.finish(result.as_ref().err().copied());
+        }
+        result
+    }
+    fn reply_traced(
+        &self,
+        request: Request,
+        expected: Expected,
+        lane: Lane,
+        timeout: Duration,
+        cancelled: impl Fn() -> bool,
+        trace: Option<Arc<Trace>>,
+    ) -> Result<Reply, Error> {
         if cancelled() {
             return Err(Error::Cancelled);
         }
@@ -163,6 +181,9 @@ impl Transport {
             let _permit = permit;
             let result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
                 let mut response = client.execute(request).await.map_err(network)?;
+                if let Some(trace) = &trace {
+                    trace.headers(response.status().as_u16());
+                }
                 expected.validate(&response)?;
                 #[cfg(test)]
                 let headers = {
@@ -189,6 +210,9 @@ impl Transport {
                         bytes.reserve_exact(capacity - bytes.len());
                     }
                     bytes.extend_from_slice(&chunk);
+                    if let Some(trace) = &trace {
+                        trace.body(bytes.len());
+                    }
                 }
                 if matches!(expected, Expected::Range { .. }) && bytes.len() != expected.limit() {
                     return Err(Error::InvalidRange);
@@ -303,6 +327,45 @@ mod tests {
                 b"OK"
             );
             task.join().unwrap();
+        }
+    }
+    #[test]
+    fn traced_deadlines_identify_stalled_headers_and_body_without_extending_budget() {
+        let transport = Transport::new().unwrap();
+        for body in [false, true] {
+            let (url, server) = server(move |mut socket| {
+                if body {
+                    socket
+                        .write_all(
+                            b"HTTP/1.1 200 OK\r\nContent-Length: 64\r\nConnection: close\r\n\r\nx",
+                        )
+                        .unwrap();
+                }
+                // Deadline aborts the pending socket in both phases.
+                assert_eq!(socket.read(&mut [0; 1]).unwrap(), 0);
+            });
+            let request = transport.client.get(url).build().unwrap();
+            let trace = Arc::new(Trace::new(&request, Expected::Bytes(64), Lane::Media));
+            let started = Instant::now();
+            let result = transport.reply_traced(
+                request,
+                Expected::Bytes(64),
+                Lane::Media,
+                Duration::from_millis(150),
+                || false,
+                Some(trace.clone()),
+            );
+            assert_eq!(result.unwrap_err(), Error::Timeout);
+            assert!(started.elapsed() < Duration::from_secs(1));
+            let line = trace.line(Some(Error::Timeout));
+            if body {
+                assert!(line.contains("phase=body"), "{line}");
+                assert!(line.contains("status=200 body_bytes=1"), "{line}");
+            } else {
+                assert!(line.contains("phase=before_headers"), "{line}");
+                assert!(line.contains("status=0 body_bytes=0"), "{line}");
+            }
+            server.join().unwrap();
         }
     }
     #[test]

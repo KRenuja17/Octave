@@ -500,6 +500,15 @@ For externally recorded CPU/memory samples, use `packaging/Measure-MutedPlayback
 and final results beside sanitized logs, and enforces an outer startup/cleanup
 budget. Both the script and Rust executable require explicit device opt-in.
 
+For a bounded transport investigation, set `OCTAVE_HTTP_DIAGNOSTICS=1` only in
+the probe process's environment. At most 2,048 stderr events report a fixed
+request category, lane, elapsed/header timing, status, accepted byte count and
+whether a failure occurred before headers or during the body. No URL, host,
+query, header value, visitor token, response content or credentials are retained
+by those events. Before-headers timing includes DNS, connection, TLS and server
+work; it cannot identify which of those caused a stall. Diagnostics are off by
+default and do not extend deadlines or retry failed requests.
+
 ## Now playing and lyrics
 
 Use **Now playing** in the bottom player for larger artwork and song details.
