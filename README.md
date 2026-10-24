@@ -455,6 +455,24 @@ visionOS cohort still offered AAC only for the control. No TV fallback was
 promoted. Safe summaries include DRM audio counts without license data, service
 text or URLs. Completion of this metadata diagnostic is not a playback pass.
 
+`compatibility_tests::live_unsigned_playback_context_compatibility` uses the same
+test command pattern for a 150-second payload comparison: matched minimal
+visionOS, content acknowledgement fields, then HTML5 playback context, across
+five blocked references (including both long sources) and the control. One
+server-issued visitor stays in memory; validated server updates stay coherent
+in header/body. All 15 requests for blocked references still returned bot checks;
+the three control responses offered AAC. No payload variant was promoted.
+
+`anonymous_tests::live_anonymous_embed_bootstrap` separately checks six public
+embed configurations and their player responses within 180 seconds. It uses
+the page's validated logged-out embedded-client context, bounded server-supplied
+host flags, scoped guest cookies and optional literal timestamp. It fetches no
+scripts and adds no third-party embed host. All six tested player responses were
+Unavailable/ERROR with zero audio formats. Initial page-only parser observations
+are retained separately in external research. Neither diagnostic opens a decoder
+or audio device; no working approach emerged to trigger another playback matrix.
+These experiments and their safe format counts remain test-only.
+
 Windows x64 is the initial target. Octave is MIT licensed. Third-party distribution
 obligations and any JavaScript resolver remain decisions to settle before release.
 Research, planning, benchmarks, toolchains and scratch files belong outside this

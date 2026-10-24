@@ -53,6 +53,7 @@ pub(super) fn summary(id: &TrackId, value: &Value) -> Value {
     };
     json!({
         "status": status, "reasonCategory": category,
+        "audioFormats": formats.iter().filter(audio).count(),
         "directAudio": formats.iter().filter(audio).filter(|v| v["url"].is_string()).count(),
         "cipheredAudio": formats.iter().filter(audio).filter(|v| v["signatureCipher"].is_string() || v["cipher"].is_string()).count(),
         "drmAudio": formats.iter().filter(audio).filter(|v| v["drmFamilies"].as_array().is_some_and(|values| !values.is_empty())).count(),
@@ -91,11 +92,144 @@ fn compatibility_summary_counts_drm_without_exposing_license_data() {
     ]}});
     let result = summary(&id, &value);
     assert_eq!(result["drmAudio"], 1);
+    assert_eq!(result["audioFormats"], 2);
     assert_eq!(result["cipheredAudio"], 1);
     assert_eq!(result["directAudio"], 0);
     assert_eq!(result["resolver"], "UnsupportedStream");
     assert!(!result.to_string().contains("secret"));
     assert!(!result.to_string().contains("https"));
+}
+
+#[test]
+#[ignore = "Explicit unsigned playback-context comparison; no sign-in, scripts, decoder or device"]
+fn live_unsigned_playback_context_compatibility() {
+    let started = Instant::now();
+    let budget = Duration::from_secs(150);
+    let mut completed = 0;
+    let mut improved = 0;
+    let result = (|| -> Result<(), Error> {
+        let provider = Provider::new()?;
+        let bootstrap = provider.post(
+            "https://www.youtube.com/youtubei/v1/visitor_id?prettyPrint=false",
+            json!({"context":{"client":{"clientName":"WEB","clientVersion":"2.20260707.00.00","hl":"en"}}}),
+            "1", "2.20260707.00.00", WEB_UA,
+        )?;
+        let initial = bootstrap
+            .pointer("/responseContext/visitorData")
+            .and_then(Value::as_str)
+            .filter(|text| super::anonymous_tests::valid_visitor(text))
+            .ok_or(Error::InvalidResponse)?;
+        let mut visitor = Sensitive::new(initial.to_owned());
+        // Frozen before live calls: five blocked references (including both
+        // long sources), then the control. Each variant changes only payload
+        // acknowledgements/context, not identity, country, transport or client.
+        for raw_id in [
+            "hpSrLjc5SMs",
+            "fJ9rUzIMcZQ",
+            "kJQP7kiw5Fk",
+            "u6LLP7kTbJ0",
+            "yBmcoLAFlAQ",
+            "dQw4w9WgXcQ",
+        ] {
+            for variant in ["matched_minimal", "content_acknowledged", "html5_context"] {
+                let remaining = budget.saturating_sub(started.elapsed());
+                if remaining.is_zero() {
+                    return Err(Error::Timeout);
+                }
+                let mut body = json!({"context":{"client":{
+                    "clientName":"VISIONOS","clientVersion":"1.02",
+                    "deviceMake":"Apple","deviceModel":"RealityDevice17,1",
+                    "osName":"visionOS","osVersion":"26.5.23O471","hl":"en",
+                    "userAgent":PLAYER_UA,"visitorData":visitor.expose()
+                }},"videoId":raw_id});
+                if variant != "matched_minimal" {
+                    body["contentCheckOk"] = true.into();
+                    body["racyCheckOk"] = true.into();
+                }
+                if variant == "html5_context" {
+                    body["playbackContext"] = json!({"contentPlaybackContext":{
+                        "html5Preference":"HTML5_PREF_WANTS"
+                    }});
+                }
+                let mut request = provider.post_request(
+                    "https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    body,
+                    "101",
+                    "1.02",
+                    PLAYER_UA,
+                )?;
+                request.headers_mut().insert(
+                    reqwest::header::ORIGIN,
+                    reqwest::header::HeaderValue::from_static("https://www.youtube.com"),
+                );
+                let attempt = Instant::now();
+                // Single attempt: even transient failures are retained, never
+                // retried. No account state, page scripts or output device.
+                let response = provider
+                    .transport
+                    .bytes(
+                        request,
+                        transport::Expected::Bytes(JSON_LIMIT as usize),
+                        transport::Lane::Media,
+                        transport::REQUEST_TIMEOUT.min(remaining),
+                        || false,
+                    )
+                    .and_then(|bytes| {
+                        serde_json::from_slice::<Value>(&bytes).map_err(|_| Error::InvalidResponse)
+                    });
+                let observation = match response {
+                    Ok(value) => {
+                        if value
+                            .pointer("/responseContext/mainAppWebResponseContext/loggedOut")
+                            .and_then(Value::as_bool)
+                            == Some(false)
+                        {
+                            return Err(Error::InvalidResponse);
+                        }
+                        let mut observation = summary(&TrackId(raw_id.into()), &value);
+                        let mut updated = false;
+                        if let Some(next) = value
+                            .pointer("/responseContext/visitorData")
+                            .and_then(Value::as_str)
+                        {
+                            if !super::anonymous_tests::valid_visitor(next) {
+                                return Err(Error::InvalidResponse);
+                            }
+                            updated = next != visitor.expose();
+                            visitor = Sensitive::new(next.to_owned());
+                        }
+                        observation["visitorUpdated"] = updated.into();
+                        if raw_id != "dQw4w9WgXcQ" && observation["resolver"] == "direct_aac" {
+                            improved += 1;
+                        }
+                        observation
+                    }
+                    Err(error) => json!({"error":format!("{error:?}")}),
+                };
+                completed += 1;
+                println!(
+                    "playback_context={}",
+                    json!({"videoId":raw_id,"variant":variant,
+                    "elapsedMs":attempt.elapsed().as_millis(),"result":observation})
+                );
+                if completed < 18 {
+                    std::thread::sleep(Duration::from_secs(1));
+                }
+            }
+        }
+        Ok(())
+    })();
+    println!(
+        "playback_context_complete={}",
+        json!({"planned":18,"completed":completed,
+        "complete":result.is_ok() && completed == 18,"newDirectAacResponses":improved,
+        "audioDeviceOpened":false,"elapsedMs":started.elapsed().as_millis(),
+        "error":result.err().map(|error|format!("{error:?}"))})
+    );
+    assert!(
+        result.is_ok(),
+        "Unsigned playback-context experiment did not complete"
+    );
 }
 
 #[test]

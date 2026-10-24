@@ -18,7 +18,7 @@ const GUEST_NAMES: &[&str] = &[
 // Upstream client metadata added in yt-dlp commit 817450d (#17723). This
 // diagnostic does not import/run its extractor, scripts or token providers.
 const TV_SAMSUNG_UA: &str = "Mozilla/5.0 (SMART-TV; Linux; Tizen 2.4.0) AppleWebKit/538.1 (KHTML, like Gecko) Version/2.4.0 TV Safari/538.1";
-fn valid_visitor(text: &str) -> bool {
+pub(super) fn valid_visitor(text: &str) -> bool {
     !text.is_empty()
         && text.len() <= 2048
         && text
@@ -228,6 +228,7 @@ fn config_shape(page: &str) -> Value {
     {
         Some("WEB") => "web",
         Some("WEB_REMIX") => "web_remix",
+        Some("WEB_EMBEDDED_PLAYER") => "web_embedded",
         Some(_) => "other",
         None => "missing",
     };
@@ -239,6 +240,14 @@ fn config_shape(page: &str) -> Value {
 }
 impl GuestConfig {
     fn parse(page: &str, host: &str) -> Result<Self, Error> {
+        let (name, client_id) = match host {
+            "www.youtube.com" => ("WEB", "1"),
+            "music.youtube.com" => ("WEB_REMIX", "67"),
+            _ => return Err(Error::InvalidResponse),
+        };
+        Self::parse_expected(page, name, client_id)
+    }
+    fn parse_expected(page: &str, name: &str, client_id: &'static str) -> Result<Self, Error> {
         let mut config = serde_json::Map::new();
         for mut object in
             page_objects(page, "ytcfg.set", b'(').map_err(|_| Error::InvalidResponse)?
@@ -264,11 +273,6 @@ impl GuestConfig {
         if context.to_string().len() > 64 * 1024 {
             return Err(Error::InvalidResponse);
         }
-        let (name, client_id) = match host {
-            "www.youtube.com" => ("WEB", "1"),
-            "music.youtube.com" => ("WEB_REMIX", "67"),
-            _ => return Err(Error::InvalidResponse),
-        };
         if context
             .pointer("/client/clientName")
             .and_then(Value::as_str)
@@ -1044,6 +1048,161 @@ fn inline_watch_player_is_data_only_and_must_match_the_requested_recording() {
         assert!(!result.to_string().contains("secret"));
     }
     assert!(inline_player("<script>var ytInitialPlayerResponse = {\"playabilityStatus\":{\"status\":\"OK\"},\"videoDetails\":{\"videoId\":\"wrong-id\"}};</script>", &id).is_err());
+}
+
+#[test]
+fn embedded_context_rejects_foreign_clients_and_oversized_server_flags() {
+    let page = r#"<script>ytcfg.set({"LOGGED_IN":false,"INNERTUBE_CONTEXT_CLIENT_NAME":56,"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB_EMBEDDED_PLAYER","clientVersion":"2.20261024","visitorData":"secret"}},"WEB_PLAYER_CONTEXT_CONFIGS":{"WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER":{"encryptedHostFlags":"private"}},"STS":24000});</script>"#;
+    let config = GuestConfig::parse_expected(page, "WEB_EMBEDDED_PLAYER", "56").unwrap();
+    assert!(config.logged_out_declared);
+    let context = embedded_playback_context(page).unwrap();
+    assert_eq!(
+        context
+            .expose()
+            .pointer("/contentPlaybackContext/encryptedHostFlags"),
+        Some(&json!("private"))
+    );
+    assert_eq!(
+        context
+            .expose()
+            .pointer("/contentPlaybackContext/signatureTimestamp"),
+        Some(&json!(24000))
+    );
+    assert!(!format!("{config:?} {context:?}").contains("private"));
+    for invalid in [
+        page.replace("false", "true"),
+        page.replace("WEB_EMBEDDED_PLAYER", "WEB"),
+        page.replace(":56", ":1"),
+    ] {
+        assert!(GuestConfig::parse_expected(&invalid, "WEB_EMBEDDED_PLAYER", "56").is_err());
+    }
+    assert!(embedded_playback_context(&page.replace("private", &"x".repeat(16385))).is_err());
+}
+
+fn embedded_playback_context(page: &str) -> Result<Sensitive<Value>, Error> {
+    let mut context = json!({"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}});
+    for config in page_objects(page, "ytcfg.set", b'(').map_err(|_| Error::InvalidResponse)? {
+        if let Some(flags) = config.pointer("/WEB_PLAYER_CONTEXT_CONFIGS/WEB_PLAYER_CONTEXT_CONFIG_ID_EMBEDDED_PLAYER/encryptedHostFlags") {
+            let flags = flags.as_str().filter(|s| s.len() <= 16384).ok_or(Error::InvalidResponse)?;
+            context["contentPlaybackContext"]["encryptedHostFlags"] = flags.into();
+        }
+        if let Some(sts) = config
+            .get("STS")
+            .and_then(Value::as_u64)
+            .filter(|n| (1000..=1_000_000).contains(n))
+        {
+            context["contentPlaybackContext"]["signatureTimestamp"] = sts.into();
+        }
+    }
+    Ok(Sensitive::new(context))
+}
+
+#[test]
+#[ignore = "Explicit six-recording public embed configuration/player check; no scripts, sign-in or audio"]
+fn live_anonymous_embed_bootstrap() {
+    let provider = Provider::new().unwrap();
+    let started = Instant::now();
+    let budget = Duration::from_secs(180);
+    let mut cookies = GuestCookies::new("www.youtube.com");
+    let mut completed = 0;
+    for raw_id in [
+        "hpSrLjc5SMs",
+        "fJ9rUzIMcZQ",
+        "kJQP7kiw5Fk",
+        "u6LLP7kTbJ0",
+        "yBmcoLAFlAQ",
+        "dQw4w9WgXcQ",
+    ] {
+        let remaining = budget.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        let mut request = provider
+            .transport
+            .client
+            .get(format!("https://www.youtube.com/embed/{raw_id}?html5=1"))
+            .header("User-Agent", WEB_UA)
+            .header("Accept", "text/html")
+            .header("Accept-Encoding", "identity")
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .build()
+            .unwrap();
+        if let Some(cookie) = cookies.header(request.url(), SystemTime::now()).unwrap() {
+            request.headers_mut().insert(COOKIE, cookie);
+        }
+        let attempt = Instant::now();
+        let result = (|| -> Result<Value, Error> {
+            let reply = provider.transport.reply(
+                request,
+                transport::Expected::Bytes(PAGE_LIMIT),
+                transport::Lane::Metadata,
+                transport::REQUEST_TIMEOUT.min(remaining),
+                || false,
+            )?;
+            cookies.update(&reply.headers, SystemTime::now())?;
+            let page = std::str::from_utf8(&reply.bytes).map_err(|_| Error::InvalidResponse)?;
+            let mut config = GuestConfig::parse_expected(page, "WEB_EMBEDDED_PLAYER", "56")?;
+            if !config.logged_out_declared {
+                return Err(Error::InvalidResponse);
+            }
+            let playback = embedded_playback_context(page)?;
+            let flags = playback
+                .expose()
+                .pointer("/contentPlaybackContext/encryptedHostFlags")
+                .is_some();
+            let sts = playback
+                .expose()
+                .pointer("/contentPlaybackContext/signatureTimestamp")
+                .is_some();
+            let mut context = config.context.expose().clone();
+            context["client"]["userAgent"] = WEB_UA.into();
+            let mut request = provider.post_request("https://www.youtube.com/youtubei/v1/player?prettyPrint=false",
+                    json!({"context":context,"videoId":raw_id,"playbackContext":playback.expose(),"contentCheckOk":true,"racyCheckOk":true}),
+                    "56", &config.version, WEB_UA)?;
+            request.headers_mut().insert(
+                reqwest::header::ORIGIN,
+                HeaderValue::from_static("https://www.youtube.com"),
+            );
+            if let Some(cookie) = cookies.header(request.url(), SystemTime::now())? {
+                request.headers_mut().insert(COOKIE, cookie);
+            }
+            let remaining = budget.saturating_sub(started.elapsed());
+            if remaining.is_zero() {
+                return Err(Error::Timeout);
+            }
+            let response = provider.transport.reply(
+                request,
+                transport::Expected::Bytes(JSON_LIMIT as usize),
+                transport::Lane::Media,
+                transport::REQUEST_TIMEOUT.min(remaining),
+                || false,
+            )?;
+            let value: Value =
+                serde_json::from_slice(&response.bytes).map_err(|_| Error::InvalidResponse)?;
+            let updated = config.accept_response(&value)?;
+            cookies.update(&response.headers, SystemTime::now())?;
+            Ok(
+                json!({"pageBytes":page.len(),"loggedOutDeclared":true,"serverFlagsPresent":flags,
+                    "serverTimestampPresent":sts,"visitorUpdated":updated,
+                    "result":super::compatibility_tests::summary(&TrackId(raw_id.into()), &value)}),
+            )
+        })();
+        let observation = result.unwrap_or_else(|error| json!({"error":format!("{error:?}")}));
+        completed += 1;
+        println!(
+            "embed_observation={}",
+            json!({"videoId":raw_id,"elapsedMs":attempt.elapsed().as_millis(),"observation":observation})
+        );
+        if completed < 6 {
+            std::thread::sleep(Duration::from_secs(1));
+        }
+    }
+    println!(
+        "embed_complete={}",
+        json!({"planned":6,"completed":completed,"complete":completed==6,
+        "audioDeviceOpened":false,"elapsedMs":started.elapsed().as_millis()})
+    );
+    assert_eq!(completed, 6, "Public embed observation did not complete");
 }
 
 #[test]
