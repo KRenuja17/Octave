@@ -115,6 +115,24 @@ the host network or hardware. These checks complement the physical/live gates be
   playback were not tested by the short seek windows.
   A single hour-long recording, broader access and physical sound/lyric latency
   remain unverified.
+  A subsequent Rust-only investigation tested the newer TVHTML5/Samsung device
+  description with bounded, memory-only public guest state. It did not unlock
+  any of five blocked references, including both long recordings. Its initial
+  homepage redirect is retained; one Web-bootstrap/TV-player follow-up completed
+  without following redirects or submitting consent/challenges. No TV fallback
+  or production access fix was adopted. A fresh visionOS comparison still
+  offered direct AAC only for the control. These are metadata observations,
+  not accepted playback or proof of an exact missing attestation token.
+  A second run of the unchanged 13-row matrix from clean `1ea6798` completed
+  with the same twelve BotCheckRequired results, including both long sources.
+  The control passed three default-output, zero-volume 30s windows at offsets
+  0/106/178s: 90.021s total wall time, stable AAC quality and Stop-to-Idle.
+  Start/late each reported one 20ms buffering event; middle reported none.
+  The original consumption allowance passed, but this is not zero buffering.
+  All 89 HTTP transactions succeeded, with no reconnect; service access denial
+  remains distinct from network failure. No long hour could start, no recording
+  was substituted, and catalog/long-source acceptance stays open. Diagnostic
+  fixtures bring validation to 145 offline tests with strict Clippy/format checks.
   The silent accelerated pipeline workload now uses the maximum 12-second tail;
   a separate output-queue fixture verifies the full 12-second Standard overlap.
   These generated checks do not establish an hour of live AAC playback. A bounded
