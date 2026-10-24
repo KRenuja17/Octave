@@ -32,6 +32,16 @@ fn run() -> Result<(), String> {
     let stream = provider
         .resolve(&TrackId(id.clone()))
         .map_err(|e| format!("resolve_error={e:?}: {e}"))?;
+    if args.iter().any(|arg| arg == "--inspect") {
+        // Resolver metadata only: no decoder, PCM, player or output device.
+        println!(
+            "stream_inspection=passed duration_seconds={} content_bytes={} bitrate_bps={}",
+            stream.duration.as_secs(),
+            stream.content_length,
+            stream.bitrate_bps.unwrap_or(0)
+        );
+        return Ok(());
+    }
     let length = stream.content_length;
     let duration = stream.duration;
     let reader = RangeReader::new(provider, stream, Arc::new(AtomicU64::new(1)), 1);

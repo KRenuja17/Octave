@@ -3,10 +3,14 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_-]{11}$')][string]$VideoId,
     [Parameter(Mandatory)][string]$OutputDir,
     [switch]$OpenMutedDefaultOutput,
-    [switch]$OneHour
+    [switch]$OneHour,
+    [switch]$SingleHour,
+    [ValidateRange(0,86400)][int]$OffsetSeconds=0
 )
 $ErrorActionPreference = 'Stop'
 if (-not $OpenMutedDefaultOutput) { throw 'Explicit -OpenMutedDefaultOutput is required before opening an audio device.' }
+if ($OneHour -and $SingleHour) { throw 'Choose either repeated or single-recording hour.' }
+if (($OneHour -or $SingleHour) -and $OffsetSeconds -ne 0) { throw 'Hour probes start at zero; offsets apply only to short windows.' }
 $repo = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
 $output = [IO.Path]::GetFullPath($OutputDir)
 if ($output -eq $repo -or $output.StartsWith($repo + '\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Measurements must be outside the repository.' }
@@ -14,7 +18,7 @@ $run = Join-Path $output ('probe-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $run -Force | Out-Null
 $stdout = Join-Path $run 'stdout.txt'
 $stderr = Join-Path $run 'stderr.txt'
-$seconds = if ($OneHour) { 3600 } else { 30 }
+$seconds = if ($OneHour -or $SingleHour) { 3600 } else { 30 }
 $commit = git -C $repo rev-parse HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source commit.' }
 $dirty = [bool](git -C $repo status --porcelain)
@@ -22,17 +26,21 @@ if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source state.' }
 $record = @{
     state='starting'; requestedPlaybackSeconds=$seconds; startupBudgetSeconds=15
     recordingId=$VideoId; outputSelection='default'; playerVolume=0
+    repeat=[bool]$OneHour; offsetSeconds=$OffsetSeconds
+    workload=if ($OneHour) {'repeated recording hour'} elseif ($SingleHour) {'single recording hour'} else {'single recording sample'}
     signIn=$false; automaticPlaybackRetries=$false; systemVolumeChanged=$false
     transportReconnectPolicy='One network-only replay for unsigned media reads within the original request deadline; no playback restart or URL refresh.'
     httpDiagnostics=($env:OCTAVE_HTTP_DIAGNOSTICS -eq '1')
     sourceCommit=$commit; sourceDirty=$dirty
     executableSha256=(Get-FileHash -LiteralPath $Executable).Hash
     requestedAtUtc=[DateTime]::UtcNow.ToString('o')
-    caveat='Real-time repeated-recording workload through production preparation and gapless joins. Observed consumption omits unobserved outgoing tails. No audible quality, speaker/lyric latency, other-device, single-long-recording, representative-catalog, UI or account/Premium acceptance. CPU is normalized across logical processors; memory samples belong to the standalone player process.'
+    caveat='Real-time explicitly selected window. Only -OneHour repeats gaplessly; -SingleHour never repeats. Observed consumption omits unobserved outgoing tails. No full-recording EOF, audible quality, speaker/lyric latency, other-device, catalog-wide, UI or account/Premium acceptance. CPU is normalized across logical processors; memory belongs to the standalone player process.'
 }
 $record | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $run 'run.json') -Encoding utf8
 $arguments = @($VideoId,'--muted-default-output')
 if ($OneHour) { $arguments += '--one-hour' }
+elseif ($SingleHour) { $arguments += '--single-hour' }
+elseif ($OffsetSeconds -ne 0) { $arguments += "--offset-seconds=$OffsetSeconds" }
 $process = $null
 $writer = $null
 $samples = [Collections.Generic.List[object]]::new()

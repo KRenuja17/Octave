@@ -521,6 +521,29 @@ credentialed requests and optional-service/account traffic are not replayed.
 There is no automatic playback restart, URL refresh or retry-until-pass. Diagnostic
 events mark the fresh connection; measurement metadata declares this policy.
 
+For a non-repeating long-recording hour, use `--single-hour` instead of
+`--one-hour`, or `-SingleHour` with `Measure-MutedPlayback.ps1`. The source must
+have at least 3,602 seconds remaining. No next track is prepared and any sequence
+change fails. `--offset-seconds=N` (script: `-OffsetSeconds N`) selects a 30-second
+window after a seek; the seek position is excluded from consumed audio, and the
+clock must advance beyond it before the window starts. Offsets cannot be combined
+with either hour mode. Startup and consumption allowances are unchanged.
+
+`decode VIDEO_ID --inspect` reports only resolver duration/length/bitrate without
+a decoder or output device. `packaging/Measure-PlaybackMatrix.ps1` accepts
+`-PlaybackExecutable`, `-InspectorExecutable`, `-Manifest`, `-OutputDir` and explicit
+`-OpenMutedDefaultOutput`. Keep the predeclared JSON manifest and evidence outside
+the repository. Each row has a unique `videoId`, `category` and `role` (`sample` or
+`long`). The runner inspects each row once, retains access failures, and samples
+30 seconds at the start, middle and near the end of accessible recordings. It
+stops a row after failure. The first accessible `long` row of at least 3,660
+seconds gets one continuous non-repeating hour, with no switch after selection.
+The overall budget is 90 minutes. A completed investigation with blocked entries
+is not accepted catalog compatibility. Tail samples stop before EOF; neither
+those samples nor an hour of a longer recording establish full-recording playback
+or audible/physical quality. The runner requires clean committed source and keeps
+per-stage raw logs, process samples, failures and executable/manifest provenance.
+
 ## Now playing and lyrics
 
 Use **Now playing** in the bottom player for larger artwork and song details.
