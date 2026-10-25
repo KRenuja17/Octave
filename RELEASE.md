@@ -210,6 +210,39 @@ request can retain its copy until its bounded timeout expires.
 
 ## Listening-experience acceptance
 
+### Remaining acceptance checklist (25 October 2026)
+
+Signed-out implementation is complete for the current audio-first scope, but
+release acceptance is incomplete. The following gates consolidate the outstanding
+items; they do not replace or weaken the recorded criteria and failed results.
+
+| Gate | Required input or prerequisite | Evidence required to close |
+| --- | --- | --- |
+| Unsigned catalog and long recordings | A demonstrated Rust-only access improvement without a JavaScript runtime, or an observed service-side change | Reuse the frozen 13-recording matrix, preserve every outcome, and pass its continuous long-source hour on default output at zero player volume. A repeated short recording does not close this gate. |
+| Live lyric translation | User-selected LibreTranslate endpoint; enter any required key in the masked field | Explicit translation of timed lyrics preserves cue correspondence; target changes, cancellation and service failure leave playback usable. Review language quality separately from HTTP success. |
+| Discord publishing | User-owned public application ID and an available Discord desktop session | Explicit opt-in publishes the correct recording and elapsed time; pause, stop, disable and disconnect clear or update presence according to policy. |
+| Account and Premium | A separately authorized user-initiated session | Verify private library operations, offered supported audio quality and disconnect/cache isolation. Signed-out fixtures cannot close this gate. |
+| Physical listening and desktop controls | An attended listening session and relevant hardware | Verify lyric/output latency, fades, pause/seek, media keys, tray and output-device changes. Zero-volume runs cannot establish audible quality. |
+| Accessibility and multilingual layout | Screen reader and native visual review | Complete keyboard/screen-reader tasks and inspect RTL/mixed scripts, wrapping and focus at supported sizes/scales; repair findings before acceptance. Widget names alone are insufficient. |
+| Fresh-machine distribution | A separate supported Windows machine and representative GPU/scaling | Verify launch, rendering, installation/registration, upgrade and uninstall with profile preservation. Isolated NoRegistration QA is partial evidence only. |
+| Production distribution and updates | Publisher signing identity, key custody, hosting and release approval | Verify signed artifacts, trusted update metadata and sequence handling, tagged-source packaging and notices before publication. No production key or feed is configured. |
+
+Service-specific Workout/Party/Focus tuner variants remain unsupported by the
+verified unsigned contract. Native video and production Adaptive mixing remain
+explicitly deferred beyond this candidate. These are not completed features.
+
+The latest catalog evidence remains one playable control and twelve
+BotCheckRequired results, including both long sources. The native attestation
+audit found no complete qualifying generator. Do not rerun the conditional matrix
+or mark catalog acceptance complete solely because a source audit finished.
+
+For every subsequent check, retain the source commit, actual executable/package
+provenance, environment, predefined criteria and full outcome in the external
+research directory. Record failures as failures; promote individual gates only
+with their required evidence. No public release is approved by this checklist.
+
+### Implemented behavior and verification limits
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC
