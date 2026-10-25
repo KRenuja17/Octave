@@ -273,6 +273,31 @@ Adoption needs a compatible renderer integration plus whitespace, combining-mark
 wrapped mixed-direction selection, cursor, copy/paste, AccessKit and native visual
 checks. Reversing stored strings would not satisfy these requirements.
 
+The isolated candidate evaluation completed on 26 October 2026. An external
+Octave snapshot built against the pinned candidate family after adapting only its
+screenshot callback API; the initial incompatible build is retained. Shipping
+dependencies and palette are unchanged. Run all five explicit renderer gates with
+`cargo test -p octave-desktop --locked --offline rtl_renderer_ -- --ignored --nocapture`.
+
+| Renderer gate | Shipping 0.36.2 | Isolated candidate |
+| --- | --- | --- |
+| Basic logical/visual bidi order | Fail | Pass |
+| Hebrew cursor round trips | Fail | Pass |
+| Arabic marked/wrapped logical text | Fail | Fail |
+| Wrapped trailing whitespace | Fail | Fail |
+| Mixed-direction selection background | Pass | Fail |
+
+The baseline selection pass alone does not establish correct bidi layout. The
+candidate's Arabic test stops at its first marked fixture: base characters replace
+the combining marks in the logical glyph text. Its selection test omits the
+selected Hebrew glyph's background; trailing whitespace also fails. Native fixture
+capture visibly shows detached Arabic marks. No renderer changes were promoted.
+Both ordinary offline suites passed 149 tests with 26 explicit gates skipped;
+the separately executed RTL failures remain failures. Strict Clippy passed for
+shipping code; the external candidate emitted upstream/API deprecation warnings.
+Native capture is fixture-only evidence, not screen-reader speech or full Unicode
+conformance. The evaluation package has not been rebuilt.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC
