@@ -1,0 +1,225 @@
+--- a/crates/epaint/src/text/text_layout.rs
++++ b/crates/epaint/src/text/text_layout.rs
+@@ -145,9 +145,37 @@
+     // Up to here every glyph sits at its logical position. Now place
+     // right-to-left text where a reader expects it:
+     if bidi_levels.is_some() {
++        // L1 is a line operation: shaping levels alone leave wrapped trailing
++        // spaces in the preceding run's direction rather than the paragraph's.
++        let info = unicode_bidi::BidiInfo::new(&job.text, None);
++        let mut byte_start = 0;
+         for placed_row in &mut rows {
+-            if placed_row.row.glyphs.iter().any(Glyph::is_rtl) {
+-                reorder_row_visually(point_scale, Arc::make_mut(&mut placed_row.row));
++            let row = Arc::make_mut(&mut placed_row.row);
++            let byte_end = job.text[byte_start..]
++                .char_indices()
++                .nth(row.glyphs.len())
++                .map_or(job.text.len(), |(offset, _)| byte_start + offset);
++            if let Some(para) = info
++                .paragraphs
++                .iter()
++                .find(|p| p.range.start <= byte_start && byte_start < p.range.end)
++                && byte_end <= para.range.end
++            {
++                let levels = info.reordered_levels(para, byte_start..byte_end);
++                for (glyph, (offset, _)) in row
++                    .glyphs
++                    .iter_mut()
++                    .zip(job.text[byte_start..byte_end].char_indices())
++                {
++                    glyph.bidi_level = levels[byte_start + offset].number();
++                }
++            }
++            if row.glyphs.iter().any(Glyph::is_rtl) {
++                reorder_row_visually(point_scale, row);
++            }
++            byte_start = byte_end;
++            if placed_row.ends_with_newline && job.text[byte_start..].starts_with('\n') {
++                byte_start += 1;
+             }
+         }
+     }
+@@ -272,9 +300,6 @@
+     let mut clusters = logical_clusters(shaped.infos, run.bidi_level % 2 == 1).peekable();
+     while let Some(glyph_range) = clusters.next() {
+         let byte_range = shaped.cluster_bytes(&glyph_range, clusters.peek());
+-        let char_count = run_text
+-            .get(byte_range.clone())
+-            .map_or(0, |cluster_text| cluster_text.chars().count());
+ 
+         // Apply extra_letter_spacing only at cluster boundaries,
+         // never between glyphs within the same cluster (e.g. base + mark).
+@@ -283,7 +308,7 @@
+         }
+         ctx.is_first_glyph_in_section = false;
+ 
+-        let as_one_bitmap = if char_count < glyph_range.len() {
++        let as_one_bitmap = if glyph_range.len() > 1 {
+             emit_cluster_bitmap(fonts, &shaped, glyph_range.clone(), ctx, paragraph)
+         } else {
+             None
+@@ -332,11 +357,11 @@
+     }
+ }
+ 
+-/// Emit a cluster that has more glyphs than characters as one glyph carrying one bitmap.
++/// Emit a multi-glyph cluster as one glyph carrying one bitmap.
+ ///
+ /// Some fonts compose a letter from a base glyph and mark glyphs (Hack's `ǻ`,
+ /// Noto Naskh Arabic's `ب`), so one character shapes to several glyphs. Emitting
+-/// one [`Glyph`] per shaped glyph would break `glyphs.len() == char_count`, so
++/// one [`Glyph`] per shaped glyph can lose mark identity and cluster placement, so
+ /// the cluster is rendered into one atlas entry ([`FontsImpl::allocate_cluster`])
+ /// carried by its first character, with the cluster's whole advance.
+ ///
+--- a/crates/egui/src/text_selection/visuals.rs
++++ b/crates/egui/src/text_selection/visuals.rs
+@@ -47,25 +47,44 @@
+         let placed_row = &mut galley.rows[ri];
+         let row = Arc::make_mut(&mut placed_row.row);
+ 
+-        let left = if ri == min.row {
+-            row.x_offset(min.column)
++        let start = if ri == min.row { min.column.0 } else { 0 };
++        let end = if ri == max.row {
++            max.column.0
+         } else {
+-            0.0
++            row.glyphs.len()
+         };
+-        let right = if ri == max.row {
+-            row.x_offset(max.column)
+-        } else {
+-            let newline_size = if placed_row.ends_with_newline {
+-                row.height() / 2.0 // visualize that we select the newline
++        // A logical selection can occupy separated visual spans in bidi text.
++        let mut spans: Vec<Rect> = row.glyphs
++            [start.min(row.glyphs.len())..end.min(row.glyphs.len())]
++            .iter()
++            .filter(|g| g.advance_width > 0.0)
++            .map(|g| Rect::from_min_max(pos2(g.pos.x, 0.0), pos2(g.max_x(), row.size.y)))
++            .collect();
++        if ri != max.row && placed_row.ends_with_newline {
++            let rtl = row.glyphs.iter().map(|g| g.bidi_level).min().unwrap_or(0) % 2 == 1;
++            let edge = if rtl { 0.0 } else { row.size.x };
++            let other = edge
++                + if rtl {
++                    -row.height() / 2.0
++                } else {
++                    row.height() / 2.0
++                };
++            spans.push(Rect::from_min_max(
++                pos2(edge.min(other), 0.0),
++                pos2(edge.max(other), row.size.y),
++            ));
++        }
++        spans.sort_by(|a, b| a.min.x.total_cmp(&b.min.x));
++        let mut rects: Vec<Rect> = Vec::new();
++        for span in spans {
++            if let Some(last) = rects.last_mut()
++                && span.min.x <= last.max.x + 0.01
++            {
++                *last = last.union(span);
+             } else {
+-                0.0
+-            };
+-            row.size.x + newline_size
+-        };
+-        // In right-to-left text the cursor at the smaller char index is the one further right:
+-        let (left, right) = (left.min(right), left.max(right));
+-
+-        let rect = Rect::from_min_max(pos2(left, 0.0), pos2(right, row.size.y));
++                rects.push(span);
++            }
++        }
+         let mesh = &mut row.visuals.mesh;
+ 
+         if !row.glyphs.is_empty() {
+@@ -91,45 +110,47 @@
+             }
+         }
+ 
+-        // Time to insert the selection rectangle into the row mesh.
+-        // It should be on top (after) of any background in the galley,
+-        // but behind (before) any glyphs. The row visuals has this information:
+-        let glyph_index_start = row.visuals.glyph_index_start;
+-
+-        // Start by appending the selection rectangle to end of the mesh, as two triangles (= 6 indices):
+-        let num_indices_before = mesh.indices.len();
+-        mesh.add_colored_rect(rect, background_color);
+-        assert_eq!(
+-            num_indices_before + 6,
+-            mesh.indices.len(),
+-            "We expect exactly 6 new indices"
+-        );
+-
+-        // Copy out the new triangles:
+-        let selection_triangles = [
+-            mesh.indices[num_indices_before],
+-            mesh.indices[num_indices_before + 1],
+-            mesh.indices[num_indices_before + 2],
+-            mesh.indices[num_indices_before + 3],
+-            mesh.indices[num_indices_before + 4],
+-            mesh.indices[num_indices_before + 5],
+-        ];
+-
+-        // Move every old triangle forwards by 6 indices to make room for the new triangle:
+-        for i in (glyph_index_start..num_indices_before).rev() {
+-            mesh.indices.swap(i, i + 6);
+-        }
+-        // Put the new triangle in place:
+-        mesh.indices[glyph_index_start..glyph_index_start + 6]
+-            .clone_from_slice(&selection_triangles);
+-
+-        row.visuals.mesh_bounds = mesh.calc_bounds();
+-
+-        if let Some(new_vertex_indices) = &mut new_vertex_indices {
+-            new_vertex_indices.push(RowVertexIndices {
+-                row: ri,
+-                vertex_indices: selection_triangles,
+-            });
++        for rect in rects {
++            // Time to insert the selection rectangle into the row mesh.
++            // It should be on top (after) of any background in the galley,
++            // but behind (before) any glyphs. The row visuals has this information:
++            let glyph_index_start = row.visuals.glyph_index_start;
++
++            // Start by appending the selection rectangle to end of the mesh, as two triangles (= 6 indices):
++            let num_indices_before = mesh.indices.len();
++            mesh.add_colored_rect(rect, background_color);
++            assert_eq!(
++                num_indices_before + 6,
++                mesh.indices.len(),
++                "We expect exactly 6 new indices"
++            );
++
++            // Copy out the new triangles:
++            let selection_triangles = [
++                mesh.indices[num_indices_before],
++                mesh.indices[num_indices_before + 1],
++                mesh.indices[num_indices_before + 2],
++                mesh.indices[num_indices_before + 3],
++                mesh.indices[num_indices_before + 4],
++                mesh.indices[num_indices_before + 5],
++            ];
++
++            // Move every old triangle forwards by 6 indices to make room for the new triangle:
++            for i in (glyph_index_start..num_indices_before).rev() {
++                mesh.indices.swap(i, i + 6);
++            }
++            // Put the new triangle in place:
++            mesh.indices[glyph_index_start..glyph_index_start + 6]
++                .clone_from_slice(&selection_triangles);
++
++            row.visuals.mesh_bounds = mesh.calc_bounds();
++
++            if let Some(new_vertex_indices) = &mut new_vertex_indices {
++                new_vertex_indices.push(RowVertexIndices {
++                    row: ri,
++                    vertex_indices: selection_triangles,
++                });
++            }
+         }
+     }
+ }

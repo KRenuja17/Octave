@@ -346,4 +346,70 @@ mod tests {
             assert_eq!(actual, visual, "Visual ordering of {text:?}");
         }
     }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: every plain and bidi selection range"]
+    fn rtl_renderer_selection_ranges_match_logical_glyphs() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        let ctx = renderer_context();
+        for text in ["abc", "אבג", "abc אבג xyz"] {
+            let original = ctx.fonts_mut(|fonts| {
+                fonts.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT)
+            });
+            assert_eq!(original.rows[0].row.text(), text);
+            for start in 0..text.chars().count() {
+                for end in start + 1..=text.chars().count() {
+                    let mut galley = original.clone();
+                    let selection = CCursorRange::two(
+                        CCursor {
+                            index: CharIndex(start),
+                            prefer_next_row: false,
+                        },
+                        CCursor {
+                            index: CharIndex(end),
+                            prefer_next_row: false,
+                        },
+                    );
+                    let mut regions = Vec::new();
+                    paint_text_selection(
+                        &mut galley,
+                        &ctx.style_of(egui::Theme::Dark).visuals,
+                        &selection,
+                        Some(&mut regions),
+                    );
+                    let row = &galley.rows[0].row;
+                    let rects: Vec<_> = regions
+                        .iter()
+                        .map(|region| {
+                            let mut rect = egui::Rect::NOTHING;
+                            for index in region.vertex_indices {
+                                rect.extend_with(row.visuals.mesh.vertices[index as usize].pos);
+                            }
+                            rect
+                        })
+                        .collect();
+                    for (index, glyph) in row.glyphs.iter().enumerate() {
+                        if glyph.advance_width > 0.0 {
+                            let selected = rects
+                                .iter()
+                                .any(|r| r.contains(glyph.logical_rect().center()));
+                            assert_eq!(
+                                selected,
+                                (start..end).contains(&index),
+                                "{text:?} selection {start}..{end}, glyph {index}"
+                            );
+                        }
+                    }
+                    assert_eq!(
+                        selection.slice_str(text),
+                        text.chars()
+                            .skip(start)
+                            .take(end - start)
+                            .collect::<String>()
+                    );
+                }
+            }
+        }
+    }
 }
