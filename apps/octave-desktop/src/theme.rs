@@ -176,6 +176,151 @@ pub fn surface<R>(
 mod tests {
     use super::*;
 
+    fn renderer_context() -> egui::Context {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        ctx
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: Arabic marks and wrapped logical text"]
+    fn rtl_renderer_arabic_marks_preserve_logical_text_when_wrapped() {
+        let ctx = renderer_context();
+        for text in ["بِسْمِ", "مرحبا 123 بالعالم", "שלום abc 123 עולם", "لا ﷺ"]
+        {
+            for width in [80.0, 300.0] {
+                let galley = ctx.fonts_mut(|fonts| {
+                    fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
+                });
+                let logical: String = galley.rows.iter().map(|r| r.row.text()).collect();
+                assert_eq!(logical, text, "Logical text at width {width}");
+                assert_eq!(galley.end().index.0, text.chars().count());
+                assert!(
+                    galley
+                        .rows
+                        .iter()
+                        .flat_map(|r| &r.row.glyphs)
+                        .all(|g| g.pos.x.is_finite() && g.pos.y.is_finite())
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: Hebrew cursor round trips"]
+    fn rtl_renderer_cursor_round_trips() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        let ctx = renderer_context();
+        let text = "אבג";
+        let galley = ctx
+            .fonts_mut(|fonts| fonts.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT));
+        for index in 0..=text.chars().count() {
+            let cursor = CCursor {
+                index: CharIndex(index),
+                prefer_next_row: false,
+            };
+            let rect = galley.pos_from_cursor(cursor);
+            assert_eq!(
+                galley.cursor_from_pos(rect.center().to_vec2()).index.0,
+                index
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: wrapped RTL trailing whitespace"]
+    fn rtl_renderer_wrapped_trailing_whitespace_uses_paragraph_direction() {
+        let ctx = renderer_context();
+        let text = "אב abc def ghi jkl mno pqr stu";
+        let mut checked = 0;
+        for width in [100.0, 140.0, 180.0] {
+            let galley = ctx.fonts_mut(|fonts| {
+                fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
+            });
+            for placed in &galley.rows {
+                let glyphs = &placed.row.glyphs;
+                if let Some(last) = glyphs.last().filter(|g| g.chr == ' ')
+                    && glyphs.iter().any(|g| g.chr.is_ascii_alphabetic())
+                {
+                    checked += 1;
+                    let first_content = glyphs
+                        .iter()
+                        .filter(|g| !g.chr.is_whitespace())
+                        .map(|g| g.pos.x)
+                        .fold(f32::INFINITY, f32::min);
+                    assert!(
+                        last.pos.x <= first_content,
+                        "L1: trailing whitespace belongs at the RTL paragraph edge: {:?}",
+                        placed.row.text()
+                    );
+                }
+            }
+        }
+        assert!(
+            checked > 0,
+            "Fixture must exercise wrapped trailing whitespace"
+        );
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: discontiguous mixed-direction selection"]
+    fn rtl_renderer_selection_excludes_unselected_visual_neighbors() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        let ctx = renderer_context();
+        let text = "abc אבג xyz";
+        let mut galley = ctx
+            .fonts_mut(|fonts| fonts.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT));
+        assert_eq!(galley.rows[0].row.text(), text);
+        let selection = CCursorRange::two(
+            CCursor {
+                index: CharIndex(0),
+                prefer_next_row: false,
+            },
+            CCursor {
+                index: CharIndex(5),
+                prefer_next_row: false,
+            },
+        );
+        assert_eq!(selection.slice_str(text), "abc א");
+        let mut regions = Vec::new();
+        paint_text_selection(
+            &mut galley,
+            &ctx.style_of(egui::Theme::Dark).visuals,
+            &selection,
+            Some(&mut regions),
+        );
+        let row = &galley.rows[0].row;
+        let rects: Vec<_> = regions
+            .iter()
+            .map(|region| {
+                let mut bounds = egui::Rect::NOTHING;
+                for index in region.vertex_indices {
+                    bounds.extend_with(row.visuals.mesh.vertices[index as usize].pos);
+                }
+                bounds
+            })
+            .collect();
+        for (index, glyph) in row
+            .glyphs
+            .iter()
+            .enumerate()
+            .filter(|(_, g)| !g.chr.is_whitespace())
+        {
+            let selected = rects
+                .iter()
+                .any(|rect| rect.contains(glyph.logical_rect().center()));
+            assert_eq!(
+                selected,
+                index < 5,
+                "Selection background for logical glyph {index} ({})",
+                glyph.chr
+            );
+        }
+    }
+
     /// A renderer adoption gate, not part of ordinary offline acceptance.
     /// Keep this failing result visible until bidi layout is implemented.
     #[test]
