@@ -266,7 +266,8 @@ impl LyricsUi {
                                 } else {
                                     ui.visuals().weak_text_color()
                                 });
-                        let response = ui.add(
+                        let response = ui.add_enabled(
+                            self.can_seek,
                             egui::Button::new(rich)
                                 .wrap()
                                 .frame(current)
@@ -287,11 +288,13 @@ impl LyricsUi {
                             seek = Some(Duration::from_millis(cue.start_ms));
                             self.reading.resume();
                         }
-                        response.on_hover_text(if self.can_seek {
-                            "Seek to this line"
-                        } else {
-                            "Start playback to seek to a line"
-                        });
+                        response
+                            .on_disabled_hover_text("Start playback to seek to a line")
+                            .on_hover_text(if self.can_seek {
+                                "Seek to this line"
+                            } else {
+                                "Start playback to seek to a line"
+                            });
                         if let Some(translated) = translated {
                             ui.add(
                                 egui::Label::new(
@@ -371,6 +374,107 @@ mod tests {
             ..Default::default()
         }
     }
+    #[test]
+    fn compact_multilingual_cues_preserve_accessible_text_and_disabled_state() {
+        // Original fixtures, not fetched lyrics. This verifies logical text and
+        // geometry, not correct bidi shaping or spoken screen-reader output.
+        for width in [300.0, 480.0, 560.0, 900.0] {
+            for scale in [1.0, 1.5, 2.0] {
+                let ctx = egui::Context::default();
+                ctx.enable_accesskit();
+                crate::theme::install(&ctx);
+                ctx.set_pixels_per_point(scale);
+                // Apply the requested scale before measuring the next frame.
+                let mut warmup = ctx.run_ui(egui::RawInput::default(), |_| {});
+                warmup.textures_delta.clear();
+                let mut app = timed_app();
+                let lines = [
+                    "مرحبا بالعالم — Octave 123 שלום עולם",
+                    "東京の空 · தமிழ் · සිංහල · an original long phrase repeated to exercise wrapping in a narrow lyrics panel",
+                ];
+                for (cue, text) in app.lyrics.as_mut().unwrap().cues.iter_mut().zip(lines) {
+                    cue.text = text.into();
+                }
+                for can_seek in [false, true] {
+                    app.can_seek = can_seek;
+                    let mut output = ctx.run_ui(
+                        egui::RawInput {
+                            screen_rect: Some(egui::Rect::from_min_size(
+                                egui::Pos2::ZERO,
+                                egui::vec2(width, 1600.0),
+                            )),
+                            ..Default::default()
+                        },
+                        |ui| {
+                            app.render(ui, Some(&TrackId("aaaaaaaaaaa".into())));
+                        },
+                    );
+                    output.textures_delta.clear();
+                    let tree = output.platform_output.accesskit_update.unwrap();
+                    for line in lines {
+                        let node = tree
+                            .nodes
+                            .iter()
+                            .find_map(|(_, node)| (node.label() == Some(line)).then_some(node))
+                            .expect("Cue must retain its complete logical accessible text");
+                        assert_eq!(node.is_disabled(), !can_seek);
+                        let bounds = node.bounds().unwrap();
+                        assert!(
+                            bounds.x0 >= 0.0 && bounds.x1 <= f64::from(width * scale) + 1.0,
+                            "Cue overflow at width={width}, scale={scale}: {bounds:?}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn accessible_cue_activation_seeks_only_when_playback_allows_it() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = timed_app();
+        let frame = |app: &mut LyricsUi, events| {
+            let mut seek = None;
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(480.0, 900.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| {
+                    seek = app.render(ui, Some(&TrackId("aaaaaaaaaaa".into())));
+                },
+            );
+            output.textures_delta.clear();
+            (seek, output)
+        };
+        for enabled in [true, false] {
+            app.can_seek = enabled;
+            let (_, output) = frame(&mut app, vec![]);
+            let tree = output.platform_output.accesskit_update.unwrap();
+            let target = tree
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some("First phrase"))
+                .unwrap()
+                .0;
+            let action = egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::Click,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: target,
+                data: None,
+            });
+            assert_eq!(
+                frame(&mut app, vec![action]).0,
+                enabled.then_some(Duration::from_millis(1000))
+            );
+        }
+    }
+
     #[test]
     fn changing_track_cancels_pending_lyrics_even_when_the_view_is_hidden() {
         let mut app = timed_app();

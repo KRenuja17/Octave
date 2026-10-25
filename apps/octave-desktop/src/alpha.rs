@@ -2296,60 +2296,73 @@ mod tests {
         theme::install(&ctx);
         ctx.enable_accesskit();
         for size in [[1180.0, 760.0], [560.0, 720.0], [480.0, 480.0]] {
-            let mut output = ctx.run_ui(
-                egui::RawInput {
-                    screen_rect: Some(egui::Rect::from_min_size(
-                        egui::Pos2::ZERO,
-                        egui::vec2(size[0], size[1]),
-                    )),
-                    ..Default::default()
-                },
-                |ui| {
-                    egui::Panel::bottom("test-player").show(ui, |ui| {
-                        app.transport_snapshot(
-                            ui,
-                            Snapshot {
-                                quality: Some(octave_core::AudioQuality {
-                                    bitrate_bps: Some(129502),
-                                    sample_rate: 44100,
-                                    channels: 2,
-                                }),
-                                state: PlaybackState::Playing(track(1).id),
-                                duration: Duration::from_secs(213),
-                                ..Default::default()
-                            },
-                        )
-                    });
-                    egui::CentralPanel::default().show(ui, |ui| app.content(ui));
-                },
-            );
-            output.textures_delta.clear();
-            assert!(!output.shapes.is_empty());
-            let tree = output.platform_output.accesskit_update.unwrap();
-            for label in ["Previous", "Pause", "Next"] {
-                assert!(
-                    tree.nodes
-                        .iter()
-                        .any(|(_, node)| node.label() == Some(label)),
-                    "Missing accessible transport: {label}"
+            // Auto-sized panels settle after a viewport resize.
+            for pass in 0..3 {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(size[0], size[1]),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::Panel::bottom("test-player").show(ui, |ui| {
+                            app.transport_snapshot(
+                                ui,
+                                Snapshot {
+                                    quality: Some(octave_core::AudioQuality {
+                                        bitrate_bps: Some(129502),
+                                        sample_rate: 44100,
+                                        channels: 2,
+                                    }),
+                                    state: PlaybackState::Playing(track(1).id),
+                                    duration: Duration::from_secs(213),
+                                    ..Default::default()
+                                },
+                            )
+                        });
+                        egui::CentralPanel::default().show(ui, |ui| app.content(ui));
+                    },
                 );
+                output.textures_delta.clear();
+                if pass < 2 {
+                    continue;
+                }
+                assert!(!output.shapes.is_empty());
+                let tree = output.platform_output.accesskit_update.unwrap();
+                for label in ["Previous", "Pause", "Next"] {
+                    let node = tree
+                        .nodes
+                        .iter()
+                        .find_map(|(_, node)| (node.label() == Some(label)).then_some(node))
+                        .unwrap_or_else(|| panic!("Missing accessible transport: {label}"));
+                    let bounds = node.bounds().unwrap();
+                    assert!(
+                        bounds.x0 >= 0.0
+                            && bounds.y0 >= 0.0
+                            && bounds.x1 <= f64::from(size[0])
+                            && bounds.y1 <= f64::from(size[1]),
+                        "Transport {label} is outside {size:?}: {bounds:?}"
+                    );
+                }
+                assert!(tree.nodes.iter().any(|(_, node)| {
+                    node.value()
+                        .is_some_and(|label| label.contains("129 kb/s reported"))
+                }));
             }
-            assert!(tree.nodes.iter().any(|(_, node)| {
-                node.value()
-                    .is_some_and(|label| label.contains("129 kb/s reported"))
-            }));
         }
         ctx.memory_mut(|m| m.request_focus(egui::Id::new("alpha-search")));
         let old = app.search.generation;
         let mut output = ctx.run_ui(
             egui::RawInput {
-                events: vec![egui::Event::Text("東京 ".into())],
+                events: vec![egui::Event::Text("東京 مرحبا שלום 123 ".into())],
                 ..Default::default()
             },
             |ui| app.content(ui),
         );
         output.textures_delta.clear();
-        assert_eq!(app.query, "東京 ");
+        assert_eq!(app.query, "東京 مرحبا שלום 123 ");
         assert!(app.search.generation > old);
         assert!(app.debounce.is_some());
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);

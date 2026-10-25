@@ -243,6 +243,17 @@ with their required evidence. No public release is approved by this checklist.
 
 ### Implemented behavior and verification limits
 
+The signed-out accessibility follow-up disables timed lyric seek buttons when
+playback cannot seek, including their AccessKit state and disabled hover guidance.
+Offline checks exercise assistive cue activation, full logical mixed-script cue
+text and horizontal bounds at 300/480/560/900 logical pixels and 100/150/200%
+scale. Settled transport controls remain inside 1180x760, 560x720 and 480x480
+viewports; mixed Arabic/Hebrew/Japanese search input retains its logical order.
+These are headless geometry/action checks, not native screen-reader or GPU review.
+The pinned epaint 0.36.2 text layout documents incomplete RTL/bidi support in its
+font-run segmentation. Correct mixed-direction ordering and native screen-reader
+acceptance remain open; preserving Unicode text does not establish RTL rendering.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC
