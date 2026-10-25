@@ -273,6 +273,22 @@ impl LyricsUi {
                                 .frame(current)
                                 .min_size(egui::vec2(ui.available_width(), 42.0)),
                         );
+                        // Keep logical lyric text as the accessible name. Supply
+                        // timing/state separately, without a per-cue live announcement.
+                        ui.ctx().accesskit_node_builder(response.id, |node| {
+                            let seconds = cue.start_ms / 1000;
+                            let action = if self.can_seek {
+                                "Seek to"
+                            } else {
+                                "Playback required to seek to"
+                            };
+                            node.set_description(format!(
+                                "{}{action} {}:{:02}.",
+                                if current { "Current lyric. " } else { "" },
+                                seconds / 60,
+                                seconds % 60,
+                            ));
+                        });
                         if current {
                             let rect = response.rect;
                             ui.painter().vline(
@@ -472,6 +488,43 @@ mod tests {
                 frame(&mut app, vec![action]).0,
                 enabled.then_some(Duration::from_millis(1000))
             );
+        }
+    }
+
+    #[test]
+    fn cue_accessibility_describes_time_and_current_state_without_changing_text() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = timed_app();
+        for (position, can_seek, first, second) in [
+            (1500, true, "Current lyric. Seek to 0:01.", "Seek to 0:03."),
+            (3500, true, "Seek to 0:01.", "Current lyric. Seek to 0:03."),
+            (
+                2500,
+                false,
+                "Playback required to seek to 0:01.",
+                "Playback required to seek to 0:03.",
+            ),
+        ] {
+            app.playhead(Duration::from_millis(position), can_seek);
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                app.render(ui, Some(&TrackId("aaaaaaaaaaa".into())));
+            });
+            output.textures_delta.clear();
+            let tree = output.platform_output.accesskit_update.unwrap();
+            for (text, description) in [("First phrase", first), ("Second phrase", second)] {
+                let node = tree
+                    .nodes
+                    .iter()
+                    .find_map(|(_, node)| (node.label() == Some(text)).then_some(node))
+                    .unwrap();
+                assert_eq!(node.description(), Some(description));
+                assert_eq!(node.is_disabled(), !can_seek);
+                assert!(
+                    node.live().is_none(),
+                    "Do not interrupt reading on every cue"
+                );
+            }
         }
     }
 
