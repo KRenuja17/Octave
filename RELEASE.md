@@ -298,6 +298,23 @@ shipping code; the external candidate emitted upstream/API deprecation warnings.
 Native capture is fixture-only evidence, not screen-reader speech or full Unicode
 conformance. The evaluation package has not been rebuilt.
 
+The subsequent isolated repair passes all six explicit renderer gates, including
+the added all-ranges selection fixture. The reproducible patch and upstream MIT
+notice are in `packaging/rtl-candidate/`; applying it to fresh pinned source was
+verified against the tested files. Multi-glyph cluster bitmaps preserve Arabic
+mark identity/placement, per-line Unicode levels reset wrapped whitespace, and
+selection backgrounds cover the separate selected visual spans. The patched
+native capture was inspected with Octave's original colors; earlier failures and
+images remain retained.
+
+Patched ordinary tests pass 149 with 39 skipped, including duplicated renderer
+gates in the two external capture helpers. Shipping ordinary tests pass 149 with
+27 skipped, and strict Clippy/format/diff pass. The six renderer gates were run
+separately and passed on the isolated patch only. This does not change the shipping
+renderer or close full RTL/screen-reader acceptance. Complex paragraph/ellipsis,
+fallback/color clusters, combining-cluster selection, font diversity and the cost
+of per-row bidi-level cloning need further qualification before adoption.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC
