@@ -254,6 +254,25 @@ The pinned epaint 0.36.2 text layout documents incomplete RTL/bidi support in it
 font-run segmentation. Correct mixed-direction ordering and native screen-reader
 acceptance remain open; preserving Unicode text does not establish RTL rendering.
 
+Lyric accessibility descriptions now expose the cue timestamp, current-line state
+and playback requirement independently of the unchanged logical lyric name. They
+do not use a live region that would interrupt reading at every cue. Headless tests
+verify state changes and instrumental gaps; native speech remains unverified.
+
+The explicit renderer gate reproduces a logical-glyph defect in the pinned text
+engine: the two-character Hebrew fixture `אב` produces row text `באב` on the tested
+Windows font setup. Run it independently with
+`cargo test -p octave-desktop --locked rtl_renderer_preserves -- --ignored --nocapture`.
+This known-failing gate is excluded from ordinary offline tests, not accepted as
+working RTL. It checks logical text and visual placement, not complete Unicode
+conformance. Upstream [egui PR 8577](https://github.com/emilk/egui/pull/8577), audited
+at `c93e8863e958507056415e2a6dace56e23ba5f3a`, is a pure-Rust candidate using bidi
+levels and shaping changes. It remains a draft, omits trailing-whitespace rule L1,
+and has outstanding Arabic mark/caret reports. It was not adopted or executed.
+Adoption needs a compatible renderer integration plus whitespace, combining-mark,
+wrapped mixed-direction selection, cursor, copy/paste, AccessKit and native visual
+checks. Reversing stored strings would not satisfy these requirements.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC

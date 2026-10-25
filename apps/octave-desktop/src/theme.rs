@@ -171,3 +171,34 @@ pub fn surface<R>(
             content(ui)
         })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A renderer adoption gate, not part of ordinary offline acceptance.
+    /// Keep this failing result visible until bidi layout is implemented.
+    #[test]
+    #[ignore = "Known RTL renderer limitation; run explicitly when evaluating a bidi fix"]
+    fn rtl_renderer_preserves_logical_text_and_visual_order() {
+        let ctx = egui::Context::default();
+        install(&ctx);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for (text, visual) in [("אב", "בא"), ("ab אב", "ab בא"), ("אב 12", "12 בא")] {
+            let galley = ctx.fonts_mut(|fonts| {
+                fonts.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT)
+            });
+            let row = &galley.rows[0].row;
+            assert_eq!(
+                row.text(),
+                text,
+                "Logical glyph order must support selection and accessibility"
+            );
+            let mut glyphs: Vec<_> = row.glyphs.iter().collect();
+            glyphs.sort_by(|a, b| a.pos.x.total_cmp(&b.pos.x));
+            let actual: String = glyphs.iter().map(|g| g.chr).collect();
+            assert_eq!(actual, visual, "Visual ordering of {text:?}");
+        }
+    }
+}
