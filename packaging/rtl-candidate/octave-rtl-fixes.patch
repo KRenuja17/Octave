@@ -1,6 +1,6 @@
 --- a/crates/epaint/src/text/text_layout.rs
 +++ b/crates/epaint/src/text/text_layout.rs
-@@ -145,9 +145,37 @@
+@@ -145,9 +145,46 @@
      // Up to here every glyph sits at its logical position. Now place
      // right-to-left text where a reader expects it:
      if bidi_levels.is_some() {
@@ -8,6 +8,7 @@
 +        // spaces in the preceding run's direction rather than the paragraph's.
 +        let info = unicode_bidi::BidiInfo::new(&job.text, None);
 +        let mut byte_start = 0;
++        let mut paragraph_index = 0;
          for placed_row in &mut rows {
 -            if placed_row.row.glyphs.iter().any(Glyph::is_rtl) {
 -                reorder_row_visually(point_scale, Arc::make_mut(&mut placed_row.row));
@@ -16,19 +17,27 @@
 +                .char_indices()
 +                .nth(row.glyphs.len())
 +                .map_or(job.text.len(), |(offset, _)| byte_start + offset);
-+            if let Some(para) = info
++            while info
 +                .paragraphs
-+                .iter()
-+                .find(|p| p.range.start <= byte_start && byte_start < p.range.end)
++                .get(paragraph_index)
++                .is_some_and(|p| p.range.end <= byte_start)
++            {
++                paragraph_index += 1;
++            }
++            if let Some(para) = info.paragraphs.get(paragraph_index)
++                && para.range.start <= byte_start
 +                && byte_end <= para.range.end
 +            {
-+                let levels = info.reordered_levels(para, byte_start..byte_end);
++                // Preserve the document-resolved embeddings and isolates, but
++                // apply L1 to a line-sized buffer. BidiInfo::reordered_levels
++                // clones the entire document for every wrapped row.
++                let levels = line_bidi_levels(&info, para, byte_start..byte_end);
 +                for (glyph, (offset, _)) in row
 +                    .glyphs
 +                    .iter_mut()
 +                    .zip(job.text[byte_start..byte_end].char_indices())
 +                {
-+                    glyph.bidi_level = levels[byte_start + offset].number();
++                    glyph.bidi_level = levels[offset].number();
 +                }
 +            }
 +            if row.glyphs.iter().any(Glyph::is_rtl) {
@@ -40,29 +49,81 @@
              }
          }
      }
-@@ -272,9 +300,6 @@
+@@ -172,6 +209,51 @@
+
+     // Calculate the Y positions and tessellate the text:
+     galley_from_rows(point_scale, job, rows, elided, intrinsic_size)
++}
++
++/// L1 over a row while retaining levels resolved in the full paragraph.
++fn line_bidi_levels(
++    info: &unicode_bidi::BidiInfo<'_>,
++    para: &unicode_bidi::ParagraphInfo,
++    range: Range<usize>,
++) -> Vec<unicode_bidi::Level> {
++    let line = unicode_bidi::ParagraphBidiInfo {
++        text: &info.text[range.clone()],
++        original_classes: info.original_classes[range.clone()].to_vec(),
++        levels: info.levels[range].to_vec(),
++        paragraph_level: para.level,
++        is_pure_ltr: false,
++    };
++    line.reordered_levels(0..line.text.len())
++}
++
++#[test]
++fn octave_line_levels_match_full_document_reference() {
++    for text in [
++        "שלום abc 123  ",
++        "abc \u{2067}مرحبا 123 بالعالم\u{2069} xyz",
++        "שלום \u{2066}abc def ghi\u{2069} עולם",
++        "abc\nمرحبا 123\n\nשלום xyz  ",
++        "abc \u{202b}שלום 123\u{202c} xyz\t ",
++    ] {
++        let info = unicode_bidi::BidiInfo::new(text, None);
++        for para in &info.paragraphs {
++            let boundaries: Vec<_> = (para.range.start..=para.range.end)
++                .filter(|&offset| text.is_char_boundary(offset))
++                .collect();
++            for (i, &start) in boundaries.iter().enumerate() {
++                for &end in &boundaries[i..] {
++                    let range = start..end;
++                    let reference = info.reordered_levels(para, range.clone());
++                    assert_eq!(
++                        line_bidi_levels(&info, para, range.clone()),
++                        reference[range],
++                        "{text:?} at {start}..{end}"
++                    );
++                }
++            }
++        }
++    }
+ }
+
+ /// Shared context for emitting shaped glyphs into a [`Paragraph`].
+@@ -272,9 +354,6 @@
      let mut clusters = logical_clusters(shaped.infos, run.bidi_level % 2 == 1).peekable();
      while let Some(glyph_range) = clusters.next() {
          let byte_range = shaped.cluster_bytes(&glyph_range, clusters.peek());
 -        let char_count = run_text
 -            .get(byte_range.clone())
 -            .map_or(0, |cluster_text| cluster_text.chars().count());
- 
+
          // Apply extra_letter_spacing only at cluster boundaries,
          // never between glyphs within the same cluster (e.g. base + mark).
-@@ -283,7 +308,7 @@
+@@ -283,7 +362,7 @@
          }
          ctx.is_first_glyph_in_section = false;
- 
+
 -        let as_one_bitmap = if char_count < glyph_range.len() {
 +        let as_one_bitmap = if glyph_range.len() > 1 {
              emit_cluster_bitmap(fonts, &shaped, glyph_range.clone(), ctx, paragraph)
          } else {
              None
-@@ -332,11 +357,11 @@
+@@ -332,11 +411,11 @@
      }
  }
- 
+
 -/// Emit a cluster that has more glyphs than characters as one glyph carrying one bitmap.
 +/// Emit a multi-glyph cluster as one glyph carrying one bitmap.
  ///
@@ -78,7 +139,7 @@
 @@ -47,25 +47,44 @@
          let placed_row = &mut galley.rows[ri];
          let row = Arc::make_mut(&mut placed_row.row);
- 
+
 -        let left = if ri == min.row {
 -            row.x_offset(min.column)
 +        let start = if ri == min.row { min.column.0 } else { 0 };
@@ -134,12 +195,12 @@
 +            }
 +        }
          let mesh = &mut row.visuals.mesh;
- 
+
          if !row.glyphs.is_empty() {
 @@ -91,45 +110,47 @@
              }
          }
- 
+
 -        // Time to insert the selection rectangle into the row mesh.
 -        // It should be on top (after) of any background in the galley,
 -        // but behind (before) any glyphs. The row visuals has this information:

@@ -185,6 +185,109 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Explicit renderer qualification: paragraphs, isolates and fallback scripts"]
+    fn rtl_renderer_complex_paragraphs_and_fallback() {
+        let ctx = renderer_context();
+        for text in [
+            "אבג abc\nمرحبا 123\n\nEnglish שלום",
+            "שלום \u{2066}abc 123 def ghi\u{2069} עולם",
+            "abc \u{2067}مرحبا 123 بالعالم\u{2069} xyz",
+            "بِسْمِ 日本語 한국어 ไทย हिन्दी שלום",
+        ] {
+            for width in [80.0, 180.0, 600.0] {
+                let galley = ctx.fonts_mut(|fonts| {
+                    fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
+                });
+                let mut logical = String::new();
+                for placed in &galley.rows {
+                    logical.push_str(&placed.row.text());
+                    if placed.ends_with_newline {
+                        logical.push('\n');
+                    }
+                    assert!(placed.row.glyphs.iter().all(|g| {
+                        g.pos.x.is_finite()
+                            && g.pos.y.is_finite()
+                            && g.advance_width.is_finite()
+                            && g.advance_width >= 0.0
+                    }));
+                }
+                assert_eq!(logical, text, "width {width}");
+                assert_eq!(galley.end().index.0, text.chars().count());
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer qualification: missing-glyph emoji joiner fallback"]
+    fn rtl_renderer_emoji_fallback_preserves_logical_text() {
+        let ctx = renderer_context();
+        let text = "שלום 👩‍💻 🎵 e\u{301} بِسْمِ";
+        for width in [80.0, 180.0, 600.0] {
+            let galley = ctx.fonts_mut(|fonts| {
+                fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
+            });
+            let logical: String = galley.rows.iter().map(|r| r.row.text()).collect();
+            assert_eq!(
+                logical, text,
+                "Fallback must preserve the ZWJ at width {width}"
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit Windows font coverage qualification; requires installed script fonts"]
+    fn rtl_renderer_installed_font_fallback_coverage() {
+        let installed = renderer_context();
+        let defaults = egui::Context::default();
+        let mut output = defaults.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        let id = FontId::proportional(26.0);
+        let mut fallback_cases = 0;
+        for text in ["日本語", "한국어", "ไทย", "हिन्दी", "مرحبا", "שלום"]
+        {
+            let before = defaults.fonts_mut(|f| f.has_glyphs(&id, text));
+            let after = installed.fonts_mut(|f| f.has_glyphs(&id, text));
+            eprintln!("RTL_COVERAGE {text:?} bundled={before} installed={after}");
+            assert!(after, "Installed font coverage missing for {text:?}");
+            fallback_cases += usize::from(!before && after);
+        }
+        assert!(
+            fallback_cases > 0,
+            "Fixture must actually exercise added fallback coverage"
+        );
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer measurement: uncached large mixed-direction text"]
+    fn rtl_renderer_large_text_measurement() {
+        // Fresh contexts and unique paragraphs avoid galley/paragraph cache hits.
+        // Timings are diagnostic, not a machine-dependent pass threshold.
+        for paragraphs in [false, true] {
+            for repeats in [100, 500, 2000] {
+                let ctx = renderer_context();
+                let unit = if paragraphs {
+                    "שלום abc 123 مرحبا بالعالم\n"
+                } else {
+                    "שלום abc 123 مرحبا بالعالم "
+                };
+                let text: String = (0..repeats).map(|i| format!("{i} {unit}")).collect();
+                let chars = text.chars().count();
+                let started = std::time::Instant::now();
+                let galley = ctx
+                    .fonts_mut(|fonts| fonts.layout(text, FontId::proportional(26.0), TEXT, 180.0));
+                let elapsed = started.elapsed();
+                assert_eq!(galley.end().index.0, chars);
+                assert!(galley.rows.len() >= repeats);
+                eprintln!(
+                    "RTL_PERF paragraphs={paragraphs} chars={chars} rows={} elapsed_us={}",
+                    galley.rows.len(),
+                    elapsed.as_micros()
+                );
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "Explicit renderer qualification: Arabic marks and wrapped logical text"]
     fn rtl_renderer_arabic_marks_preserve_logical_text_when_wrapped() {
         let ctx = renderer_context();
