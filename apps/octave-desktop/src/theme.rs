@@ -70,6 +70,7 @@ fn install_fonts(ctx: &egui::Context) {
     // Read installed Windows fonts; never redistribute operating-system font files.
     for (name, path, primary) in [
         ("Segoe", "C:/Windows/Fonts/segoeui.ttf", true),
+        ("Emoji", "C:/Windows/Fonts/seguiemj.ttf", false),
         ("Japanese", "C:/Windows/Fonts/msgothic.ttc", false),
         ("Korean", "C:/Windows/Fonts/malgun.ttf", false),
         ("Thai and Lao", "C:/Windows/Fonts/LeelawUI.ttf", false),
@@ -82,6 +83,10 @@ fn install_fonts(ctx: &egui::Context) {
             let family = fonts.families.entry(FontFamily::Proportional).or_default();
             if primary {
                 family.insert(0, name.into());
+            } else if name == "Emoji" {
+                // Prefer the installed emoji face to bundled symbol fallbacks,
+                // but keep Segoe UI first for ordinary text and digits.
+                family.insert(usize::from(!family.is_empty()), name.into());
             } else {
                 family.push(name.into());
             }
@@ -220,17 +225,32 @@ mod tests {
     #[test]
     #[ignore = "Explicit renderer qualification: missing-glyph emoji joiner fallback"]
     fn rtl_renderer_emoji_fallback_preserves_logical_text() {
-        let ctx = renderer_context();
-        let text = "שלום 👩‍💻 🎵 e\u{301} بِسْمِ";
-        for width in [80.0, 180.0, 600.0] {
-            let galley = ctx.fonts_mut(|fonts| {
-                fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
-            });
-            let logical: String = galley.rows.iter().map(|r| r.row.text()).collect();
-            assert_eq!(
-                logical, text,
-                "Fallback must preserve the ZWJ at width {width}"
-            );
+        let defaults = egui::Context::default();
+        let mut output = defaults.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for ctx in [renderer_context(), defaults] {
+            for text in [
+                "שלום 👩‍💻 🎵 e\u{301} بِسْمِ",
+                "אב 👨‍👩‍👧‍👦 👍🏽 🇱🇰 1️⃣ ❤️ xyz",
+                "אב \u{10ffff}\u{200d}\u{10fffe} xyz",
+            ] {
+                for width in [80.0, 180.0, 600.0] {
+                    let galley = ctx.fonts_mut(|fonts| {
+                        fonts.layout(text.into(), FontId::proportional(26.0), TEXT, width)
+                    });
+                    let logical: String = galley.rows.iter().map(|r| r.row.text()).collect();
+                    assert_eq!(
+                        logical, text,
+                        "Fallback must preserve the ZWJ at width {width}"
+                    );
+                    assert_eq!(galley.end().index.0, text.chars().count());
+                    for glyph in galley.rows.iter().flat_map(|r| &r.row.glyphs) {
+                        if glyph.chr == '\u{200d}' || glyph.chr == '\u{fe0f}' {
+                            assert_eq!(glyph.advance_width, 0.0, "Invisible continuation");
+                        }
+                    }
+                }
+            }
         }
     }
 

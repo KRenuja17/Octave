@@ -111,16 +111,27 @@
 
          // Apply extra_letter_spacing only at cluster boundaries,
          // never between glyphs within the same cluster (e.g. base + mark).
-@@ -283,7 +362,7 @@
+@@ -283,7 +362,18 @@
          }
          ctx.is_first_glyph_in_section = false;
 
 -        let as_one_bitmap = if char_count < glyph_range.len() {
++        // A partially missing cluster is one fallback unit. Emitting its
++        // remaining shaped glyphs separately repeats the cluster's first char
++        // (notably for an invisible ZWJ after a missing emoji). Let the fallback
++        // rasterizer handle it once, then retain every other logical character
++        // as a continuation, just as for a ligature or cluster bitmap.
++        if let Some(missing) = glyph_range.clone().find(|&i| shaped.infos[i].glyph_id == 0) {
++            let emitted = emit_cluster_glyphs(fonts, &shaped, missing..missing + 1, ctx, paragraph);
++            emit_continuation_glyphs(ctx, paragraph, run_text, byte_range, emitted, face_metrics);
++            continue;
++        }
++
 +        let as_one_bitmap = if glyph_range.len() > 1 {
              emit_cluster_bitmap(fonts, &shaped, glyph_range.clone(), ctx, paragraph)
          } else {
              None
-@@ -332,11 +411,11 @@
+@@ -332,11 +422,11 @@
      }
  }
 
