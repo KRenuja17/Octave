@@ -333,6 +333,20 @@ source files. Palette and shipping dependencies remain unchanged. Emoji fallback
 ellipsis, combining-cluster selection, optimized performance, IME and screen-reader
 acceptance remain open; no new distribution package was produced.
 
+A subsequent 27 October emoji repair passes all ten isolated renderer gates.
+Missing-glyph clusters now preserve logical text through one fallback glyph and
+continuation characters. The gate covers joined families, skin tones, flags,
+keycaps, variation selectors and unsupported sequences with installed and
+bundled-only fonts at three widths, including cursor-end counts and invisible
+continuation widths. Octave now loads installed Segoe UI Emoji after Segoe UI;
+it does not redistribute fonts. The native fixture shows monochrome emoji where
+boxes previously appeared; flag sequences still show letter codes. Full-color
+cluster composition, flag imagery and full grapheme selection remain unqualified.
+Both ordinary suites pass 149 tests (shipping31 skipped, isolated71 including four
+capture examples); shipping strict Clippy/format/diff pass. The updated patch
+reproduces the tested source. Shipping renderer dependencies and the original
+palette remain unchanged; this is not full RTL or release acceptance.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC

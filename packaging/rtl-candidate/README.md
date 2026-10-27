@@ -27,10 +27,24 @@ The native fixture capture was also inspected. These are focused regressions,
 not complete Unicode or screen-reader acceptance. Color/missing-glyph cluster
 fallbacks, selection within a combining cluster, complex paragraph/ellipsis cases,
 font diversity and large-text performance still need broader qualification.
-The 27 October expansion passes nine of ten explicit checks. Mixed paragraphs,
+The initial 27 October expansion passed nine of ten explicit checks. Mixed paragraphs,
 directional isolates and installed fallback coverage pass. The emoji ZWJ fallback
 fails logical-text preservation (`👩‍💻` becomes `👩👩💻`); the native capture also
-shows missing emoji glyphs. This remains a shipping adoption blocker.
+showed missing emoji glyphs. Those failed results remain retained.
+
+The subsequent emoji repair passes all ten explicit checks. A cluster containing
+missing glyphs now emits one fallback unit and logical continuation characters,
+instead of repeating its first character for leftover shaped glyphs. Octave loads
+the installed Segoe UI Emoji font after Segoe UI and before bundled symbol fonts;
+no font files are redistributed. The expanded gate checks family/ZWJ, skin tone,
+flag, keycap, variation selector and deliberately unsupported sequences with both
+installed and bundled-only fonts, across three widths. Logical text, cursor-end
+counts and zero-width joiner/variation continuations pass.
+
+Native capture shows monochrome emoji instead of the previous boxes for the
+woman-at-computer/music fixtures. Flags appear as letter codes. Full-color cluster
+composition, flag imagery and visual behavior across other font sets remain open;
+these checks do not certify every emoji or selection within a grapheme.
 
 L1 now copies only row-sized resolved levels/classes and advances the paragraph
 index monotonically. An extracted Rust oracle test matches the original Unicode
