@@ -315,6 +315,24 @@ renderer or close full RTL/screen-reader acceptance. Complex paragraph/ellipsis,
 fallback/color clusters, combining-cluster selection, font diversity and the cost
 of per-row bidi-level cloning need further qualification before adoption.
 
+The 27 October expanded isolated validation passes nine of ten explicit gates:
+mixed paragraphs/isolates, six installed script fallback coverage checks and
+bounded large-text layout join the original regressions. Emoji ZWJ fallback
+still corrupts logical text (`👩‍💻` becomes `👩👩💻`); the synthetic native capture
+also shows missing emoji glyphs. The failure is retained as an opt-in adoption
+gate, not included in passing ordinary acceptance.
+
+The patch now uses row-sized L1 buffers and a monotonic paragraph lookup. Its
+extracted Rust oracle agrees with the original Unicode routine across every
+character-boundary subrange of five fixtures. Unique uncached debug workloads
+up to 62,890 characters take about 1.4–1.5 seconds; this is not release performance
+acceptance or evidence of a substantial end-to-end speedup. Both ordinary suites
+pass 149 tests (shipping 31 skipped; isolated 61 including three capture helpers).
+Shipping strict Clippy and formatting pass. The patch reproduces both tested
+source files. Palette and shipping dependencies remain unchanged. Emoji fallback,
+ellipsis, combining-cluster selection, optimized performance, IME and screen-reader
+acceptance remain open; no new distribution package was produced.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC

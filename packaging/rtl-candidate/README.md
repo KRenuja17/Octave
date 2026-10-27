@@ -20,15 +20,26 @@ Run the explicit tests independently of the ordinary suite:
 cargo test -p octave-desktop --locked --offline rtl_renderer_ -- --ignored --nocapture
 ```
 
-All six gates passed on the patched Windows evaluation: basic ordering, Hebrew
+All six original gates passed on the patched Windows evaluation: basic ordering, Hebrew
 cursor round trips, Arabic marked/wrapped logical text, wrapped whitespace, the
 original mixed-selection failure and every selection range in three short fixtures.
 The native fixture capture was also inspected. These are focused regressions,
 not complete Unicode or screen-reader acceptance. Color/missing-glyph cluster
 fallbacks, selection within a combining cluster, complex paragraph/ellipsis cases,
 font diversity and large-text performance still need broader qualification.
-The line-level API currently clones the bidi level vector for each row; profile
-and improve that cost before promoting the renderer to production.
+The 27 October expansion passes nine of ten explicit checks. Mixed paragraphs,
+directional isolates and installed fallback coverage pass. The emoji ZWJ fallback
+fails logical-text preservation (`👩‍💻` becomes `👩👩💻`); the native capture also
+shows missing emoji glyphs. This remains a shipping adoption blocker.
+
+L1 now copies only row-sized resolved levels/classes and advances the paragraph
+index monotonically. An extracted Rust oracle test matches the original Unicode
+routine over all character-boundary subranges of five fixtures, including isolates,
+embeddings, tabs and paragraph breaks. The test is also retained in the patch.
+Unique uncached workloads reach 62,890 characters / 6,001 rows: debug layout took
+about 1.4–1.5 seconds on this machine. Earlier repeated-paragraph comparisons show
+no convincing end-to-end speedup. These are diagnostic timings, not a release
+performance acceptance result; optimized-build and interactive profiling remain open.
 
 Upstream source is MIT OR Apache-2.0; the included context is used under MIT.
 Its copyright and permission notice are preserved in `LICENSE-MIT.egui`.
