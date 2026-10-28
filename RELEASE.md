@@ -1,5 +1,25 @@
 # Release candidate evaluation
 
+## Native focus follow-up — 28 October 2026
+
+Search now restores its last committed query when focus interrupts composition,
+without scheduling a request for the abandoned candidate. Regression coverage
+includes delayed commits after blur, refocus/continued typing and AccessKit
+selection across three long Unicode text runs. 154 ordinary workspace tests pass
+(35 opt-in ignored); final targeted IME tests, strict Clippy and format/diff checks
+pass. Renderer code and palette are unchanged; the previous14 renderer gate
+results remain historical rather than a new run.
+
+A fresh native debug build and isolated visible-profile launch exposed Octave's
+named controls through Windows UI Automation. Native focus remains unverified:
+Ctrl+K observations reported root focus, click targeting failed with coordinate
+geometry unavailable, and screenshot output showed another foreground app while
+the accessibility tree named Octave. Input attempts stopped to avoid interference;
+this evidence does not establish an Octave focus defect. Spoken screen-reader
+output, actual OS IME candidate interaction, bidi accessibility geometry and
+broader caret/deletion behavior still need native qualification. No sign-in,
+provider requests, audio, system-setting changes or package rebuild occurred.
+
 ## Accessibility and IME follow-up — 28 October 2026
 
 Live search now waits for IME composition to finish, including unchanged-candidate
