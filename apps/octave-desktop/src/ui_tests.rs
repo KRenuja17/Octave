@@ -33,6 +33,61 @@ fn key(key: Key, modifiers: Modifiers) -> Event {
         modifiers,
     }
 }
+
+#[test]
+fn accessibility_text_runs_preserve_logical_unicode() {
+    // This checks the tree consumed by adapters, not spoken screen-reader output.
+    for source in [
+        "עברית العربية 日本 👨‍👩‍👧‍👦 🇱🇰\nnext".to_owned(),
+        "א日本🇱🇰 ".repeat(80),
+    ] {
+        let ctx = egui::Context::default();
+        crate::theme::install(&ctx);
+        ctx.enable_accesskit();
+        let mut text = source.clone();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::TextEdit::multiline(&mut text)
+                .desired_width(180.0)
+                .show(ui);
+        });
+        output.textures_delta.clear();
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let parent = tree
+            .nodes
+            .iter()
+            .find(|(_, n)| n.role() == egui::accesskit::Role::MultilineTextInput)
+            .unwrap();
+        // Updates are unordered; the parent's children define reading order.
+        let runs: Vec<_> = parent
+            .1
+            .children()
+            .iter()
+            .map(|id| {
+                tree.nodes
+                    .iter()
+                    .find(|(node_id, _)| node_id == id)
+                    .unwrap()
+            })
+            .collect();
+        let reconstructed: String = runs
+            .iter()
+            .map(|(_, n)| n.value().unwrap_or_default())
+            .collect();
+        assert_eq!(reconstructed, source);
+        for (_, node) in runs {
+            let value = node.value().unwrap_or_default();
+            assert_eq!(
+                node.character_lengths()
+                    .iter()
+                    .map(|&v| usize::from(v))
+                    .sum::<usize>(),
+                value.len()
+            );
+            assert_eq!(node.character_lengths().len(), value.chars().count());
+        }
+        assert_eq!(text, source);
+    }
+}
 #[test]
 fn keyboard_search_text_and_tab_focus_work() {
     let ctx = egui::Context::default();

@@ -89,6 +89,7 @@ struct Alpha {
     query: String,
     results: Vec<Track>,
     debounce: Option<Instant>,
+    search_composing: bool,
     searching: bool,
     search_message: String,
     queue_page: bool,
@@ -160,6 +161,7 @@ impl Alpha {
             query: String::new(),
             results: Vec::new(),
             debounce: None,
+            search_composing: false,
             searching: false,
             search_message: String::new(),
             queue_page: matches!(
@@ -1150,29 +1152,32 @@ impl Alpha {
                     ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(24);
                     ui.visuals_mut().widgets.hovered.corner_radius = egui::CornerRadius::same(24);
                     ui.visuals_mut().widgets.active.corner_radius = egui::CornerRadius::same(24);
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .id(egui::Id::unique("alpha-search"))
-                            .hint_text("Search songs and artists")
-                            .char_limit(512)
-                            .background_color(ui.visuals().widgets.inactive.bg_fill)
-                            .margin(egui::vec2(18.0, 12.0))
-                            .desired_width(f32::INFINITY),
-                    )
+                    egui::TextEdit::singleline(&mut self.query)
+                        .id(egui::Id::unique("alpha-search"))
+                        .hint_text("Search songs and artists")
+                        .char_limit(512)
+                        .background_color(ui.visuals().widgets.inactive.bg_fill)
+                        .margin(egui::vec2(18.0, 12.0))
+                        .desired_width(f32::INFINITY)
+                        .show(ui)
                 })
                 .inner;
+            let composing = input.state.is_ime_composing();
+            let composition_changed = self.search_composing != composing;
+            self.search_composing = composing;
+            let input = input.response;
             input.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search YouTube Music")
             });
             if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
                 input.request_focus();
             }
-            if input.changed() {
+            if input.changed() || composition_changed {
                 self.search.invalidate();
                 self.results.clear();
                 self.searching = false;
                 self.search_message.clear();
-                self.debounce = Some(Instant::now());
+                self.debounce = (!composing).then(Instant::now);
             }
             ui.horizontal(|ui| {
                 if self.searching {
@@ -1189,7 +1194,11 @@ impl Alpha {
                     self.search_message.clear();
                     self.debounce = None;
                 }
-                if !self.query.trim().is_empty() && ui.button("Search again").clicked() {
+                if !self.query.trim().is_empty()
+                    && ui
+                        .add_enabled(!composing, egui::Button::new("Search again"))
+                        .clicked()
+                {
                     self.search.invalidate();
                     self.search.submit(self.query.clone());
                     self.searching = true;
@@ -1718,6 +1727,123 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+    #[test]
+    fn search_ime_composes_without_submitting_and_commits_once() {
+        let path = path("ime-search");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        content_frame(&ctx, &mut app, vec![]);
+        let field_id = egui::Id::unique("alpha-search");
+        let focused = content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::Focus,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    target_node: field_id.accesskit_id(),
+                    data: None,
+                },
+            )],
+        );
+        assert!(ctx.memory(|m| m.has_focus(field_id)));
+        assert_eq!(
+            focused.platform_output.accesskit_update.unwrap().focus,
+            field_id.accesskit_id()
+        );
+        for text in ["に", "にほん", "日本"] {
+            let output = content_frame(
+                &ctx,
+                &mut app,
+                vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                    text: text.into(),
+                    active_range_chars: Some(0..text.chars().count()),
+                })],
+            );
+            assert_eq!(app.query, text);
+            assert!(
+                app.debounce.is_none(),
+                "Uncommitted IME candidates must not start network search"
+            );
+            assert!(output.platform_output.ime.is_some());
+        }
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Commit("日本".into()))],
+        );
+        assert_eq!(app.query, "日本");
+        assert!(
+            app.debounce.is_some(),
+            "Committing the unchanged candidate must schedule search"
+        );
+        assert!(!app.searching);
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "語".into(),
+                active_range_chars: Some(0..1),
+            })],
+        );
+        assert!(app.debounce.is_none());
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            })],
+        );
+        assert_eq!(
+            app.query, "日本",
+            "Cancelling composition must preserve committed text"
+        );
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        let output = content_frame(&ctx, &mut app, vec![]);
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let (_, field) = tree
+            .nodes
+            .iter()
+            .find(|(id, _)| *id == field_id.accesskit_id())
+            .unwrap();
+        let run = field.children()[0];
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::AccessKitActionRequest(
+                egui::accesskit::ActionRequest {
+                    action: egui::accesskit::Action::SetTextSelection,
+                    target_tree: egui::accesskit::TreeId::ROOT,
+                    target_node: field_id.accesskit_id(),
+                    data: Some(egui::accesskit::ActionData::SetTextSelection(
+                        egui::accesskit::TextSelection {
+                            anchor: egui::accesskit::TextPosition {
+                                node: run,
+                                character_index: 0,
+                            },
+                            focus: egui::accesskit::TextPosition {
+                                node: run,
+                                character_index: 2,
+                            },
+                        },
+                    )),
+                },
+            )],
+        );
+        let selection = egui::TextEdit::load_state(&ctx, field_id)
+            .unwrap()
+            .cursor
+            .char_range()
+            .unwrap();
+        let selected = selection.as_sorted_char_range();
+        assert_eq!((selected.start.0, selected.end.0), (0, 2));
+        assert_eq!(app.query, "日本");
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
     fn click(ctx: &egui::Context, app: &mut Alpha, name: &str) {
         let mut attempts = 0;

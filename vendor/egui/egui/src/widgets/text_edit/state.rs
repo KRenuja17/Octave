@@ -59,6 +59,12 @@ pub struct TextEditState {
 }
 
 impl TextEditState {
+    /// Whether this field contains an uncommitted IME candidate.
+    /// Applications can defer side effects such as live searches until it ends.
+    pub fn is_ime_composing(&self) -> bool {
+        self.cursor_purpose.is_ime_composition()
+    }
+
     pub fn load(ctx: &Context, id: Id) -> Option<Self> {
         ctx.data_mut(|d| d.get_persisted(id))
     }

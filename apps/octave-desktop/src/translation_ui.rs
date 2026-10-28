@@ -151,12 +151,13 @@ impl TranslationUi {
                 .char_limit(512),
         );
         ui.horizontal(|ui| {
-            ui.label("Target language code");
+            let label = ui.label("Target language code");
             ui.add(
                 egui::TextEdit::singleline(&mut self.target)
                     .desired_width(80.0)
                     .char_limit(12),
-            );
+            )
+            .labelled_by(label.id);
         });
         if !self.endpoint.is_empty() && !valid_endpoint(&self.endpoint) {
             ui.weak(
@@ -381,6 +382,61 @@ impl TranslationUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn translation_settings_expose_language_label_and_mask_api_key() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = TranslationUi::default();
+        app.key = Zeroizing::new("synthetic-secret-for-accessibility-test".into());
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| app.settings(ui));
+        output.textures_delta.clear();
+        let tree = output.platform_output.accesskit_update.unwrap();
+        let (_, field) = tree
+            .nodes
+            .iter()
+            .find(|(_, n)| {
+                n.role() == egui::accesskit::Role::TextInput && !n.labelled_by().is_empty()
+            })
+            .unwrap();
+        let (_, label) = tree
+            .nodes
+            .iter()
+            .find(|(id, _)| field.labelled_by().contains(id))
+            .unwrap();
+        let label_text: String = label
+            .children()
+            .iter()
+            .map(|id| {
+                tree.nodes
+                    .iter()
+                    .find(|(node_id, _)| node_id == id)
+                    .unwrap()
+                    .1
+                    .value()
+                    .unwrap_or_default()
+            })
+            .collect();
+        assert_eq!(label_text, "Target language code");
+        assert!(
+            tree.nodes
+                .iter()
+                .any(|(_, n)| n.role() == egui::accesskit::Role::PasswordInput)
+        );
+        for (_, node) in &tree.nodes {
+            assert!(
+                !node
+                    .value()
+                    .unwrap_or_default()
+                    .contains("synthetic-secret")
+            );
+            assert!(
+                !node
+                    .label()
+                    .unwrap_or_default()
+                    .contains("synthetic-secret")
+            );
+        }
+    }
     fn doc(id: &str) -> Lyrics {
         Lyrics {
             track_id: octave_core::TrackId(id.into()),

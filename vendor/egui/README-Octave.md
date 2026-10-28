@@ -10,3 +10,11 @@ Octave changes: the five-file packaging/rtl-candidate/octave-rtl-fixes.patch add
 Manifests are normalized from the upstream workspace: inherited package/dependency/lint values are expanded; these eight crates use relative sibling paths; other optional dependencies resolve from the registry. Dev dependencies and explicit bench/example targets are omitted, automatic examples/benches disabled, publishing disabled, and each crate has its own workspace boundary. The Octave workspace tests the application and its renderer gates, not the entire upstream development workspace. No research-directory path is required to build.
 
 Source integrity: SOURCE-HASHES.json records SHA256 of UTF-8 text normalized to LF (binary assets unchanged) for every retained upstream source/asset other than normalized Cargo.toml and added license copies. After changing renderer source, update the tracked patch/provenance and hashes. Shipping paths use the root Cargo.toml overrides and Cargo.lock. The Rust color_fonts feature is enabled explicitly; no JavaScript runtime is introduced.
+
+Accessibility/IME follow-up: `TextEditState::is_ime_composing` exposes the existing
+composition state so Octave can defer live search until composition ends. The
+additive API is recorded in `packaging/rtl-candidate/octave-ime-state.patch`;
+it does not change composition or rendering internals. App regressions cover
+preedit/replacement/commit/cancel, AccessKit focus/selection, logical Unicode text
+runs and masked password output. Native screen-reader speech and OS IME candidate
+windows still require separate acceptance.
