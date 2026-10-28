@@ -17,6 +17,12 @@ bounded memory-only cache and never sends account cookies. The player keeps
 previous/play/next and volume visible; its options menu holds stop, repeat and
 shuffle. Installed Windows fonts are loaded locally and never redistributed.
 
+Text rendering uses a pinned, patched Rust egui snapshot in `vendor/egui`, with
+RTL shaping, grapheme-aware wrapping and bundled Noto color emoji routing.
+The original proportional text metrics and charcoal/sage palette are preserved.
+See `vendor/egui/README-Octave.md` for provenance and `RELEASE.md` for validation
+and the remaining accessibility acceptance gates.
+
 Search shows a top-result card and an artwork-led Songs list. **Queue top result**
 adds a song without starting playback; **Clear search** cancels pending results
 and the obsolete in-flight request.

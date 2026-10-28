@@ -1,9 +1,23 @@
-# Isolated RTL renderer patch
+# RTL renderer patch and shipping adoption
 
 `octave-rtl-fixes.patch` applies to egui candidate commit
 `c93e8863e958507056415e2a6dace56e23ba5f3a` (upstream PR 8577), not the published
-0.36.2 crates. It is retained for isolated evaluation and is not applied by
-Octave's Cargo configuration or packaging scripts.
+0.36.2 crates. The patched runtime sources now ship in `vendor/egui` through
+Cargo path overrides. Packaging does not apply this patch dynamically; it runs
+all fourteen renderer gates before building. See `vendor/egui/README-Octave.md`
+for source hashes, manifest normalization and adoption-only cleanup.
+
+## Shipping checkpoint — 28 October 2026
+
+Commit `1778d6a` adopts the renderer and color-font feature. Release package
+`0.2.0-expansion.23` was built from that clean commit with the build invoked.
+Manifest verification, isolated upgrade from .22, clean-PATH native launches,
+portable launch and uninstall/profile preservation passed. Full-size and compact
+native screenshots of the actual package retain the Octave palette and readable
+layout. All eight vendored crates and Noto notices are included; no license texts
+are missing. Screen-reader, IME, wider platform/DPI and optimized large-text
+interaction qualification remain open. The following sections are historical
+isolated checkpoints, not the current shipping dependency configuration.
 
 ## Automatic routing and wrapping checkpoint — 28 October 2026
 

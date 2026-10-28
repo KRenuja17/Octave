@@ -6,7 +6,20 @@ automatic emoji/text routing. Earlier isolated-only notes below describe histori
 checkpoints. The renderer's fourteen explicit gates and 149 ordinary tests pass;
 strict Clippy passes after screenshot-callback and ID API adaptation. Packaging
 now requires the renderer gates for a build and includes vendored renderer and
-bundled font notices. Package validation is recorded separately after rebuilding.
+bundled font notices.
+
+Evaluation package `0.2.0-expansion.23` was rebuilt in release mode from clean
+commit `1778d6aa21b4d79cd074a4a45b6371d1c14fa27f` with `buildInvoked=true`.
+All fourteen packaging renderer gates passed. Manifest verification, sandbox
+upgrade from .22, clean-PATH native launches, portable launch and uninstall with
+profile/unrelated-file preservation passed. Full-size and compact native package
+captures were inspected; text and navigation remain readable in the original
+palette. All eight vendored renderer crates appear in the dependency inventory;
+renderer provenance and Noto copyright/OFL are bundled, with no missing license
+texts. These checks used isolated research profiles, without signing in or audio.
+Playlist-fixture preservation, registration and fresh-machine checks were not run.
+ZIP SHA256: `9307d46aa6d2ed73d723ccf656020fa95824f8357d9a1871f828b914c6e165ec`.
+Later documentation commits do not change this package's source attribution.
 This adoption does not close screen-reader/IME, broad platform/DPI or other open
 release-acceptance gates.
 
