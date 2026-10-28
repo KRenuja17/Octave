@@ -90,6 +90,7 @@ struct Alpha {
     results: Vec<Track>,
     debounce: Option<Instant>,
     search_composing: bool,
+    search_before_composition: Option<String>,
     searching: bool,
     search_message: String,
     queue_page: bool,
@@ -162,6 +163,7 @@ impl Alpha {
             results: Vec::new(),
             debounce: None,
             search_composing: false,
+            search_before_composition: None,
             searching: false,
             search_message: String::new(),
             queue_page: matches!(
@@ -1147,6 +1149,7 @@ impl Alpha {
                 }
             });
         } else {
+            let previous_query = self.query.clone();
             let input = ui
                 .scope(|ui| {
                     ui.visuals_mut().widgets.inactive.corner_radius = egui::CornerRadius::same(24);
@@ -1164,6 +1167,19 @@ impl Alpha {
                 .inner;
             let composing = input.state.is_ime_composing();
             let composition_changed = self.search_composing != composing;
+            if composing && !self.search_composing {
+                self.search_before_composition = Some(previous_query);
+            }
+            // The renderer ends composition on focus loss too. That is not a
+            // commit: do not send the abandoned candidate to live search.
+            let interrupted = self.search_composing && !composing && !input.response.has_focus();
+            if self.search_composing
+                && !composing
+                && let Some(committed) = self.search_before_composition.take()
+                && interrupted
+            {
+                self.query = committed;
+            }
             self.search_composing = composing;
             let input = input.response;
             input.widget_info(|| {
@@ -1177,7 +1193,7 @@ impl Alpha {
                 self.results.clear();
                 self.searching = false;
                 self.search_message.clear();
-                self.debounce = (!composing).then(Instant::now);
+                self.debounce = (!composing && !interrupted).then(Instant::now);
             }
             ui.horizontal(|ui| {
                 if self.searching {
@@ -1188,6 +1204,8 @@ impl Alpha {
                 }
                 if !self.query.is_empty() && ui.button("Clear search").clicked() {
                     self.query.clear();
+                    self.search_before_composition = None;
+                    self.search_composing = false;
                     self.results.clear();
                     self.search.invalidate();
                     self.searching = false;
@@ -1727,6 +1745,48 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+    #[test]
+    fn search_ime_focus_loss_does_not_submit_an_uncommitted_candidate() {
+        let path = path("ime-focus-loss");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        content_frame(&ctx, &mut app, vec![]);
+        let field_id = egui::Id::unique("alpha-search");
+        ctx.memory_mut(|m| m.request_focus(field_id));
+        content_frame(&ctx, &mut app, vec![egui::Event::Text("日本".into())]);
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: "語".into(),
+                active_range_chars: Some(0..1),
+            })],
+        );
+        assert!(app.debounce.is_none());
+        ctx.memory_mut(|m| m.surrender_focus(field_id));
+        content_frame(&ctx, &mut app, vec![]);
+        assert!(app.debounce.is_none(), "Losing focus is not an IME commit");
+        assert_eq!(
+            app.query, "日本",
+            "Restore the committed query on interrupted composition"
+        );
+        assert!(!app.searching);
+        // A delayed OS commit after blur must not be delivered to the old field.
+        content_frame(
+            &ctx,
+            &mut app,
+            vec![egui::Event::Ime(egui::ImeEvent::Commit("遅延".into()))],
+        );
+        assert_eq!(app.query, "日本");
+        assert!(app.debounce.is_none());
+        ctx.memory_mut(|m| m.request_focus(field_id));
+        content_frame(&ctx, &mut app, vec![egui::Event::Text("語".into())]);
+        assert_eq!(app.query, "日本語");
+        assert!(app.debounce.is_some());
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn search_ime_composes_without_submitting_and_commits_once() {

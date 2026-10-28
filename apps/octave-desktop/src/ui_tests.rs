@@ -35,6 +35,79 @@ fn key(key: Key, modifiers: Modifiers) -> Event {
 }
 
 #[test]
+fn accessibility_selection_crosses_long_text_run_boundaries() {
+    let ctx = egui::Context::default();
+    crate::theme::install(&ctx);
+    ctx.enable_accesskit();
+    let id = egui::Id::unique("long-accessible-edit");
+    let source = "日本語".repeat(200);
+    let mut text = source.clone();
+    let render = |text: &mut String, events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::TextEdit::singleline(text).id(id).show(ui);
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    render(&mut text, vec![]);
+    ctx.memory_mut(|m| m.request_focus(id));
+    let tree = render(&mut text, vec![])
+        .platform_output
+        .accesskit_update
+        .unwrap();
+    let (_, field) = tree
+        .nodes
+        .iter()
+        .find(|(node_id, _)| *node_id == id.accesskit_id())
+        .unwrap();
+    assert_eq!(field.children().len(), 3);
+    let selection = egui::accesskit::TextSelection {
+        anchor: egui::accesskit::TextPosition {
+            node: field.children()[0],
+            character_index: 254,
+        },
+        focus: egui::accesskit::TextPosition {
+            node: field.children()[2],
+            character_index: 2,
+        },
+    };
+    let tree = render(
+        &mut text,
+        vec![Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::SetTextSelection,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: id.accesskit_id(),
+                data: Some(egui::accesskit::ActionData::SetTextSelection(selection)),
+            },
+        )],
+    )
+    .platform_output
+    .accesskit_update
+    .unwrap();
+    let (_, field) = tree
+        .nodes
+        .iter()
+        .find(|(node_id, _)| *node_id == id.accesskit_id())
+        .unwrap();
+    assert_eq!(field.text_selection(), Some(&selection));
+    let range = egui::TextEdit::load_state(&ctx, id)
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap()
+        .as_sorted_char_range();
+    assert_eq!((range.start.0, range.end.0), (254, 512));
+    assert_eq!(text, source);
+}
+
+#[test]
 fn accessibility_text_runs_preserve_logical_unicode() {
     // This checks the tree consumed by adapters, not spoken screen-reader output.
     for source in [
