@@ -1,5 +1,27 @@
 # Release candidate evaluation
 
+## Native focus verified — 29 October 2026
+
+After the user restored Octave, activating the exact returned window and checking
+its screenshot resolved targeting for this session. Native click focus,
+Tab/Shift+Tab, Unicode entry and Ctrl+A selection passed in an isolated profile.
+The earlier inconclusive checks below remain historical.
+
+Native testing reproduced Ctrl+K failing when Control was released before a
+rendered frame. Search now consumes the key event's modifiers, navigates to Search
+and focuses its editor. The rebuilt native app passed Ctrl+K from startup and
+from the playlist editor. Playlist name now remains an accessible name after text
+entry. The field's enabled state follows its containing UI. These changes keep
+the Rust-only implementation and original palette.
+
+156 ordinary tests pass (35 opt-in ignored), including the released-Control
+regression and IME output geometry/ownership checks. Strict Clippy and format/diff
+checks pass. Native Unicode typing is not an OS IME composition test: only en-US
+input is configured. Spoken Narrator/NVDA, actual candidate-window positioning,
+mixed-direction accessibility geometry and broader script/DPI acceptance remain
+open. No sign-in, provider requests, audio, saved playlists, system changes or
+release-package rebuild occurred. The .23 package predates these fixes.
+
 ## Native focus follow-up — 28 October 2026
 
 Search now restores its last committed query when focus interrupts composition,
