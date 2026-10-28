@@ -5,6 +5,32 @@
 0.36.2 crates. It is retained for isolated evaluation and is not applied by
 Octave's Cargo configuration or packaging scripts.
 
+## Automatic routing and wrapping checkpoint — 28 October 2026
+
+Fourteen explicit gates now pass. Octave registers the bundled, unmodified Noto
+font in `Octave Emoji`, separate from the normal proportional chain. The isolated
+renderer routes complete emoji-presentation graphemes to that family and explicit
+VS15 text presentation to `Octave Text` (which excludes the color emoji face).
+Ordinary text, digits and spaces keep their metrics even after emoji cache warmup.
+Routing applies only to proportional text; explicit/custom and monospace families
+keep their own policy. Missing named families leave the original path intact.
+
+The row breaker now only records grapheme boundaries. Oversized graphemes overrun
+the requested width rather than detaching continuation characters onto another
+row. Cross-row tests cover widths25/80/160, explicit newlines, mixed RTL text,
+combining marks and joined emoji, including partial selections and unselected
+neighbors. Painting preserves logical copy ranges. Native inspection uses only
+the actual Octave theme and normal proportional labels, with no fixture font
+overrides, and confirms flags, monochrome VS15/color VS16 and cross-row highlights.
+
+The 10,730,124-byte font, copyright/provenance notice and OFL license are now in
+`apps/octave-desktop/assets/fonts`. `Build-Package.ps1` appends both notices to
+distribution notices; its exact notice block was executed and checked. No package
+was built in this pass. The prior external font environment variable is no longer
+required by the gates. Color features and the patched renderer remain isolated;
+shipping dependency adoption, keyboard/IME and screen-reader qualification remain
+open. Font registration alone does not enable the new routing in published egui.
+
 ## Color and selection checkpoint — 28 October 2026
 
 The latest isolated patch passes twelve explicit renderer gates. It composites
@@ -16,15 +42,15 @@ semantics still need separate qualification.
 
 For the color gates, add `epaint = { version = "=0.36.2", features = ["color_fonts"] }`
 to the **external snapshot's** desktop dependencies, using the existing candidate
-override. Resolve its external lockfile offline. Set `OCTAVE_TEST_EMOJI_FONT` to the
-retained Noto Color Emoji font before running the explicit tests below. Neither
-the color feature nor this research font is added to shipping dependencies/assets.
+override. Resolve its external lockfile offline. Current gates use the bundled
+font described above. The color feature remains external to shipping dependencies.
 
 The test font is from [Noto Emoji](https://github.com/googlefonts/noto-emoji/tree/99701e07d3d1fe1bdbcdb14964547f0fd592966f),
 `2D/fonts/NotoColorEmoji.ttf`, SHA256
 `15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44`.
-Its adjacent SIL OFL license and source metadata are retained with the font outside
-the project. No system font installation or font redistribution was performed.
+At that checkpoint, its adjacent SIL OFL license and source metadata were retained
+with the research font outside the project. The subsequent routing checkpoint
+bundles the unmodified asset and notices; no system font installation is performed.
 
 Native inspection confirms colored joined emoji and Sri Lankan/Japanese/US flags,
 including an unmodified-color selected emoji and a composed Segoe family. The final

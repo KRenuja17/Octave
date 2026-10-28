@@ -362,6 +362,21 @@ skips93 including twelve gates in five capture examples. Shipping strict Clippy,
 formatting and diff checks pass. The tracked patch reproduces four upstream source
 files; the evaluation package has not been rebuilt.
 
+The subsequent routing checkpoint passes fourteen isolated gates. Octave registers
+a bundled Noto emoji family and a separate explicit text-presentation family;
+the candidate routes whole graphemes without changing normal text/digit/space
+metrics. Its row breaker no longer splits emoji or combining continuations.
+Cross-row selection checks cover widths25/80/160, mixed directions and newlines,
+and preserve logical copy ranges. Native capture uses the real theme with no
+fixture font override and shows correct VS15/VS16, flags and cross-row highlights.
+Both ordinary suites pass149 (shipping35 skipped; isolated119 including six
+capture examples); shipping strict Clippy/format/diff pass. The five-file patch
+reproduces tested sources. The pinned 10,730,124-byte font and copyright/OFL notices
+are now project assets and included in the packaging notice path, whose exact
+block was verified. No package was built. Shipping still uses the published
+renderer, so automatic routing requires candidate adoption; keyboard/IME,
+screen-reader, wider platform/DPI and optimized performance gates remain open.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC
