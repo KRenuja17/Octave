@@ -347,6 +347,21 @@ capture examples); shipping strict Clippy/format/diff pass. The updated patch
 reproduces the tested source. Shipping renderer dependencies and the original
 palette remain unchanged; this is not full RTL or release acceptance.
 
+The 28 October color/selection checkpoint passes twelve isolated renderer gates.
+The Rust patch composites color clusters, preserves logical characters, highlights
+partially selected graphemes visibly and preserves emoji colors under selection.
+Atlas-pixel checks and native inspection confirm colored emoji and Sri Lankan,
+Japanese and US flags with a pinned research-only Noto font. Segoe multi-glyph
+family composition also passes. Logical copy ranges are intentionally unchanged
+by painting; cross-row selection and editing/IME semantics remain unqualified.
+The test-only Noto font is scoped to fixture rows because global first priority
+changed text spacing/digits. Shipping font routing, font distribution and broader
+renderer adoption remain open. Shipping dependencies/assets/palette are unchanged.
+Both ordinary suites pass 149 tests; shipping skips33 and the isolated snapshot
+skips93 including twelve gates in five capture examples. Shipping strict Clippy,
+formatting and diff checks pass. The tracked patch reproduces four upstream source
+files; the evaluation package has not been rebuilt.
+
 Clock-driven line lyrics, Follow/manual scrolling, Focus, companion panels,
 complete public playlists, local history/pins, unsigned catalog and longer
 standard fades have offline fixture coverage. Translation HTTP and Discord IPC

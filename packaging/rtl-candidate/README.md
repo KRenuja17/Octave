@@ -5,6 +5,36 @@
 0.36.2 crates. It is retained for isolated evaluation and is not applied by
 Octave's Cargo configuration or packaging scripts.
 
+## Color and selection checkpoint — 28 October 2026
+
+The latest isolated patch passes twelve explicit renderer gates. It composites
+multi-glyph color clusters into one cached bitmap, retains logical continuations,
+expands partial-grapheme selection backgrounds to the visible grapheme, and avoids
+tinting color glyphs with selection foreground colors. Painting does not change
+the logical cursor or copied-text range. Cross-row graphemes and editing/navigation
+semantics still need separate qualification.
+
+For the color gates, add `epaint = { version = "=0.36.2", features = ["color_fonts"] }`
+to the **external snapshot's** desktop dependencies, using the existing candidate
+override. Resolve its external lockfile offline. Set `OCTAVE_TEST_EMOJI_FONT` to the
+retained Noto Color Emoji font before running the explicit tests below. Neither
+the color feature nor this research font is added to shipping dependencies/assets.
+
+The test font is from [Noto Emoji](https://github.com/googlefonts/noto-emoji/tree/99701e07d3d1fe1bdbcdb14964547f0fd592966f),
+`2D/fonts/NotoColorEmoji.ttf`, SHA256
+`15671215ab769fdc7162a045d56fd7d7e477c51b04e6b3c761d914d8fdd6cc44`.
+Its adjacent SIL OFL license and source metadata are retained with the font outside
+the project. No system font installation or font redistribution was performed.
+
+Native inspection confirms colored joined emoji and Sri Lankan/Japanese/US flags,
+including an unmodified-color selected emoji and a composed Segoe family. The final
+capture scopes Noto to fixture rows: making it the global first font altered normal
+spacing/digits. Production emoji font routing, distribution/licensing integration,
+cross-platform coverage, IME, screen-reader behavior and optimized performance
+remain open. These results qualify an isolated renderer, not a shipping release.
+
+## Earlier checkpoints
+
 The patch renders multi-glyph clusters into a single bitmap while retaining their
 logical characters, applies Unicode L1 levels after wrapping, and paints separated
 visual selection spans instead of one rectangle between logical endpoints.
