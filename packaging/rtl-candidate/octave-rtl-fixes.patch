@@ -131,7 +131,7 @@
              emit_cluster_bitmap(fonts, &shaped, glyph_range.clone(), ctx, paragraph)
          } else {
              None
-@@ -332,11 +422,11 @@
+@@ -332,16 +422,16 @@
      }
  }
 
@@ -145,9 +145,22 @@
  /// the cluster is rendered into one atlas entry ([`FontsImpl::allocate_cluster`])
  /// carried by its first character, with the cluster's whole advance.
  ///
+-/// `None` if the cluster cannot be drawn that way (a `.notdef` or a color glyph
+-/// in it); the caller then falls back to one glyph per shaped glyph.
++/// `None` if the cluster contains a `.notdef`; missing clusters are handled
++/// as one fallback unit by the caller. Color clusters share a composite bitmap.
+ fn emit_cluster_bitmap(
+     fonts: &mut FontsImpl,
+     shaped: &ShapedRun<'_>,
 --- a/crates/egui/src/text_selection/visuals.rs
 +++ b/crates/egui/src/text_selection/visuals.rs
-@@ -47,25 +47,44 @@
+@@ -1,4 +1,5 @@
+ use std::sync::Arc;
++use unicode_segmentation::UnicodeSegmentation as _;
+
+ use emath::Pos2;
+ use epaint::{
+@@ -47,89 +48,121 @@
          let placed_row = &mut galley.rows[ri];
          let row = Arc::make_mut(&mut placed_row.row);
 
@@ -165,6 +178,21 @@
 -        } else {
 -            let newline_size = if placed_row.ends_with_newline {
 -                row.height() / 2.0 // visualize that we select the newline
++        // Paint a partially selected grapheme as one visible unit. This only
++        // expands visual bounds; logical cursor/copy ranges remain unchanged.
++        let mut visual_start = start;
++        let mut visual_end = end;
++        let mut column = 0;
++        for grapheme in row.text().graphemes(true) {
++            let next = column + grapheme.chars().count();
++            if column < end && start < next {
++                visual_start = visual_start.min(column);
++                visual_end = visual_end.max(next);
++            }
++            column = next;
++        }
++        let start = visual_start;
++        let end = visual_end;
 +        // A logical selection can occupy separated visual spans in bidi text.
 +        let mut spans: Vec<Rect> = row.glyphs
 +            [start.min(row.glyphs.len())..end.min(row.glyphs.len())]
@@ -207,11 +235,38 @@
 +        }
          let mesh = &mut row.visuals.mesh;
 
-         if !row.glyphs.is_empty() {
-@@ -91,45 +110,47 @@
-             }
-         }
-
+-        if !row.glyphs.is_empty() {
+-            // Change color of the selected text:
+-            let first_glyph_index = if ri == min.row { min.column.0 } else { 0 };
+-            let last_glyph_index = if ri == max.row {
+-                max.column.0
+-            } else {
+-                row.glyphs.len()
+-            };
+-
+-            let first_vertex_index = row
++        // Color emoji already carry their own colors in the atlas. Tinting
++        // their vertices with the selection foreground corrupts those colors.
++        for index in start.min(row.glyphs.len())..end.min(row.glyphs.len()) {
++            let glyph = &row.glyphs[index];
++            if glyph.is_color {
++                continue;
++            }
++            let first = glyph.first_vertex as usize;
++            let last = row
+                 .glyphs
+-                .get(first_glyph_index)
+-                .map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
+-            let last_vertex_index = row
+-                .glyphs
+-                .get(last_glyph_index)
+-                .map_or(row.visuals.glyph_vertex_range.end, |g| g.first_vertex as _);
+-
+-            for vi in first_vertex_index..last_vertex_index {
+-                mesh.vertices[vi].color = text_color;
+-            }
+-        }
+-
 -        // Time to insert the selection rectangle into the row mesh.
 -        // It should be on top (after) of any background in the galley,
 -        // but behind (before) any glyphs. The row visuals has this information:
@@ -251,6 +306,15 @@
 -                row: ri,
 -                vertex_indices: selection_triangles,
 -            });
++                .get(index + 1)
++                .map_or(row.visuals.glyph_vertex_range.end, |g| {
++                    g.first_vertex as usize
++                });
++            for vertex in &mut mesh.vertices[first..last] {
++                vertex.color = text_color;
++            }
++        }
++
 +        for rect in rects {
 +            // Time to insert the selection rectangle into the row mesh.
 +            // It should be on top (after) of any background in the galley,
@@ -295,3 +359,92 @@
          }
      }
  }
+--- a/crates/epaint/src/text/font_face.rs
++++ b/crates/epaint/src/text/font_face.rs
+@@ -707,13 +707,58 @@
+
+     /// Render several glyphs into one bitmap, each at its offset from the shared origin.
+     ///
+-    /// Outlines only, as coverage: see [`crate::text::glyph_atlas::GlyphAtlas::allocate_cluster`].
++    /// Outlines use coverage; clusters containing color glyphs use source-over
++    /// bitmap composition with the shaped offsets.
+     pub(crate) fn rasterize_cluster(
+         &mut self,
+         metrics: &StyledMetrics,
+         glyphs: &[ClusterGlyph],
+         bin: SubpixelBin,
+     ) -> Option<GlyphBitmap> {
++        if glyphs
++            .iter()
++            .any(|g| self.is_color_glyph(metrics, g.glyph_id))
++        {
++            let mut layers = Vec::new();
++            let mut min = emath::pos2(f32::INFINITY, f32::INFINITY);
++            let mut max = emath::pos2(f32::NEG_INFINITY, f32::NEG_INFINITY);
++            for glyph in glyphs {
++                if let Some(mut bitmap) = self.rasterize_glyph(metrics, glyph.glyph_id, bin) {
++                    if bitmap.image.width() == 0 || bitmap.image.height() == 0 {
++                        continue;
++                    }
++                    bitmap.offset_px += glyph.offset_px;
++                    bitmap.offset_px = bitmap.offset_px.round();
++                    min = min.min(bitmap.offset_px.to_pos2());
++                    max = max.max(
++                        (bitmap.offset_px
++                            + vec2(bitmap.image.width() as f32, bitmap.image.height() as f32))
++                        .to_pos2(),
++                    );
++                    layers.push(bitmap);
++                }
++            }
++            if layers.is_empty() {
++                return None;
++            }
++            let size = [(max.x - min.x) as usize, (max.y - min.y) as usize];
++            let mut image = ColorImage::filled(size, Color32::TRANSPARENT);
++            for layer in layers {
++                let x = (layer.offset_px.x - min.x) as usize;
++                let y = (layer.offset_px.y - min.y) as usize;
++                for row in 0..layer.image.height() {
++                    for col in 0..layer.image.width() {
++                        let dest = &mut image[(x + col, y + row)];
++                        *dest = dest.blend(layer.image[(col, row)]);
++                    }
++                }
++            }
++            return Some(GlyphBitmap {
++                image,
++                offset_px: min.to_vec2(),
++                is_color: true,
++            });
++        }
+         let hinting_target = self.tweak.hinting_target.into();
+         let binned = glyphs.iter().map(|glyph| ClusterGlyph {
+             offset_px: glyph.offset_px + vec2(bin.as_float(), 0.0),
+--- a/crates/epaint/src/text/glyph_atlas.rs
++++ b/crates/epaint/src/text/glyph_atlas.rs
+@@ -340,8 +340,8 @@
+     /// The cluster is sub-pixel binned and cached like a single glyph;
+     /// the key covers every glyph in it and its offset.
+     ///
+-    /// `None` if a glyph in the cluster is a color glyph: those are bitmaps, not
+-    /// outlines, and go through [`Self::allocate_outline`] one at a time.
++    /// Color clusters are composited at their shaped offsets into one bitmap,
++    /// so logical continuation characters never become separate visual glyphs.
+     pub fn allocate_cluster(
+         &mut self,
+         face_key: FontFaceKey,
+@@ -354,13 +354,6 @@
+             h_pos,
+             is_cjk,
+         } = *shaped;
+-
+-        if glyphs
+-            .iter()
+-            .any(|glyph| face.is_color_glyph(metrics, glyph.glyph_id))
+-        {
+-            return None;
+-        }
+
+         let (x_px, bin) = if face.subpixel_binning() && !is_cjk {
+             SubpixelBin::new(h_pos)

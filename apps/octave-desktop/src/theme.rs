@@ -190,6 +190,161 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "Explicit color-font candidate gate; OCTAVE_TEST_EMOJI_FONT supplies flag font"]
+    fn rtl_renderer_color_emoji_and_flags_keep_selection_colors() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        let ctx = renderer_context();
+        // Segoe's family sequence exercises multi-glyph color composition,
+        // whereas the Noto fixtures below generally shape to one glyph.
+        let family = "👨‍👩‍👧‍👦";
+        let composed =
+            ctx.fonts_mut(|f| f.layout_no_wrap(family.into(), FontId::proportional(32.0), TEXT));
+        assert_eq!(composed.rows[0].row.text(), family);
+        let carriers: Vec<_> = composed.rows[0]
+            .row
+            .glyphs
+            .iter()
+            .filter(|g| g.advance_width > 0.0)
+            .collect();
+        assert_eq!(carriers.len(), 1);
+        assert!(!carriers[0].uv_rect.is_nothing());
+        let path =
+            std::env::var("OCTAVE_TEST_EMOJI_FONT").expect("Explicit licensed test font path");
+        let mut fonts = ctx.fonts_mut(|f| f.definitions().clone());
+        fonts.font_data.insert(
+            "test-color".into(),
+            egui::FontData::from_owned(std::fs::read(path).unwrap()).into(),
+        );
+        fonts
+            .families
+            .get_mut(&FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "test-color".into());
+        ctx.set_fonts(fonts);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        for text in ["👩‍💻", "👨‍👩‍👧‍👦", "👍🏽", "🇱🇰", "🇯🇵", "🇺🇸", "1️⃣", "❤️"]
+        {
+            let mut galley =
+                ctx.fonts_mut(|f| f.layout_no_wrap(text.into(), FontId::proportional(32.0), TEXT));
+            assert_eq!(galley.rows[0].row.text(), text);
+            let carriers: Vec<_> = galley.rows[0]
+                .row
+                .glyphs
+                .iter()
+                .filter(|g| g.advance_width > 0.0)
+                .collect();
+            assert_eq!(carriers.len(), 1, "Single grapheme carrier: {text}");
+            let uv = carriers[0].uv_rect;
+            assert!(!uv.is_nothing(), "Visible bitmap: {text}");
+            if !["👨‍👩‍👧‍👦", "1️⃣"].contains(&text) {
+                // Check actual atlas pixels, using APIs shared by shipping and
+                // candidate renderers. Neutral family/keycap artwork is valid.
+                let atlas = ctx.fonts_mut(|f| f.image());
+                let colored = (uv.min[1]..uv.max[1]).any(|y| {
+                    (uv.min[0]..uv.max[0]).any(|x| {
+                        let p = atlas[(x as usize, y as usize)];
+                        p.a() > 0 && (p.r() != p.g() || p.g() != p.b())
+                    })
+                });
+                assert!(colored, "Chromatic atlas pixels: {text}");
+            }
+            let colors: Vec<_> = galley.rows[0]
+                .row
+                .visuals
+                .mesh
+                .vertices
+                .iter()
+                .map(|v| v.color)
+                .collect();
+            let range = CCursorRange::two(
+                CCursor {
+                    index: CharIndex(0),
+                    prefer_next_row: false,
+                },
+                CCursor {
+                    index: CharIndex(text.chars().count()),
+                    prefer_next_row: false,
+                },
+            );
+            paint_text_selection(
+                &mut galley,
+                &ctx.style_of(egui::Theme::Dark).visuals,
+                &range,
+                None,
+            );
+            for (vertex, before) in galley.rows[0].row.visuals.mesh.vertices.iter().zip(colors) {
+                assert_eq!(vertex.color, before, "Selection must not tint {text}");
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit renderer gate: partial grapheme selection highlights its carrier"]
+    fn rtl_renderer_partial_grapheme_selection_has_visible_extent() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        let ctx = renderer_context();
+        for cluster in ["e\u{301}", "👩‍💻", "👨‍👩‍👧‍👦", "👍🏽", "❤️", "بِ"]
+        {
+            let text = format!("A{cluster}B");
+            let original =
+                ctx.fonts_mut(|f| f.layout_no_wrap(text.clone(), FontId::proportional(32.0), TEXT));
+            assert_eq!(original.rows[0].row.text(), text);
+            let carrier = original.rows[0].row.glyphs[1].logical_rect().center();
+            for start in 1..1 + cluster.chars().count() {
+                let range = CCursorRange::two(
+                    CCursor {
+                        index: CharIndex(start),
+                        prefer_next_row: false,
+                    },
+                    CCursor {
+                        index: CharIndex(start + 1),
+                        prefer_next_row: false,
+                    },
+                );
+                let copied = range.slice_str(&text).to_owned();
+                let mut galley = original.clone();
+                let mut regions = Vec::new();
+                paint_text_selection(
+                    &mut galley,
+                    &ctx.style_of(egui::Theme::Dark).visuals,
+                    &range,
+                    Some(&mut regions),
+                );
+                let row = &galley.rows[0].row;
+                let rects: Vec<_> = regions
+                    .iter()
+                    .map(|r| {
+                        let mut rect = egui::Rect::NOTHING;
+                        for i in r.vertex_indices {
+                            rect.extend_with(row.visuals.mesh.vertices[i as usize].pos);
+                        }
+                        rect
+                    })
+                    .collect();
+                assert!(
+                    rects.iter().any(|r| r.contains(carrier)),
+                    "{cluster} scalar {start}"
+                );
+                for neighbor in [0, row.glyphs.len() - 1] {
+                    assert!(
+                        !rects
+                            .iter()
+                            .any(|r| r.contains(row.glyphs[neighbor].logical_rect().center()))
+                    );
+                }
+                assert_eq!(
+                    range.slice_str(&text),
+                    copied,
+                    "Painting must preserve logical copy range"
+                );
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "Explicit renderer qualification: paragraphs, isolates and fallback scripts"]
     fn rtl_renderer_complex_paragraphs_and_fallback() {
         let ctx = renderer_context();
