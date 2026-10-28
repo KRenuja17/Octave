@@ -79,7 +79,7 @@ impl PlaylistsUi {
                 egui::TextEdit::singleline(&mut self.name)
                     .hint_text("Playlist name")
                     .char_limit(80),
-            );
+            ).widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, ui.is_enabled(), "Playlist name"));
             if ui
                 .add_enabled(
                     !self.name.trim().is_empty() && self.data.len() < MAX_PLAYLISTS,

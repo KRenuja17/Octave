@@ -825,6 +825,13 @@ impl Alpha {
         scroll.show(ui, |ui| self.content_body(ui));
     }
     fn content(&mut self, ui: &mut egui::Ui) {
+        // Match the modifiers on the key event, not the end-of-frame state:
+        // fast chords may have released Control before this frame renders.
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::K)) {
+            self.focus = false;
+            self.navigate(crate::shell::Destination::Search);
+            ui.memory_mut(|m| m.request_focus(egui::Id::unique("alpha-search")));
+        }
         if self.applied_appearance != Some(self.session.appearance) {
             theme::apply(ui.ctx(), self.session.appearance);
             self.applied_appearance = Some(self.session.appearance);
@@ -1185,9 +1192,6 @@ impl Alpha {
             input.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search YouTube Music")
             });
-            if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
-                input.request_focus();
-            }
             if input.changed() || composition_changed {
                 self.search.invalidate();
                 self.results.clear();
@@ -1548,13 +1552,6 @@ impl eframe::App for Alpha {
                 self.previous();
             }
         }
-        if ui.input(|i| i.modifiers.ctrl && i.key_pressed(egui::Key::K)) {
-            self.catalog_page = false;
-            self.settings_page = false;
-            self.playlists_page = false;
-            self.account_page = false;
-            self.queue_page = false;
-        }
         egui::Panel::bottom("listening-player")
             .frame(
                 egui::Frame::new()
@@ -1745,6 +1742,39 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+    #[test]
+    fn search_shortcut_uses_event_modifiers_after_control_is_released() {
+        let path = path("search-shortcut-release");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        content_frame(&ctx, &mut app, vec![]);
+        let event = egui::Event::Key {
+            key: egui::Key::K,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::CTRL,
+        };
+        // RawInput's current modifiers are NONE: the entire chord can arrive
+        // between frames, but the key event retains its own modifiers.
+        let output = content_frame(&ctx, &mut app, vec![event.clone()]);
+        let id = egui::Id::unique("alpha-search");
+        assert!(ctx.memory(|m| m.has_focus(id)));
+        assert_eq!(
+            output.platform_output.accesskit_update.unwrap().focus,
+            id.accesskit_id()
+        );
+        app.navigate(crate::shell::Destination::Playlists);
+        content_frame(&ctx, &mut app, vec![]);
+        content_frame(&ctx, &mut app, vec![event]);
+        assert_eq!(app.destination(), crate::shell::Destination::Search);
+        assert!(ctx.memory(|m| m.has_focus(id)));
+        assert!(!app.searching);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn search_ime_focus_loss_does_not_submit_an_uncommitted_candidate() {

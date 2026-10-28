@@ -35,6 +35,63 @@ fn key(key: Key, modifiers: Modifiers) -> Event {
 }
 
 #[test]
+fn ime_output_tracks_focused_field_and_clears_after_blur() {
+    let ctx = egui::Context::default();
+    crate::theme::install(&ctx);
+    let ids = [
+        egui::Id::unique("ime-first"),
+        egui::Id::unique("ime-second"),
+    ];
+    let mut texts = [String::new(), String::new()];
+    let render = |texts: &mut [String; 2], events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(480.0, 640.0),
+                )),
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                for (index, text) in texts.iter_mut().enumerate() {
+                    egui::TextEdit::singleline(text)
+                        .id(ids[index])
+                        .desired_width(250.0)
+                        .show(ui);
+                    ui.add_space(40.0);
+                }
+            },
+        );
+        output.textures_delta.clear();
+        output.platform_output.ime
+    };
+    render(&mut texts, vec![]);
+    ctx.memory_mut(|m| m.request_focus(ids[0]));
+    let first = render(
+        &mut texts,
+        vec![Event::Ime(egui::ImeEvent::Preedit {
+            text: "日本".into(),
+            active_range_chars: Some(0..2),
+        })],
+    )
+    .unwrap();
+    assert!(first.rect.is_finite() && first.cursor_rect.is_finite());
+    assert!(first.rect.expand(2.0).contains_rect(first.cursor_rect));
+    ctx.memory_mut(|m| m.request_focus(ids[1]));
+    let second = render(
+        &mut texts,
+        vec![Event::Ime(egui::ImeEvent::Commit("한국어".into()))],
+    )
+    .unwrap();
+    assert!(second.rect.top() > first.rect.bottom());
+    assert!(second.rect.expand(2.0).contains_rect(second.cursor_rect));
+    assert_eq!(texts, ["日本", "한국어"]);
+    ctx.memory_mut(|m| m.surrender_focus(ids[1]));
+    assert!(render(&mut texts, vec![]).is_none());
+}
+
+#[test]
 fn accessibility_selection_crosses_long_text_run_boundaries() {
     let ctx = egui::Context::default();
     crate::theme::install(&ctx);
