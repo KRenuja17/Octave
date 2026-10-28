@@ -1,5 +1,28 @@
 # Release candidate evaluation
 
+## Accessibility and IME follow-up — 28 October 2026
+
+Live search now waits for IME composition to finish, including unchanged-candidate
+commit and cancellation. Search again is disabled during composition. Translation
+settings associate the language-code edit with its visible label. These changes
+are Rust-only and preserve the palette.
+
+Offline checks cover Japanese preedit/replacement/commit/cancel, AccessKit focus
+and selection actions, wrapped logical Unicode text runs, the language-label
+relation and masked API-key output. 152 ordinary tests and all14 renderer gates
+pass, with strict Clippy. Windows UI Automation discovered the native search
+field, navigation, player text and disabled navigation states in an isolated
+profile. Live keyboard-focus checks were inconclusive because the test window was
+minimized and automation reported input interference. Spoken Narrator/NVDA output
+was not tested. Only en-US keyboard input is configured on this machine; injected
+Rust IME events do not qualify OS candidate-window placement or real IME behavior.
+RTL/mixed-direction accessibility geometry, caret/deletion and broader IME and
+screen-reader acceptance remain open. No sign-in, audio or provider requests were
+used for these checks. The .23 package below predates this follow-up; no package
+was rebuilt in this pass.
+
+## Shipping renderer evaluation
+
 The shipping source now uses the pinned patched Rust renderer in `vendor/egui`
 (upstream c93e8863e958507056415e2a6dace56e23ba5f3a), with color-font support and
 automatic emoji/text routing. Earlier isolated-only notes below describe historical
