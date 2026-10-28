@@ -45,7 +45,7 @@ fn keyboard_search_text_and_tab_focus_work() {
         vec![key(Key::K, Modifiers::CTRL)],
     );
     assert_eq!(app.page, Page::Search);
-    assert!(ctx.memory(|m| m.has_focus(egui::Id::new("catalog-search"))));
+    assert!(ctx.memory(|m| m.has_focus(egui::Id::unique("catalog-search"))));
     frame(
         &ctx,
         &mut app,
@@ -72,7 +72,7 @@ fn keyboard_search_text_and_tab_focus_work() {
         vec![key(Key::Tab, Modifiers::NONE)],
     );
     assert!(ctx.memory(|m| m.focused().is_some()));
-    assert!(!ctx.memory(|m| m.has_focus(egui::Id::new("catalog-search"))));
+    assert!(!ctx.memory(|m| m.has_focus(egui::Id::unique("catalog-search"))));
 }
 #[test]
 fn large_library_virtualizes_and_scrolls_without_building_all_rows() {

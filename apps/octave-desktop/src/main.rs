@@ -156,14 +156,10 @@ impl eframe::App for Application {
             eprintln!("native_preview_ready");
         }
         if let Some(path) = &self.capture {
-            let screenshot = ui.input(|i| {
-                i.events.iter().find_map(|e| {
-                    if let egui::Event::Screenshot { image, .. } = e {
-                        Some(image.clone())
-                    } else {
-                        None
-                    }
-                })
+            let screenshot = ui.ctx().data_mut(|data| {
+                data.remove_temp::<std::sync::Arc<egui::ColorImage>>(egui::Id::unique(
+                    "octave.capture.image",
+                ))
             });
             if let Some(image) = screenshot {
                 let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
@@ -188,7 +184,20 @@ impl eframe::App for Application {
             }
             if self.frames >= 60 && self.prototype.artwork_ready() && !self.screenshot_requested {
                 ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                        egui::ScreenshotCallback::new({
+                            let ctx = ui.ctx().clone();
+                            move |image| {
+                                ctx.data_mut(|data| {
+                                    data.insert_temp(
+                                        egui::Id::unique("octave.capture.image"),
+                                        image,
+                                    )
+                                });
+                                ctx.request_repaint();
+                            }
+                        }),
+                    ));
                 self.screenshot_requested = true;
             }
             ui.ctx()

@@ -66,7 +66,7 @@ impl Prototype {
         if search_shortcut {
             self.navigate(Page::Search);
         }
-        if !ui.memory(|m| m.has_focus(egui::Id::new("catalog-search"))) {
+        if !ui.memory(|m| m.has_focus(egui::Id::unique("catalog-search"))) {
             if ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Space)) {
                 self.session.playing = !self.session.playing && self.session.current().is_some();
             }
@@ -366,7 +366,7 @@ impl Prototype {
             let response = ui.add_sized(
                 [ui.available_width().min(460.0) - 85.0, 38.0],
                 egui::TextEdit::singleline(&mut self.query)
-                    .id(egui::Id::new("catalog-search"))
+                    .id(egui::Id::unique("catalog-search"))
                     .hint_text("Search songs, artists, albums…")
                     .char_limit(256),
             );

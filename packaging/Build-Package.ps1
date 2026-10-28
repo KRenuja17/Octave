@@ -17,6 +17,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source state.' }
     if ($dirty -and -not $AllowDirty) { throw 'Commit validated changes first, or use -AllowDirty for a development package.' }
     if (-not $SkipBuild) {
+        cargo test -p octave-desktop --locked rtl_renderer_ -- --ignored
+        if ($LASTEXITCODE -ne 0) { throw 'Shipping renderer qualification failed.' }
         if ($Profile -eq 'release') { cargo build -p octave-desktop --release --locked } else { cargo build -p octave-desktop --locked }
         if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
     }
@@ -45,11 +47,16 @@ try {
     foreach ($name in @('LICENSE','RELEASE.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
-    $dependencies = @($metadata.packages | Where-Object { $_.source -and $_.id -in $metadata.resolve.nodes.id } | Sort-Object name,version)
+    $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor/egui')) + [IO.Path]::DirectorySeparatorChar
+    $dependencies = @($metadata.packages | Where-Object {
+        ($_.source -or [IO.Path]::GetFullPath($_.manifest_path).StartsWith($vendorRoot, [StringComparison]::OrdinalIgnoreCase)) -and
+        $_.id -in $metadata.resolve.nodes.id
+    } | Sort-Object name,version)
     $dependencies | Select-Object name,version,license,repository | Export-Csv -LiteralPath (Join-Path $package 'dependencies.csv') -NoTypeInformation
     $notices = [Text.StringBuilder]::new()
     [void]$notices.AppendLine('Octave third-party notices. Target-filtered workspace dependency superset, including test/build tools. SPDX alternatives are retained; this inventory is not a license clearance opinion.')
     [void]$notices.AppendLine('Octave fixture artwork is original project artwork under MIT. Windows system fonts are loaded from the OS and are not redistributed.')
+    [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $vendorRoot 'README-Octave.md')))
     foreach ($fontNotice in @('NOTICE-NotoEmoji.txt', 'OFL-NotoEmoji.txt')) {
         [void]$notices.AppendLine("`n===== Bundled Noto Color Emoji: $fontNotice =====")
         [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $repo "apps/octave-desktop/assets/fonts/$fontNotice")))

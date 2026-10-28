@@ -1,5 +1,15 @@
 # Release candidate evaluation
 
+The shipping source now uses the pinned patched Rust renderer in `vendor/egui`
+(upstream c93e8863e958507056415e2a6dace56e23ba5f3a), with color-font support and
+automatic emoji/text routing. Earlier isolated-only notes below describe historical
+checkpoints. The renderer's fourteen explicit gates and 149 ordinary tests pass;
+strict Clippy passes after screenshot-callback and ID API adaptation. Packaging
+now requires the renderer gates for a build and includes vendored renderer and
+bundled font notices. Package validation is recorded separately after rebuilding.
+This adoption does not close screen-reader/IME, broad platform/DPI or other open
+release-acceptance gates.
+
 Octave is MIT licensed. This Windows x64 GNU build is an unsigned evaluation
 candidate. It is not yet approved for public distribution. No Visual Studio is
 required. This candidate keeps the audio-first scope; native video and production

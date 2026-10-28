@@ -277,7 +277,7 @@ impl Alpha {
         self.session.view.panel_width = panel.response.rect.width().clamp(300.0, 440.0);
         if let Some(width) = resized {
             self.session.view.panel_width = width;
-            let id = egui::Id::new("listening-companion");
+            let id = egui::Id::unique("listening-companion");
             if let Some(mut state) = egui::containers::panel::PanelState::load(ui.ctx(), id) {
                 state.outer_rect.min.x = state.outer_rect.max.x - width;
                 ui.ctx().data_mut(|data| data.insert_persisted(id, state));
@@ -361,7 +361,7 @@ impl Alpha {
                         .push_id(entry, |ui| {
                             ui.horizontal(|ui| {
                                 ui.dnd_drag_source(
-                                    egui::Id::new(("queue-drag", entry)),
+                                    egui::Id::unique(("queue-drag", entry)),
                                     entry,
                                     |ui| {
                                         ui.label("⠿");

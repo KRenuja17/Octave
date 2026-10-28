@@ -20,3 +20,13 @@ unsafe_code = "forbid"
 [profile.release]
 lto = "thin"
 strip = true
+
+[patch.crates-io]
+ecolor = { path = "vendor/egui/ecolor" }
+emath = { path = "vendor/egui/emath" }
+epaint = { path = "vendor/egui/epaint" }
+epaint_default_fonts = { path = "vendor/egui/epaint_default_fonts" }
+egui = { path = "vendor/egui/egui" }
+egui-winit = { path = "vendor/egui/egui-winit" }
+egui_glow = { path = "vendor/egui/egui_glow" }
+eframe = { path = "vendor/egui/eframe" }

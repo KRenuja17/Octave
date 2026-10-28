@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 [dependencies]
+epaint = { version = "=0.36.2", features = ["color_fonts"] }
 octave-core.workspace = true
 octave-provider.workspace = true
 octave-player.workspace = true

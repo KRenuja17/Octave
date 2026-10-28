@@ -1152,7 +1152,7 @@ impl Alpha {
                     ui.visuals_mut().widgets.active.corner_radius = egui::CornerRadius::same(24);
                     ui.add(
                         egui::TextEdit::singleline(&mut self.query)
-                            .id(egui::Id::new("alpha-search"))
+                            .id(egui::Id::unique("alpha-search"))
                             .hint_text("Search songs and artists")
                             .char_limit(512)
                             .background_color(ui.visuals().widgets.inactive.bg_fill)
@@ -1561,14 +1561,10 @@ impl eframe::App for Alpha {
             } else {
                 self.capture_ready_at = None;
             }
-            let image = ui.input(|i| {
-                i.events.iter().find_map(|e| {
-                    if let egui::Event::Screenshot { image, .. } = e {
-                        Some(image.clone())
-                    } else {
-                        None
-                    }
-                })
+            let image = ui.ctx().data_mut(|data| {
+                data.remove_temp::<std::sync::Arc<egui::ColorImage>>(egui::Id::unique(
+                    "octave.capture.image",
+                ))
             });
             if let Some(image) = image {
                 let bytes: Vec<u8> = image.pixels.iter().flat_map(|p| p.to_array()).collect();
@@ -1604,7 +1600,20 @@ impl eframe::App for Alpha {
                 && !self.capture_requested
             {
                 ui.ctx()
-                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
+                    .send_viewport_cmd(egui::ViewportCommand::Screenshot(
+                        egui::ScreenshotCallback::new({
+                            let ctx = ui.ctx().clone();
+                            move |image| {
+                                ctx.data_mut(|data| {
+                                    data.insert_temp(
+                                        egui::Id::unique("octave.capture.image"),
+                                        image,
+                                    )
+                                });
+                                ctx.request_repaint();
+                            }
+                        }),
+                    ));
                 self.capture_requested = true;
             }
         }
@@ -2352,7 +2361,7 @@ mod tests {
                 }));
             }
         }
-        ctx.memory_mut(|m| m.request_focus(egui::Id::new("alpha-search")));
+        ctx.memory_mut(|m| m.request_focus(egui::Id::unique("alpha-search")));
         let old = app.search.generation;
         let mut output = ctx.run_ui(
             egui::RawInput {

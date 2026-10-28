@@ -117,7 +117,7 @@ impl PlaylistsUi {
                                         self.artwork.show(ui, &track.id.0, &playlist.name, cover_size);
                                     } else { crate::theme::cover(ui, cover_size); }
                                     });
-                                    let open = ui.interact(cover.response.rect, ui.id().with("open-cover"), egui::Sense::click()).on_hover_text(&playlist.name);
+                    let open = ui.interact(cover.response.rect, ui.scope_id().with("open-cover"), egui::Sense::click()).on_hover_text(&playlist.name);
                                     open.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Open playlist {}", playlist.name)));
                                     if open.clicked() { self.selected = index; self.confirm_delete = false; }
                                     if ui.add_sized([card_width, 34.0], egui::Button::new(
