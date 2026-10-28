@@ -50,6 +50,10 @@ try {
     $notices = [Text.StringBuilder]::new()
     [void]$notices.AppendLine('Octave third-party notices. Target-filtered workspace dependency superset, including test/build tools. SPDX alternatives are retained; this inventory is not a license clearance opinion.')
     [void]$notices.AppendLine('Octave fixture artwork is original project artwork under MIT. Windows system fonts are loaded from the OS and are not redistributed.')
+    foreach ($fontNotice in @('NOTICE-NotoEmoji.txt', 'OFL-NotoEmoji.txt')) {
+        [void]$notices.AppendLine("`n===== Bundled Noto Color Emoji: $fontNotice =====")
+        [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $repo "apps/octave-desktop/assets/fonts/$fontNotice")))
+    }
     $missing = @()
     $licenseRoot = Join-Path $PSScriptRoot 'licenses'
     $supplements = Get-Content -LiteralPath (Join-Path $licenseRoot 'sources.json') -Raw | ConvertFrom-Json

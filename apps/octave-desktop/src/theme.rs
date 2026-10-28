@@ -92,6 +92,27 @@ fn install_fonts(ctx: &egui::Context) {
             }
         }
     }
+    // The isolated renderer routes emoji-presentation graphemes to this named
+    // family. Keep it out of Proportional: it contains wide spaces and digits.
+    fonts.font_data.insert(
+        "Octave Color Emoji".into(),
+        egui::FontData::from_static(include_bytes!("../assets/fonts/NotoColorEmoji.ttf")).into(),
+    );
+    let mut emoji_fonts = vec!["Octave Color Emoji".into()];
+    if fonts.font_data.contains_key("Emoji") {
+        emoji_fonts.push("Emoji".into());
+    }
+    fonts
+        .families
+        .insert(FontFamily::Name("Octave Emoji".into()), emoji_fonts);
+    let text_fonts = fonts.families[&FontFamily::Proportional]
+        .iter()
+        .filter(|name| name.as_str() != "Emoji")
+        .cloned()
+        .collect();
+    fonts
+        .families
+        .insert(FontFamily::Name("Octave Text".into()), text_fonts);
     ctx.set_fonts(fonts);
 }
 pub fn eyebrow(ui: &mut egui::Ui, text: &str) {
@@ -190,11 +211,204 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Explicit color-font candidate gate; OCTAVE_TEST_EMOJI_FONT supplies flag font"]
+    #[ignore = "Candidate routing gate: emoji family must not alter ordinary text"]
+    fn rtl_renderer_emoji_routing_preserves_text_metrics() {
+        let routed = renderer_context();
+        let plain = renderer_context();
+        let mut definitions = plain.fonts_mut(|f| f.definitions().clone());
+        definitions
+            .families
+            .remove(&FontFamily::Name("Octave Emoji".into()));
+        plain.set_fonts(definitions);
+        let mut output = plain.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
+        // Warm the routed emoji cache before querying the same base characters
+        // as ordinary text, including keycap digits and text/emoji selectors.
+        for text in ["1️⃣", "❤️", "🇱🇰", "👩‍💻"] {
+            let galley = routed
+                .fonts_mut(|f| f.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT));
+            assert_eq!(galley.rows[0].row.text(), text);
+            let carriers: Vec<_> = galley.rows[0]
+                .row
+                .glyphs
+                .iter()
+                .filter(|g| g.advance_width > 0.0)
+                .collect();
+            assert_eq!(carriers.len(), 1);
+            let uv = carriers[0].uv_rect;
+            assert!(!uv.is_nothing());
+            if text != "1️⃣" {
+                let atlas = routed.fonts_mut(|f| f.image());
+                assert!(
+                    (uv.min[1]..uv.max[1]).any(|y| (uv.min[0]..uv.max[0]).any(|x| {
+                        let p = atlas[(x as usize, y as usize)];
+                        p.a() > 0 && (p.r() != p.g() || p.g() != p.b())
+                    }))
+                );
+            }
+        }
+        for text in [
+            "Octave 0123456789 # *",
+            "abc  def\t123",
+            "❤\u{fe0e} ♥ ©",
+            "שלום 123 مرحبا",
+        ] {
+            let layout = |ctx: &egui::Context| {
+                ctx.fonts_mut(|f| f.layout_no_wrap(text.into(), FontId::proportional(26.0), TEXT))
+            };
+            let a = layout(&routed);
+            let b = layout(&plain);
+            assert_eq!(a.size(), b.size(), "Text metrics: {text}");
+            let metrics = |g: &egui::Galley| {
+                g.rows
+                    .iter()
+                    .flat_map(|r| r.row.glyphs.iter().map(|g| (g.chr, g.pos, g.advance_width)))
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(metrics(&a), metrics(&b), "Text glyph positions: {text}");
+        }
+        let text_heart = routed
+            .fonts_mut(|f| f.layout_no_wrap("❤\u{fe0e}".into(), FontId::proportional(26.0), TEXT));
+        let uv = text_heart.rows[0].row.glyphs[0].uv_rect;
+        assert!(!uv.is_nothing());
+        let atlas = routed.fonts_mut(|f| f.image());
+        for y in uv.min[1]..uv.max[1] {
+            for x in uv.min[0]..uv.max[0] {
+                let p = atlas[(x as usize, y as usize)];
+                assert!(
+                    p.r() == p.g() && p.g() == p.b(),
+                    "VS15 must use text presentation"
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Candidate wrapping gate: cross-row grapheme selections and newlines"]
+    fn rtl_renderer_cross_row_grapheme_selection() {
+        use egui::epaint::text::{CharIndex, cursor::CCursor};
+        use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
+        let ctx = renderer_context();
+        let clusters = [
+            "A",
+            "👩‍💻",
+            "B",
+            " ",
+            "e\u{301}",
+            " ",
+            "🇱🇰",
+            "\n",
+            "א",
+            "ב",
+            " ",
+            "👨‍👩‍👧‍👦",
+            " ",
+            "بِ",
+            "C",
+        ];
+        let text = clusters.concat();
+        let mut offset = 0;
+        let ranges: Vec<_> = clusters
+            .iter()
+            .map(|s| {
+                let start = offset;
+                offset += s.chars().count();
+                start..offset
+            })
+            .collect();
+        for width in [25.0, 80.0, 160.0] {
+            let original =
+                ctx.fonts_mut(|f| f.layout(text.clone(), FontId::proportional(26.0), TEXT, width));
+            assert!(original.rows.len() > 1);
+            let mut boundary = 0;
+            for row in &original.rows {
+                boundary += row.row.glyphs.len();
+                assert!(
+                    !ranges
+                        .iter()
+                        .any(|r| r.start < boundary && boundary < r.end),
+                    "Split grapheme at width {width}, char {boundary}"
+                );
+                boundary += usize::from(row.ends_with_newline);
+            }
+            assert_eq!(boundary, text.chars().count());
+            let selections = [(0, offset), (1, offset - 1)].into_iter().chain(
+                ranges
+                    .iter()
+                    .flat_map(|r| (r.start..r.end).map(|i| (i, i + 1))),
+            );
+            for (start, end) in selections {
+                let range = CCursorRange::two(
+                    CCursor {
+                        index: CharIndex(start),
+                        prefer_next_row: false,
+                    },
+                    CCursor {
+                        index: CharIndex(end),
+                        prefer_next_row: false,
+                    },
+                );
+                let mut galley = original.clone();
+                let mut regions = Vec::new();
+                paint_text_selection(
+                    &mut galley,
+                    &ctx.style_of(egui::Theme::Dark).visuals,
+                    &range,
+                    Some(&mut regions),
+                );
+                let mut global = 0;
+                for (ri, placed) in galley.rows.iter().enumerate() {
+                    let rects: Vec<_> = regions
+                        .iter()
+                        .filter(|r| r.row == ri)
+                        .map(|r| {
+                            let mut rect = egui::Rect::NOTHING;
+                            for i in r.vertex_indices {
+                                rect.extend_with(placed.row.visuals.mesh.vertices[i as usize].pos);
+                            }
+                            rect
+                        })
+                        .collect();
+                    for glyph in &placed.row.glyphs {
+                        if glyph.advance_width > 0.0 && !glyph.chr.is_whitespace() {
+                            let cluster = ranges.iter().find(|r| r.contains(&global)).unwrap();
+                            let selected = rects
+                                .iter()
+                                .any(|r| r.contains(glyph.logical_rect().center()));
+                            assert_eq!(
+                                selected,
+                                cluster.start < end && start < cluster.end,
+                                "width {width}, range {start}..{end}, char {global}"
+                            );
+                        }
+                        global += 1;
+                    }
+                    global += usize::from(placed.ends_with_newline);
+                }
+                assert_eq!(
+                    range.slice_str(&text),
+                    text.chars()
+                        .skip(start)
+                        .take(end - start)
+                        .collect::<String>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "Explicit color-font candidate gate with bundled flag font"]
     fn rtl_renderer_color_emoji_and_flags_keep_selection_colors() {
         use egui::epaint::text::{CharIndex, cursor::CCursor};
         use egui::text_selection::{CCursorRange, visuals::paint_text_selection};
         let ctx = renderer_context();
+        let mut definitions = ctx.fonts_mut(|f| f.definitions().clone());
+        definitions
+            .families
+            .remove(&FontFamily::Name("Octave Emoji".into()));
+        ctx.set_fonts(definitions);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
         // Segoe's family sequence exercises multi-glyph color composition,
         // whereas the Noto fixtures below generally shape to one glyph.
         let family = "👨‍👩‍👧‍👦";
@@ -209,12 +423,11 @@ mod tests {
             .collect();
         assert_eq!(carriers.len(), 1);
         assert!(!carriers[0].uv_rect.is_nothing());
-        let path =
-            std::env::var("OCTAVE_TEST_EMOJI_FONT").expect("Explicit licensed test font path");
         let mut fonts = ctx.fonts_mut(|f| f.definitions().clone());
         fonts.font_data.insert(
             "test-color".into(),
-            egui::FontData::from_owned(std::fs::read(path).unwrap()).into(),
+            egui::FontData::from_static(include_bytes!("../assets/fonts/NotoColorEmoji.ttf"))
+                .into(),
         );
         fonts
             .families

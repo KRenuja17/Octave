@@ -152,6 +152,35 @@
  fn emit_cluster_bitmap(
      fonts: &mut FontsImpl,
      shaped: &ShapedRun<'_>,
+@@ -878,6 +968,17 @@
+ ) {
+     let wrap_width = job.effective_wrap_width();
+
++    // Glyph entries retain one logical character each, including zero-width
++    // continuations. Breaking after a carrier would detach its ZWJ/marks from
++    // the visible grapheme. Oversized graphemes may overrun, but stay intact.
++    let logical: String = paragraph.glyphs.iter().map(|g| g.chr).collect();
++    let mut grapheme_ends = vec![false; paragraph.glyphs.len()];
++    let mut column = 0;
++    for grapheme in unicode_segmentation::UnicodeSegmentation::graphemes(logical.as_str(), true) {
++        column += grapheme.chars().count();
++        grapheme_ends[column - 1] = true;
++    }
++
+     // Keeps track of good places to insert row break if we exceed `wrap_width`.
+     let mut row_break_candidates = RowBreakCandidates::default();
+
+@@ -947,7 +1048,9 @@
+             }
+         }
+
+-        row_break_candidates.add(i, &paragraph.glyphs[i..]);
++        if grapheme_ends[i] {
++            row_break_candidates.add(i, &paragraph.glyphs[i..]);
++        }
+     }
+
+     if row_start_idx < paragraph.glyphs.len() {
 --- a/crates/egui/src/text_selection/visuals.rs
 +++ b/crates/egui/src/text_selection/visuals.rs
 @@ -1,4 +1,5 @@
@@ -448,3 +477,39 @@
 
          let (x_px, bin) = if face.subpixel_binning() && !is_cjk {
              SubpixelBin::new(h_pos)
+--- a/crates/epaint/src/text/fonts.rs
++++ b/crates/epaint/src/text/fonts.rs
+@@ -491,4 +491,33 @@
+     #[inline]
+     pub fn resolve_cluster_face(&mut self, family: FamilyKey, cluster: &str) -> FontFaceKey {
++        // Octave's explicit emoji family is opt-in. Route complete graphemes,
++        // not individual scalars, and keep its cache separate from text fonts.
++        // In particular ASCII digits/spaces and VS15 text presentation must
++        // retain the proportional family's original metrics and appearance.
++        let preferred = if cluster.contains('\u{fe0e}') {
++            Some("Octave Text")
++        } else if super::glyph_rasterizer::has_emoji_presentation(cluster) {
++            Some("Octave Emoji")
++        } else {
++            None
++        };
++        if self.family(family).name() == &FontFamily::Proportional
++            && let Some(name) = preferred
++        {
++            let emoji = FontFamily::Name(name.into());
++            if self
++                .definitions
++                .families
++                .get(&emoji)
++                .is_some_and(|f| !f.is_empty())
++            {
++                let key = self.family_key(&emoji);
++                return self.families[key.0].resolve_cluster(
++                    &mut self.faces,
++                    &mut self.font_providers,
++                    cluster,
++                );
++            }
++        }
+         self.families[family.0].resolve_cluster(&mut self.faces, &mut self.font_providers, cluster)
+     }
