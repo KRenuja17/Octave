@@ -1,5 +1,44 @@
 # Release candidate evaluation
 
+## Evaluation package .24 — 29 October 2026
+
+Rebuilt `0.2.0-expansion.24` from clean source
+`49c0667dbe42a7bf405b148cf34a8c386eda2074`, including the composition,
+accessible-label and native shortcut fixes below. All 14 renderer gates passed
+during packaging. Build metadata records an optimized GNU release build and no
+missing dependency license texts. The preceding source checkpoint passed 156
+ordinary tests, strict Clippy and formatting checks.
+
+Isolated package acceptance passed upgrade from .23, restricted-PATH native
+launches, portable launch, and preservation of the listening profile, unrelated
+files and a synthetic Unicode playlist with duplicate track occurrences. Separate
+installer fixtures passed checksum rejection and rollback after injected
+activation failure. These checks used research directories and no registration.
+
+ZIP SHA-256:
+`A7B79681B51ADB85B221C0BF2AD53D29B0432B157FF20AF7A69CDF96C15B2665`.
+The package and machine-specific evidence remain outside the source repository.
+Later documentation commits do not change the package's source revision.
+
+### Remaining acceptance
+
+The signed-out audio-first implementation is available for evaluation; the whole
+release plan is **not accepted**. The current outstanding gates are:
+
+- Broader anonymous playback, including long recordings: provider bot checks
+  remain unresolved under the Rust-only, no-JavaScript-runtime constraint.
+- Live translation and Discord: a selected endpoint and an Octave Discord
+  application ID/client session are still needed.
+- Spoken screen-reader output, actual OS IME composition/candidate placement,
+  mixed-direction accessibility geometry and broader editing/script/DPI checks.
+- Attended audio, device/media-control transitions and listening quality checks.
+- Account/Premium acceptance, outside the current no-sign-in scope.
+- Fresh-machine installation/registration and production signing/distribution.
+
+Native video and production Adaptive mixing remain deferred under the accepted
+audio-first scope. Historical sections below preserve evidence at each checkpoint;
+their pending package statements are superseded by this .24 validation.
+
 ## Native focus verified — 29 October 2026
 
 After the user restored Octave, activating the exact returned window and checking
