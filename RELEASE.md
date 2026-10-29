@@ -1,5 +1,31 @@
 # Release candidate evaluation
 
+## Playback and integration follow-up — 29 October 2026
+
+Discord live acceptance is removed from the requested scope at the user's
+direction. Existing optional Discord functionality remains disabled by default.
+
+A fresh production unsigned resolver check read 4,096 media bytes for the control
+`dQw4w9WgXcQ`; both long references `u6LLP7kTbJ0` and `yBmcoLAFlAQ` still
+returned BotCheckRequired. This was a resolver/range check, not a playback matrix
+or an audio-device test. No working native attestation candidate was found in the
+updated primary-source review. RustyPipe BotGuard still documents Deno/JSDOM;
+the Rust bgutil wrapper delegates to it. No runtime or access workaround adopted.
+
+Live translation metadata through Octave's production Rust transport succeeded
+for libretranslate.com (51 languages). The two no-key mirrors in LibreTranslate's
+official list did not pass: cutie.dating timed out; fedilab.app returned HTTP403.
+No translation text, API key or user profile was submitted or configured.
+Live translation remains pending a reachable service and any required key.
+
+`cargo run -p octave-provider --example translation_probe -- <endpoint>` performs
+a metadata-only check. Add `--synthetic` to explicitly submit two occurrences of
+an authored English sentence for Spanish translation. The probe checks cue
+identity, line alignment and blank-line preservation through production transport;
+it does not establish translation quality or live lyrics UI acceptance. It has
+no default endpoint, key or profile access. Five translation fixture tests,
+strict provider/all-target Clippy, formatting and diff checks pass.
+
 ## Evaluation package .24 — 29 October 2026
 
 Rebuilt `0.2.0-expansion.24` from clean source
@@ -27,8 +53,8 @@ release plan is **not accepted**. The current outstanding gates are:
 
 - Broader anonymous playback, including long recordings: provider bot checks
   remain unresolved under the Rust-only, no-JavaScript-runtime constraint.
-- Live translation and Discord: a selected endpoint and an Octave Discord
-  application ID/client session are still needed.
+- Live translation: a reachable selected endpoint and any required key are
+  still needed. Discord acceptance is excluded at the user's request.
 - Spoken screen-reader output, actual OS IME composition/candidate placement,
   mixed-direction accessibility geometry and broader editing/script/DPI checks.
 - Attended audio, device/media-control transitions and listening quality checks.
