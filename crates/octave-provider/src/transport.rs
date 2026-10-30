@@ -16,6 +16,32 @@ mod recovery_tests;
 pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 const FIRST_MEDIA_ATTEMPT: Duration = Duration::from_secs(1);
 const CANCEL_POLL: Duration = Duration::from_millis(20);
+// Media CDN redirects may change shards. Never follow account/API redirects or
+// forward credentials, and keep redirects inside the original request deadline.
+fn media_redirect(request: &Request, expected: Expected, location: &str) -> Option<reqwest::Url> {
+    fn allowed(url: &reqwest::Url) -> bool {
+        url.scheme() == "https"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.port_or_known_default() == Some(443)
+            && url.path() == "/videoplayback"
+            && url.fragment().is_none()
+            && url
+                .host_str()
+                .is_some_and(|host| host.ends_with(".googlevideo.com"))
+    }
+    if !matches!(expected, Expected::Range { .. })
+        || request.method() != reqwest::Method::GET
+        || request.headers().contains_key("authorization")
+        || request.headers().contains_key("cookie")
+        || !allowed(request.url())
+        || location.len() > 16384
+    {
+        return None;
+    }
+    let target = request.url().join(location).ok()?;
+    allowed(&target).then_some(target)
+}
 #[derive(Clone, Copy)]
 pub(crate) enum Lane {
     Media,
@@ -293,7 +319,36 @@ impl Transport {
         let task = self.runtime.spawn(async move {
             let _permit = permit;
             let result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
-                let mut response = client.execute(request).await.map_err(network)?;
+                let mut request = request;
+                let mut redirects = 0;
+                let mut response = loop {
+                    let replay = request.try_clone();
+                    let response = client.execute(request).await.map_err(network)?;
+                    let next =
+                        if redirects < 2
+                            && matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+                        {
+                            replay.as_ref().and_then(|request| {
+                                response.headers().get("location")?.to_str().ok().and_then(
+                                    |location| media_redirect(request, expected, location),
+                                )
+                            })
+                        } else {
+                            None
+                        };
+                    let Some(target) = next else {
+                        break response;
+                    };
+                    let original = replay.as_ref().ok_or(Error::InvalidRange)?;
+                    let mut builder = client.get(target);
+                    for name in ["range", "accept-encoding", "user-agent"] {
+                        if let Some(value) = original.headers().get(name) {
+                            builder = builder.header(name, value);
+                        }
+                    }
+                    request = builder.build().map_err(network)?;
+                    redirects += 1;
+                };
                 if let Some(trace) = &trace {
                     trace.headers(response.status().as_u16());
                 }
@@ -373,6 +428,56 @@ impl Transport {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn media_redirects_are_restricted_to_unsigned_https_cdn_ranges() {
+        use super::*;
+        let client = Client::new();
+        let source = "https://r1.googlevideo.com/videoplayback?signature=synthetic";
+        let range = Expected::Range {
+            start: 0,
+            end: 3,
+            total: 4,
+        };
+        let request = client.get(source).build().unwrap();
+        assert!(
+            media_redirect(
+                &request,
+                range,
+                "https://r2.googlevideo.com/videoplayback?x=1"
+            )
+            .is_some()
+        );
+        for target in [
+            "http://r2.googlevideo.com/videoplayback",
+            "https://googlevideo.com.evil.test/videoplayback",
+            "https://127.0.0.1/videoplayback",
+            "https://r2.googlevideo.com:444/videoplayback",
+            "https://user:pass@r2.googlevideo.com/videoplayback",
+            "/other",
+            "/videoplayback#fragment",
+        ] {
+            assert!(
+                media_redirect(&request, range, target).is_none(),
+                "{target}"
+            );
+        }
+        assert!(media_redirect(&request, Expected::Bytes(4), source).is_none());
+        for header in ["authorization", "cookie"] {
+            let credentialed = client
+                .get(source)
+                .header(header, "synthetic")
+                .build()
+                .unwrap();
+            assert!(media_redirect(&credentialed, range, source).is_none());
+        }
+        let post = client.post(source).build().unwrap();
+        assert!(media_redirect(&post, range, source).is_none());
+        let foreign = client
+            .get("https://example.com/videoplayback")
+            .build()
+            .unwrap();
+        assert!(media_redirect(&foreign, range, source).is_none());
+    }
     use super::*;
     use std::{
         io::{BufRead, BufReader, Read, Write},

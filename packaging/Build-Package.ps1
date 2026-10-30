@@ -17,6 +17,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect source state.' }
     if ($dirty -and -not $AllowDirty) { throw 'Commit validated changes first, or use -AllowDirty for a development package.' }
     if (-not $SkipBuild) {
+        cargo test -p symphonia-format-isomp4 --locked octave_
+        if ($LASTEXITCODE -ne 0) { throw 'MP4 startup qualification failed.' }
         cargo test -p octave-desktop --locked rtl_renderer_ -- --ignored
         if ($LASTEXITCODE -ne 0) { throw 'Shipping renderer qualification failed.' }
         if ($Profile -eq 'release') { cargo build -p octave-desktop --release --locked } else { cargo build -p octave-desktop --locked }
@@ -47,7 +49,7 @@ try {
     foreach ($name in @('LICENSE','RELEASE.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
-    $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor/egui')) + [IO.Path]::DirectorySeparatorChar
+    $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor')) + [IO.Path]::DirectorySeparatorChar
     $dependencies = @($metadata.packages | Where-Object {
         ($_.source -or [IO.Path]::GetFullPath($_.manifest_path).StartsWith($vendorRoot, [StringComparison]::OrdinalIgnoreCase)) -and
         $_.id -in $metadata.resolve.nodes.id
@@ -56,7 +58,9 @@ try {
     $notices = [Text.StringBuilder]::new()
     [void]$notices.AppendLine('Octave third-party notices. Target-filtered workspace dependency superset, including test/build tools. SPDX alternatives are retained; this inventory is not a license clearance opinion.')
     [void]$notices.AppendLine('Octave fixture artwork is original project artwork under MIT. Windows system fonts are loaded from the OS and are not redistributed.')
-    [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $vendorRoot 'README-Octave.md')))
+    foreach ($provenance in @('egui/README-Octave.md','symphonia-format-isomp4/README-Octave.md')) {
+        [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $vendorRoot $provenance)))
+    }
     foreach ($fontNotice in @('NOTICE-NotoEmoji.txt', 'OFL-NotoEmoji.txt')) {
         [void]$notices.AppendLine("`n===== Bundled Noto Color Emoji: $fontNotice =====")
         [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $repo "apps/octave-desktop/assets/fonts/$fontNotice")))
@@ -101,6 +105,13 @@ try {
     $lock = [IO.File]::ReadAllText((Join-Path $repo 'Cargo.lock'))
     foreach ($dependency in $dependencies | Where-Object { $_.license -match 'MPL-2.0' }) {
         $crateRoot = Split-Path $dependency.manifest_path -Parent
+        if (-not $dependency.source) {
+            if (-not [IO.Path]::GetFullPath($crateRoot).StartsWith($vendorRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected local MPL dependency.' }
+            # Supply the exact modified source used by this build, including its
+            # manifest, license, tests and provenance, not the original archive.
+            Copy-Item -LiteralPath $crateRoot -Destination (Join-Path $sourceStage "$($dependency.name)-$($dependency.version)-octave") -Recurse
+            continue
+        }
         $registryRoot = Split-Path (Split-Path (Split-Path $crateRoot -Parent) -Parent) -Parent
         $registry = Split-Path (Split-Path $crateRoot -Parent) -Leaf
         $archiveName = "$($dependency.name)-$($dependency.version).crate"
@@ -112,7 +123,7 @@ try {
         Copy-Item -LiteralPath $archive -Destination $sourceStage
     }
     Copy-Item -LiteralPath (Join-Path $licenseRoot 'pdeljanov-Symphonia-6d533f26-LICENSE') -Destination (Join-Path $sourceStage 'LICENSE-MPL-2.0')
-    Set-Content -LiteralPath (Join-Path $sourceStage 'README.txt') -Value 'Unmodified locked MPL-2.0 crate source archives (gzip tar .crate files), supplied with Octave. Each original archive is checked against Cargo.lock. Octave makes no changes to these dependencies. The corresponding license is included. Extract with a tar-compatible tool. Exact package versions are in dependencies.csv.'
+    Set-Content -LiteralPath (Join-Path $sourceStage 'README.txt') -Value 'Corresponding MPL-2.0 sources supplied with Octave. Registry crates are unmodified gzip tar .crate archives verified against Cargo.lock. Directories ending in -octave contain the exact modified vendored source, with license and README-Octave.md describing changes. Exact package versions are in dependencies.csv.'
     Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath (Join-Path $package 'MPL-SOURCES.zip')
     [IO.File]::WriteAllText((Join-Path $package 'THIRD-PARTY-NOTICES.txt'), $notices.ToString())
     $rustVersion = rustc --version
