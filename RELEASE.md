@@ -1,5 +1,31 @@
 # Release candidate evaluation
 
+## Long-recording startup repair — 30 October 2026
+
+Checkpoint `a6bc941` fixes eager scanning of fragmented MP4 streams before the
+first packet. The pinned MPL-2.0 demuxer source and regression tests are included
+under vendor; packages include the exact modified source in MPL-SOURCES.zip.
+Explicit eager indexing and ordinary trailing-moov discovery retain their scans.
+Unsigned audio ranges can now follow at most two HTTPS redirects within the
+Google video CDN, forwarding only media headers and retaining the original
+deadline, cancellation and strict range checks. Account/API redirects stay off.
+
+Both previously blocked long recordings passed 30-second default-device samples
+at player volume zero, starting in 1,075 ms and 990 ms, with no buffering or
+quality changes. The first midpoint seek passed after 12,479 ms startup; the
+second midpoint failed the unchanged 15-second startup limit. Indexed long seeks,
+the complete playback matrix and continuous long-recording hour remain open.
+All 13 original corpus entries resolved direct AAC in a fresh metadata-only pass,
+without sign-in or JavaScript. This does not establish permanent bot-check immunity.
+
+157 ordinary workspace tests, two demuxer regressions, strict Clippy, format and
+diff checks pass. Evaluation .25 was rebuilt from clean `a6bc941`, also passing
+all 14 renderer gates. Upgrade from .24, restricted-PATH native launches, portable
+launch, uninstall and listening/Unicode-playlist/unrelated-file preservation pass.
+No registration, fresh-machine or audible-quality acceptance is claimed.
+Discord remains excluded from the requested acceptance scope. The palette and
+Rust application runtime are unchanged.
+
 ## JavaScript attestation evaluation — 30 October 2026
 
 The user authorized a contained JavaScript evaluation. A hash-pinned portable
