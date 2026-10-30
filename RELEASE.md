@@ -1,5 +1,22 @@
 # Release candidate evaluation
 
+## JavaScript attestation evaluation — 30 October 2026
+
+The user authorized a contained JavaScript evaluation. A hash-pinned portable
+Deno worker passed all seven permission-denial checks and completed anonymous
+challenge execution and token minting. Both previously blocked long recordings
+returned audio formats, but matched token-free requests and the unchanged Rust
+resolver also succeeded. This does not establish a causal fix or justify adding
+the helper to the shipped app yet.
+
+Real playback attempts for both long recordings failed the existing15-second
+startup deadline after successful media reads, before any consumed audio. No
+continuous hour or matrix acceptance is claimed. The next investigation is startup
+and decoder scanning; broad service access also remains unqualified.
+See [the attestation evaluation](packaging/attestation/README.md) for security
+limits, reproducible permission checks and evidence scope. No production runtime,
+palette, dependency or package changes were made.
+
 ## Playback and integration follow-up — 29 October 2026
 
 Discord live acceptance is removed from the requested scope at the user's
