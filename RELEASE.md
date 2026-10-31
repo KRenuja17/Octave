@@ -1,5 +1,26 @@
 # Release candidate evaluation
 
+## Playback and accessibility acceptance — 31 October 2026
+
+The original 13-recording matrix on `d71f556` completed: 38/39 short windows
+passed, and the selected 6,629-second recording passed a continuous hour
+(3,600.019 seconds wall time, 3,600.020 consumed, zero buffering/quality changes).
+Both long recordings passed start/middle/end windows; deep startup was 1.0–2.4s.
+One short recording's late window received HTTP403 before audio opened. A separate
+follow-up passed with unchanged code; the original failure remains retained.
+Two other short windows each recorded a 20ms buffering indication while meeting
+the original consumption tolerance. This is not a claim of flawless catalog access.
+
+Accessibility now exposes separate logical-order text runs for resolved bidi
+levels, with correct scaled character bounds and selection mapping. RTL row
+extents cover all visual glyphs. The regression fails before and passes after;
+159 ordinary workspace tests, 14 explicit renderer gates and strict Clippy pass.
+The user confirmed actual Narrator edit/button announcements for Ctrl+K, Tab and
+Shift+Tab. Only the English US keyboard is installed, and the user requested no
+IME installation; real composition/candidate-window acceptance remains unavailable.
+Native patched editing/scaling and a separately retained sample-matrix follow-up
+are still being checked. The runtime and original palette remain unchanged.
+
 ## Indexed long-recording seeks — 31 October 2026
 
 Single-track AAC fragment indexes now allow direct seeks without scanning earlier

@@ -808,8 +808,8 @@ impl PlacedRow {
 
     /// Same as [`Self::rect`] but excluding the `LayoutSection::leading_space`.
     pub fn rect_without_leading_space(&self) -> Rect {
-        let x = self.pos.x + self.glyphs.first().map_or(0.0, |g| g.pos.x);
-        let right = self.pos.x + self.size.x;
+        let x = self.pos.x + self.glyphs.iter().map(|g| g.pos.x).reduce(f32::min).unwrap_or(0.0);
+        let right = self.pos.x + self.glyphs.iter().map(Glyph::max_x).fold(self.size.x, f32::max);
         Rect::from_min_max(
             Pos2::new(x, self.pos.y),
             Pos2::new(right, self.pos.y + self.size.y),

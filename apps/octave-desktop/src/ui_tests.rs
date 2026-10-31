@@ -218,6 +218,215 @@ fn accessibility_text_runs_preserve_logical_unicode() {
         assert_eq!(text, source);
     }
 }
+
+#[test]
+fn accessibility_bidi_bounds_follow_glyphs_at_text_sizes_and_scales() {
+    use egui::epaint::text::CharIndex;
+    for scale in [1.0, 1.25, 1.5, 2.0] {
+        for font_size in [15.0, 30.0, 42.0] {
+            for source in [
+                "אבגדה",
+                "ABC אבג 123 العربية XYZ\nnext",
+                "A 👩‍💻 بِ 🇱🇰 e\u{301}",
+            ] {
+                let ctx = egui::Context::default();
+                crate::theme::install(&ctx);
+                ctx.enable_accesskit();
+                let id = egui::Id::unique("bidi-bounds");
+                let transform = egui::emath::TSTransform::new(egui::vec2(31.0, 47.0), scale);
+                let mut layout = None;
+                let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                    let galley = ui.fonts_mut(|f| {
+                        f.layout(
+                            source.into(),
+                            egui::FontId::proportional(font_size),
+                            egui::Color32::WHITE,
+                            180.0,
+                        )
+                    });
+                    egui::text_selection::accesskit_text::update_accesskit_for_text_widget(
+                        &ctx,
+                        id,
+                        None,
+                        egui::accesskit::Role::MultilineTextInput,
+                        transform,
+                        &galley,
+                    );
+                    layout = Some(galley);
+                });
+                output.textures_delta.clear();
+                let galley = layout.unwrap();
+                let tree = output.platform_output.accesskit_update.unwrap();
+                let parent = &tree
+                    .nodes
+                    .iter()
+                    .find(|(node_id, _)| *node_id == id.accesskit_id())
+                    .unwrap()
+                    .1;
+                let runs: Vec<_> = parent
+                    .children()
+                    .iter()
+                    .map(|child| {
+                        &tree
+                            .nodes
+                            .iter()
+                            .find(|(node_id, _)| node_id == child)
+                            .unwrap()
+                            .1
+                    })
+                    .collect();
+                assert_eq!(
+                    runs.iter()
+                        .map(|n| n.value().unwrap_or_default())
+                        .collect::<String>(),
+                    source
+                );
+                let expected: Vec<_> = galley
+                    .rows
+                    .iter()
+                    .flat_map(|row| {
+                        let mut chars: Vec<_> = row
+                            .glyphs
+                            .iter()
+                            .map(|g| {
+                                (
+                                    g.chr,
+                                    g.is_rtl(),
+                                    (row.pos.x + g.pos.x) * scale + 31.0,
+                                    g.advance_width * scale,
+                                )
+                            })
+                            .collect();
+                        if row.ends_with_newline {
+                            chars.push((
+                                '\n',
+                                row.glyphs.last().is_some_and(|g| g.is_rtl()),
+                                (row.pos.x + row.x_offset(CharIndex(row.glyphs.len()))) * scale
+                                    + 31.0,
+                                0.0,
+                            ));
+                        }
+                        chars
+                    })
+                    .collect();
+                let mut offset = 0;
+                for run in runs {
+                    let bounds = run.bounds().unwrap();
+                    assert!(bounds.x0 <= bounds.x1 && bounds.y0 < bounds.y1);
+                    let rtl =
+                        run.text_direction() == Some(egui::accesskit::TextDirection::RightToLeft);
+                    let positions = run.character_positions().unwrap();
+                    let widths = run.character_widths().unwrap();
+                    for (i, chr) in run.value().unwrap_or_default().chars().enumerate() {
+                        let (expected_chr, expected_rtl, x, width) = expected[offset];
+                        assert_eq!(chr, expected_chr);
+                        assert_eq!(rtl, expected_rtl, "direction: {source}");
+                        let actual_x = if rtl {
+                            bounds.x1 as f32 - positions[i] - widths[i]
+                        } else {
+                            bounds.x0 as f32 + positions[i]
+                        };
+                        assert!((actual_x - x).abs() < 0.02, "character bounds: {source}");
+                        assert!((widths[i] - width).abs() < 0.02);
+                        assert!(
+                            positions[i] >= -0.02
+                                && f64::from(positions[i] + widths[i]) <= bounds.width() + 0.02
+                        );
+                        offset += 1;
+                    }
+                }
+                for row in &galley.rows {
+                    let rect = row.rect_without_leading_space().expand(0.02);
+                    for glyph in &row.glyphs {
+                        let glyph_rect = glyph.logical_rect().translate(row.pos.to_vec2());
+                        assert!(
+                            rect.left() <= glyph_rect.left() && rect.right() >= glyph_rect.right(),
+                            "row horizontal bounds {rect:?}, glyph {glyph_rect:?}: {source}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn accessibility_selection_crosses_bidi_runs_and_deletes_logical_text() {
+    let ctx = egui::Context::default();
+    crate::theme::install(&ctx);
+    ctx.enable_accesskit();
+    let id = egui::Id::unique("bidi-selection");
+    let mut text = "ABC אבג 123 العربية XYZ".to_owned();
+    let original = text.clone();
+    let render = |text: &mut String, events| {
+        let mut output = ctx.run_ui(
+            egui::RawInput {
+                events,
+                ..Default::default()
+            },
+            |ui| {
+                egui::TextEdit::singleline(text).id(id).show(ui);
+            },
+        );
+        output.textures_delta.clear();
+        output
+    };
+    render(&mut text, vec![]);
+    ctx.memory_mut(|m| m.request_focus(id));
+    let tree = render(&mut text, vec![])
+        .platform_output
+        .accesskit_update
+        .unwrap();
+    let parent = &tree
+        .nodes
+        .iter()
+        .find(|(node_id, _)| *node_id == id.accesskit_id())
+        .unwrap()
+        .1;
+    assert!(parent.children().len() >= 4);
+    let end_node = parent.children()[parent.children().len() - 1];
+    let last_length = tree
+        .nodes
+        .iter()
+        .find(|(node_id, _)| *node_id == end_node)
+        .unwrap()
+        .1
+        .character_lengths()
+        .len();
+    let selection = egui::accesskit::TextSelection {
+        anchor: egui::accesskit::TextPosition {
+            node: parent.children()[0],
+            character_index: 1,
+        },
+        focus: egui::accesskit::TextPosition {
+            node: end_node,
+            character_index: last_length - 1,
+        },
+    };
+    render(
+        &mut text,
+        vec![Event::AccessKitActionRequest(
+            egui::accesskit::ActionRequest {
+                action: egui::accesskit::Action::SetTextSelection,
+                target_tree: egui::accesskit::TreeId::ROOT,
+                target_node: id.accesskit_id(),
+                data: Some(egui::accesskit::ActionData::SetTextSelection(selection)),
+            },
+        )],
+    );
+    let range = egui::TextEdit::load_state(&ctx, id)
+        .unwrap()
+        .cursor
+        .char_range()
+        .unwrap()
+        .as_sorted_char_range();
+    assert_eq!(
+        (range.start.0, range.end.0),
+        (1, original.chars().count() - 1)
+    );
+    render(&mut text, vec![key(Key::Backspace, Modifiers::NONE)]);
+    assert_eq!(text, "AZ");
+}
 #[test]
 fn keyboard_search_text_and_tab_focus_work() {
     let ctx = egui::Context::default();

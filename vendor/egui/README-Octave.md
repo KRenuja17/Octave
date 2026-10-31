@@ -18,3 +18,13 @@ it does not change composition or rendering internals. App regressions cover
 preedit/replacement/commit/cancel, AccessKit focus/selection, logical Unicode text
 runs and masked password output. Native screen-reader speech and OS IME candidate
 windows still require separate acceptance.
+
+31 October accessibility follow-up: `octave-accessibility-bidi.patch` applies on
+top of the d71f556 vendored snapshot from the project root. Text runs split at
+resolved embedding-level changes and the 255-character limit, retain logical
+order, and expose direction-aware character bounds scaled with their node.
+Selection mapping uses the same run ranges in both directions. Row extents use
+all visual glyph positions rather than the first logical glyph. Two application
+regressions cover scaled multilingual bounds and cross-direction selection and
+deletion; the pre-patch geometry regression fails as expected. This does not
+change keyboard navigation or OS IME composition behavior.

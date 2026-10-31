@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory)][string]$InspectorExecutable,
     [Parameter(Mandatory)][string]$Manifest,
     [Parameter(Mandatory)][string]$OutputDir,
-    [switch]$OpenMutedDefaultOutput
+    [switch]$OpenMutedDefaultOutput,
+    [switch]$SamplesOnly
 )
 $ErrorActionPreference='Stop'
 if (-not $OpenMutedDefaultOutput) { throw 'Explicit -OpenMutedDefaultOutput is required.' }
@@ -31,9 +32,9 @@ $record=@{
     inspectorSha256=(Get-FileHash -LiteralPath $InspectorExecutable).Hash
     requestedAtUtc=[DateTime]::UtcNow.ToString('o')
     outputSelection='default'; playerVolume=0; signIn=$false
-    automaticPlaybackRetries=$false; recordingSubstitution=$false
+    automaticPlaybackRetries=$false; recordingSubstitution=$false; samplesOnly=[bool]$SamplesOnly
     transportReconnectPolicy='One network-only replay within original request deadline.'
-    protocol='One inspection per row; accessible rows get 30s start/middle/late windows; stop a row after failure. First accessible long row >=3660s gets one continuous non-repeating hour; never switch after selection. 90min overall bound. Access failures remain capability failures.'
+    protocol='One inspection per row; accessible rows get 30s start/middle/late windows; stop a row after failure. Unless SamplesOnly, first accessible long row >=3660s gets one continuous non-repeating hour; never switch after selection. SamplesOnly cannot satisfy hour acceptance. 90min overall bound. Access failures remain capability failures.'
     executionComplete=$false; capabilityAccepted=$false; cases=@()
 }
 $timer=[Diagnostics.Stopwatch]::StartNew()
@@ -78,7 +79,7 @@ foreach ($case in $cases) {
     Start-Sleep -Milliseconds 1000
 }
 $selected=@($rows | Where-Object {$_.role -eq 'long' -and $_.state -eq 'accessible' -and $_.durationSeconds -ge 3660} | Select-Object -First 1)
-$record.selectedLongId=if ($selected.Count) {$selected[0].videoId} else {$null}
+$record.selectedLongId=if ($selected.Count -and -not $SamplesOnly) {$selected[0].videoId} else {$null}
 $record.state='playing'; Save-State
 foreach ($row in $rows) {
     if ($row.state -ne 'accessible') { continue }
@@ -108,8 +109,9 @@ foreach ($row in $rows) {
 }
 $record.executionComplete=-not [bool]@($rows | Where-Object {$_.state -in @('not_run','accessible','budget_not_run')}).Count
 $record.longHourPassed=[bool]@($rows | Where-Object {$_.state -eq 'long_hour_passed'}).Count
-$record.capabilityAccepted=$record.longHourPassed -and -not [bool]@($rows | Where-Object {$_.state -notin @('sampled_pass','long_hour_passed')}).Count
-$record.state=if ($record.capabilityAccepted -and $record.longHourPassed) {'passed'} else {'completed_with_failures'}
+$record.sampleMatrixAccepted=-not [bool]@($rows | Where-Object {$_.state -notin @('sampled_pass','long_hour_passed')}).Count
+$record.capabilityAccepted=$record.longHourPassed -and $record.sampleMatrixAccepted
+$record.state=if ($record.capabilityAccepted) {'passed'} elseif ($SamplesOnly -and $record.sampleMatrixAccepted) {'sample_windows_passed'} else {'completed_with_failures'}
 $record.completedAtUtc=[DateTime]::UtcNow.ToString('o')
 Save-State
 $record | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $run 'result.json') -Encoding utf8

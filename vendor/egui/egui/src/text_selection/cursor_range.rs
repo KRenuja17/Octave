@@ -221,21 +221,16 @@ fn ccursor_from_accesskit_text_position(
     galley: &Galley,
     position: &accesskit::TextPosition,
 ) -> Option<CCursor> {
-    use super::accesskit_text::MAX_CHARS_PER_TEXT_RUN;
+    use super::accesskit_text::text_run_ranges;
 
     let mut total_length = 0usize;
     for (i, row) in galley.rows.iter().enumerate() {
         let row_chars = row.glyphs.len() + (row.ends_with_newline as usize);
-        let num_chunks = if row_chars == 0 {
-            1
-        } else {
-            row_chars.div_ceil(MAX_CHARS_PER_TEXT_RUN)
-        };
-
-        for chunk_idx in 0..num_chunks {
+        for (chunk_idx, range) in text_run_ranges(row).iter().enumerate() {
             let run_id = id.with(i).with(chunk_idx);
             if run_id.accesskit_id() == position.node {
-                let column = chunk_idx * MAX_CHARS_PER_TEXT_RUN + position.character_index;
+                if position.character_index > range.len() { return None; }
+                let column = range.start + position.character_index;
                 return Some(CCursor {
                     index: CharIndex(total_length + column),
                     prefer_next_row: !(column == row.glyphs.len()
