@@ -1,5 +1,43 @@
 # Release candidate evaluation
 
+## Attended listening and distribution setup — 31 October 2026
+
+The user confirmed clean audible playback on the default output, physical media
+Play/Pause/resume/Next operation, and a smooth four-second crossfade from Rick
+Astley to Queen without a click or unexpected gap. A second recording,
+`hpSrLjc5SMs` (Wonderwall), loaded real LyricFind line timings; the user confirmed
+highlighting followed the singing. Switching Octave to Headphones stopped at the
+retained position, resumed successfully and sounded clean to the user. These are
+attended sample results, not measurements of every recording or physical latency.
+The user then disconnected the selected headphones. Octave surfaced the device
+failure and retained the 1:18 playback position; it did not silently redirect
+audio. Refreshing outputs and resuming on System default is the recovery path.
+That recovery passed in this attended test; the user confirmed clean audio again.
+
+Translation remains optional and off. The official service's live synthetic POST
+requires a paid key; tested free mirrors failed. The user declined spending on
+translation and said to omit it if not viable. No subscription, key or local
+translation/model installation was created. The live translation acceptance gate
+is waived for this no-cost scope, not marked as a successful translation.
+Account/Premium and Discord remain excluded.
+
+Real current-user Start-menu and uninstall registration, restricted-PATH launch,
+unregistration and data-preservation checks passed on evaluation `.28`.
+`Test-RegisteredPackage.ps1` refuses to replace an existing registration.
+Fresh-machine acceptance remains open: this host is Windows 11 Home without
+Windows Sandbox, and no clean Windows VM is available in this session.
+
+The CI workflow's two invalid `runner` context uses are repaired. Before/after
+actionlint checks reproduce the errors and validate the repaired configuration.
+A manual evaluation workflow builds from source and runs registration checks on
+a separate runner; it has no release-publication or signing permissions. Its
+remote execution remains pending. Local installer integrity/rollback fixtures,
+signature-policy fixtures and PowerShell syntax checks pass. Signature fixtures
+include real unsigned rejection; mocked signatures do not establish trusted signing.
+No public-trust signing certificate is installed, and no signed production release
+is claimed. See [distribution setup](packaging/DISTRIBUTION.md) for the signing
+helpers, no-cost SignPath application route and remaining production gates.
+
 ## Playback and accessibility acceptance — 31 October 2026
 
 The original 13-recording matrix on `d71f556` completed: 38/39 short windows
