@@ -103,6 +103,7 @@ struct Alpha {
     seek: Option<f64>,
     frames: u32,
     capture_requested: bool,
+    capture_scroll_requested: bool,
     capture_ready_at: Option<Instant>,
     capture_load_lyrics: bool,
 }
@@ -179,6 +180,7 @@ impl Alpha {
             seek: None,
             frames: 0,
             capture_requested: false,
+            capture_scroll_requested: false,
             capture_ready_at: None,
             capture_load_lyrics: crate::argument("--capture").is_some()
                 && std::env::args().any(|s| s == "--capture-load-lyrics"),
@@ -818,9 +820,13 @@ impl Alpha {
             && std::env::args().any(|s| s == "--capture-scroll")
             && self.frames >= 40
             && self.lyrics.settled()
+            && !self.capture_scroll_requested
         {
-            // Deterministic preview position even when the native window lacks pointer focus.
+            // Request once, then allow ScrollArea to clamp to the actual content.
+            // Reapplying an oversized offset every frame produces a blank capture
+            // on short pages, particularly at enlarged application scales.
             scroll = scroll.vertical_scroll_offset(520.0);
+            self.capture_scroll_requested = true;
         }
         scroll.show(ui, |ui| self.content_body(ui));
     }
@@ -1100,11 +1106,10 @@ impl Alpha {
                 }
             });
             ui.add_space(12.0);
-            let action = egui::ScrollArea::vertical()
-                .id_salt("account-page")
-                .max_height(ui.clip_rect().height().max(80.0))
-                .show(ui, |ui| self.account.render(ui, self.session.current()))
-                .inner;
+            // The shared page scroll owns the entire Account surface. Nesting
+            // another page-sized scroller here traps short high-scale viewports.
+            // Account's virtualized library keeps its own bounded list scroller.
+            let action = self.account.render(ui, self.session.current());
             if let Some(action) = action {
                 match action {
                     crate::account_ui::Action::Play(track) => {
@@ -2041,6 +2046,71 @@ mod tests {
         assert!(control_after.y0 < control_before.y0);
         click(&ctx, &mut app, "Account");
         assert!(app.account_page && !app.settings_page);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn compact_account_scroll_reaches_connection_options_with_fixed_navigation() {
+        let path = path("compact-account-scroll");
+        let mut app = loaded(path.clone());
+        app.account_page = true;
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        let render = |app: &mut Alpha, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(350.0, 377.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.content(ui),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        let bounds = |output: egui::FullOutput, name: &str| {
+            output
+                .platform_output
+                .accesskit_update
+                .unwrap()
+                .nodes
+                .iter()
+                .find_map(|(_, node)| {
+                    (node.label() == Some(name))
+                        .then(|| node.bounds())
+                        .flatten()
+                })
+                .unwrap_or_else(|| panic!("Missing {name}"))
+        };
+        render(&mut app, vec![]);
+        let nav = bounds(render(&mut app, vec![]), "Settings");
+        render(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(180.0, 300.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -800.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..30 {
+            render(&mut app, vec![]);
+        }
+        let connection = bounds(render(&mut app, vec![]), "Connection options");
+        let nav_after = bounds(render(&mut app, vec![]), "Settings");
+        assert!(
+            connection.y0 >= nav.y1 && connection.y1 <= 377.0,
+            "{connection:?}"
+        );
+        assert!((nav.y0 - nav_after.y0).abs() < 1.0);
         assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
         drop(app);
         std::fs::remove_file(path).unwrap();
