@@ -38,6 +38,9 @@ Assert-Rejected 'unsigned-payload' { & $gate -PackageDir $root -PublisherThumbpr
     $fixtureSignature.SignerCertificate.Extensions = @()
     Assert-Rejected 'missing-code-signing-usage' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
     $fixtureSignature.SignerCertificate.Extensions = $usages
+    Set-Content -LiteralPath (Join-Path $root 'unlisted.exe') -Value 'Unlisted fixture'
+    Assert-Rejected 'unlisted-payload' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
+    Remove-Item -LiteralPath (Join-Path $root 'unlisted.exe')
     Set-Content -LiteralPath (Join-Path $root 'Install.ps1') -Value 'Tampered'
     Assert-Rejected 'changed-payload' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
 }
@@ -49,4 +52,3 @@ $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath
 Assert-Rejected 'unsafe-or-missing-payload' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
 @{policyFixtures=$true; realUnsignedRejection=$true; actualTrustedSigning=$false} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
 Write-Output "signing_policy=passed evidence=$root"
-
