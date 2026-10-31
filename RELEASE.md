@@ -15,7 +15,7 @@ post-start starvation. This is not a claim of flawless catalog access.
 Accessibility now exposes separate logical-order text runs for resolved bidi
 levels, with correct scaled character bounds and selection mapping. RTL row
 extents cover all visual glyphs. The regression fails before and passes after;
-159 ordinary workspace tests, 14 explicit renderer gates and strict Clippy pass.
+154 workspace tests, five demuxer regressions, 14 explicit renderer gates and strict Clippy pass.
 The user confirmed actual Narrator edit/button announcements for Ctrl+K, Tab and
 Shift+Tab. Only the English US keyboard is installed, and the user requested no
 IME installation; real composition/candidate-window acceptance remains unavailable.
@@ -32,7 +32,8 @@ checked in the native editor. Application-scale captures at 100–200% were insp
 The compact Account page now uses the shared page scroller so lower connection
 controls remain reachable; a regression verifies this with fixed navigation.
 Capture mode requests its scroll offset once, allowing normal bounds clamping.
-160 ordinary workspace tests and strict Clippy pass after these layout fixes.
+155 workspace tests plus five demuxer regressions and strict Clippy pass after
+these layout fixes (35 opt-in workspace tests remain ignored by the ordinary run).
 Physical monitor-DPI transitions and exhaustive native editing remain unqualified.
 The runtime and original palette remain unchanged.
 
