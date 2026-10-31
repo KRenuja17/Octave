@@ -8,8 +8,9 @@ passed, and the selected 6,629-second recording passed a continuous hour
 Both long recordings passed start/middle/end windows; deep startup was 1.0–2.4s.
 One short recording's late window received HTTP403 before audio opened. A separate
 follow-up passed with unchanged code; the original failure remains retained.
-Two other short windows each recorded a 20ms buffering indication while meeting
-the original consumption tolerance. This is not a claim of flawless catalog access.
+Twelve passing short windows each recorded a 20ms buffering indication while meeting
+the original consumption tolerance. Counters include startup; they do not isolate
+post-start starvation. This is not a claim of flawless catalog access.
 
 Accessibility now exposes separate logical-order text runs for resolved bidi
 levels, with correct scaled character bounds and selection mapping. RTL row
