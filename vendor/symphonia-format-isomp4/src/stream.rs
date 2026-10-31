@@ -84,6 +84,12 @@ pub struct MoofSegment {
 }
 
 impl MoofSegment {
+    /// A single-track indexed fragment starts a fresh local sample sequence.
+    pub fn rebase_indexed(&mut self, timestamp: u64) {
+        assert_eq!(self.seq.len(), 1);
+        self.seq[0].first_sample = 0;
+        self.seq[0].first_ts = timestamp;
+    }
     /// Instantiate a new segment from a `MoofAtom`.
     pub fn new(moof: MoofAtom, mvex: Arc<MvexAtom>, prev: &dyn StreamSegment) -> MoofSegment {
         let mut seq = Vec::with_capacity(mvex.trexs.len());
@@ -165,6 +171,9 @@ impl StreamSegment for MoofSegment {
     }
 
     fn ts_sample(&self, track_num: usize, ts: u64) -> Result<Option<u32>> {
+        if !self.track_ts_range(track_num).contains(&ts) {
+            return Ok(None);
+        }
         // Get the track fragment associated with track_num.
         let traf = match self.try_get_traf(track_num) {
             Some(traf) => traf,

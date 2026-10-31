@@ -388,6 +388,30 @@ pub struct AtomIterator<B: ReadBytes> {
 }
 
 impl<B: ReadBytes> AtomIterator<B> {
+    pub fn checkpoint(&self) -> (u64, Option<AtomHeader>, u64) {
+        (self.reader.pos(), self.cur_atom, self.next_atom_pos)
+    }
+
+    pub fn restore(&mut self, state: (u64, Option<AtomHeader>, u64)) -> Result<()>
+    where B: std::io::Seek {
+        self.reader.seek(std::io::SeekFrom::Start(state.0))?;
+        self.cur_atom = state.1;
+        self.next_atom_pos = state.2;
+        Ok(())
+    }
+
+    /// Reposition a seekable root iterator at an indexed atom boundary.
+    pub fn seek_to_atom(&mut self, pos: u64) -> Result<()>
+    where B: std::io::Seek {
+        if pos < self.base_pos || self.len.map_or(false, |len| pos - self.base_pos >= len) {
+            return decode_error("isomp4: indexed atom outside stream");
+        }
+        self.reader.seek(std::io::SeekFrom::Start(pos))?;
+        self.cur_atom = None;
+        self.next_atom_pos = pos;
+        Ok(())
+    }
+
     pub fn new_root(reader: B, len: Option<u64>) -> Self {
         let base_pos = reader.pos();
 

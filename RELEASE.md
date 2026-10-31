@@ -1,5 +1,21 @@
 # Release candidate evaluation
 
+## Indexed long-recording seeks — 31 October 2026
+
+Single-track AAC fragment indexes now allow direct seeks without scanning earlier
+media. Track/time-base checks, checked offsets, fragment duration/media bounds and
+sample extents guard the fast path. Unsupported layouts restore sequential
+discovery; transport failures keep the existing deadline and cancellation policy.
+Five demuxer regressions cover bounded reads, forward/backward packet timestamps,
+fragment continuation, invalid-index fallback and offset overflow.
+
+The previously failing four-hour recording's midpoint passed a 30-second muted
+default-device sample, starting in 3,704 ms with no buffering. This initial live
+sample precedes the final fallback/parser hardening. The full original 13-recording
+matrix and continuous long-recording hour are the next acceptance gates.
+Workspace tests (157 passed, 35 opt-in ignored) and strict Clippy pass. No sign-in,
+JavaScript runtime, palette or system-volume changes.
+
 ## Long-recording startup repair — 30 October 2026
 
 Checkpoint `a6bc941` fixes eager scanning of fragmented MP4 streams before the

@@ -47,20 +47,23 @@ impl Atom for SidxAtom {
 
     fn read<B: ReadBytes>(reader: &mut B, header: AtomHeader) -> Result<Self> {
         // The anchor point for segment offsets is the first byte after this atom.
-        let anchor = reader.pos() + header.data_len;
+        let anchor = reader.pos().checked_add(header.data_len)
+            .ok_or(symphonia_core::errors::Error::DecodeError("isomp4: sidx anchor overflow"))?;
 
         let (version, _) = AtomHeader::read_extra(reader)?;
 
         let reference_id = reader.read_be_u32()?;
         let timescale = reader.read_be_u32()?;
 
-        let (earliest_pts, first_offset) = match version {
-            0 => (u64::from(reader.read_be_u32()?), anchor + u64::from(reader.read_be_u32()?)),
-            1 => (reader.read_be_u64()?, anchor + reader.read_be_u64()?),
+        let (earliest_pts, offset) = match version {
+            0 => (u64::from(reader.read_be_u32()?), u64::from(reader.read_be_u32()?)),
+            1 => (reader.read_be_u64()?, reader.read_be_u64()?),
             _ => {
                 return decode_error("isomp4: invalid sidx version");
             }
         };
+        let first_offset = anchor.checked_add(offset)
+            .ok_or(symphonia_core::errors::Error::DecodeError("isomp4: sidx offset overflow"))?;
 
         let _reserved = reader.read_be_u16()?;
         let reference_count = reader.read_be_u16()?;

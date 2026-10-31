@@ -96,6 +96,35 @@ pub struct IsoMp4Reader {
     track_states: Vec<TrackState>,
     /// Optional, movie extends atom used for fragmented streams.
     mvex: Option<Arc<MvexAtom>>,
+    /// Flat, single AAC track index, in the track's own time base.
+    seek_index: Vec<IndexedFragment>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct IndexedFragment {
+    pos: u64,
+    end: u64,
+    ts: u64,
+    end_ts: u64,
+}
+
+fn flat_seek_index(sidx: &SidxAtom, length: u64) -> Option<Vec<IndexedFragment>> {
+    let mut pos = sidx.first_offset;
+    let mut ts = sidx.earliest_pts;
+    let mut entries = Vec::with_capacity(sidx.references.len());
+    for reference in &sidx.references {
+        if !matches!(reference.reference_type, crate::atoms::sidx::ReferenceType::Media)
+            || reference.reference_size < 16 || reference.subsegment_duration == 0 {
+            return None;
+        }
+        let end = pos.checked_add(u64::from(reference.reference_size))?;
+        let end_ts = ts.checked_add(u64::from(reference.subsegment_duration))?;
+        if end > length { return None; }
+        entries.push(IndexedFragment { pos, end, ts, end_ts });
+        pos = end;
+        ts = end_ts;
+    }
+    Some(entries)
 }
 
 impl IsoMp4Reader {
@@ -213,7 +242,7 @@ impl IsoMp4Reader {
                         }
 
                         // Push the segment.
-                        self.segs.push(Box::new(seg));
+                            self.segs.push(Box::new(seg));
                     }
                     else {
                         // TODO: This is a fatal error.
@@ -244,6 +273,57 @@ impl IsoMp4Reader {
 
     fn seek_track_by_ts(&mut self, track_num: usize, ts: u64) -> Result<SeekedTo> {
         debug!("seeking track={} to frame_ts={}", track_num, ts);
+
+        if track_num == 0 && !self.segs.iter().any(|seg| seg.track_ts_range(0).contains(&ts)) {
+            if let Some(entry) = self.seek_index.iter().find(|e| e.ts <= ts && ts < e.end_ts).copied() {
+                let checkpoint = self.iter.checkpoint();
+                let indexed = (|| {
+                    self.iter.seek_to_atom(entry.pos)?;
+                    let header = self.iter.next()?.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+                    if header.atype != AtomType::MovieFragment || header.atom_len > entry.end - entry.pos {
+                        return decode_error("isomp4: invalid indexed fragment");
+                    }
+                    let moof = self.iter.read_atom::<MoofAtom>()?;
+                    let mut seg = MoofSegment::new(moof, self.mvex.as_ref().unwrap().clone(), self.segs.last().unwrap().as_ref());
+                    seg.rebase_indexed(entry.ts);
+                    if seg.track_ts_range(0).end != entry.end_ts || seg.track_sample_range(0).is_empty() {
+                        return decode_error("isomp4: indexed fragment duration mismatch");
+                    }
+                    let media = self.iter.next()?.ok_or(Error::SeekError(SeekErrorKind::OutOfRange))?;
+                    let payload_start = self.iter.inner_mut().pos();
+                    if media.atype != AtomType::MediaData
+                        || payload_start.checked_add(media.data_len) != Some(entry.end) {
+                        return decode_error("isomp4: indexed fragment media extent mismatch");
+                    }
+                    for sample in seg.track_sample_range(0) {
+                        let data = seg.sample_data(0, sample, true)?;
+                        let pos = data.base_pos.checked_add(data.offset.unwrap()).ok_or(Error::DecodeError("isomp4: sample offset overflow"))?;
+                        if pos < payload_start || pos.checked_add(u64::from(data.size)).map_or(true, |end| end > entry.end) {
+                            return decode_error("isomp4: indexed sample outside media");
+                        }
+                    }
+                    self.iter.consume_atom();
+                    Ok(seg)
+                    })();
+                match indexed {
+                    Ok(seg) => {
+                        // Sample numbers are local to this new contiguous run of fragments.
+                        // Drop the old run so backward seeks cannot mix unrelated sample numbering.
+                        self.segs.clear();
+                        self.segs.push(Box::new(seg));
+                        self.track_states[0].cur_seg = 0;
+                    }
+                    Err(Error::DecodeError(_)) => {
+                        // A flat index can legally cover multiple fragments or additional
+                        // boxes. Preserve the general sequential path for those layouts;
+                        // never guess sample timing or retry a transport failure.
+                        self.iter.restore(checkpoint)?;
+                        self.seek_index.clear();
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
 
         struct SeekLocation {
             seg_idx: usize,
@@ -491,6 +571,17 @@ impl FormatReader for IsoMp4Reader {
             }
         }
 
+        let seek_index = match (&sidx, &mvex, total_len) {
+            (Some(index), Some(_), Some(length)) if is_seekable && moov.traks.len() == 1
+                && index.reference_id == moov.traks[0].tkhd.id
+                && index.timescale == moov.traks[0].mdia.mdhd.timescale
+                && index.timescale != 0 && index.earliest_pts == 0
+                && moov.traks[0].mdia.minf.stbl.stsz.sample_count == 0
+                && track_states[0].codec_params.codec == symphonia_core::codecs::CODEC_TYPE_AAC => {
+                    flat_seek_index(index, length).unwrap_or_default()
+                }
+            _ => Vec::new(),
+        };
         let segs: Vec<Box<dyn StreamSegment>> = vec![Box::new(MoovSegment::new(moov))];
 
         Ok(IsoMp4Reader {
@@ -501,6 +592,7 @@ impl FormatReader for IsoMp4Reader {
             track_states,
             segs,
             mvex,
+            seek_index,
         })
     }
 
@@ -645,6 +737,105 @@ mod octave_startup_tests {
         bytes.extend(kind);
         bytes.extend(body);
         bytes
+    }
+    fn words(values: &[u32]) -> Vec<u8> {
+        values.iter().flat_map(|v| v.to_be_bytes()).collect()
+    }
+    fn parse<A: crate::atoms::Atom>(bytes: Vec<u8>) -> A {
+        let stream = MediaSourceStream::new(Box::new(Cursor::new(bytes.clone())), Default::default());
+        let mut iter = AtomIterator::new_root(stream, Some(bytes.len() as u64));
+        iter.next().unwrap();
+        iter.read_atom::<A>().unwrap()
+    }
+    fn indexed_reader() -> (IsoMp4Reader, Arc<AtomicUsize>) {
+        let mvex = Arc::new(parse::<MvexAtom>(atom(b"mvex", &atom(b"trex", &words(&[0, 1, 1, 1024, 4, 0])))));
+        let mut data = Vec::new();
+        let mut index = Vec::new();
+        for i in 0..2000u32 {
+            let fragment = |offset| {
+                let mut traf = atom(b"tfhd", &words(&[0x20000, 1]));
+                traf.extend(atom(b"trun", &words(&[1, 2, offset])));
+                let mut moof = atom(b"mfhd", &words(&[0, i + 1]));
+                moof.extend(atom(b"traf", &traf));
+                atom(b"moof", &moof)
+            };
+            let moof = fragment(fragment(0).len() as u32 + 8);
+            let pos = data.len() as u64;
+            data.extend(moof);
+            let mut payload = words(&[i, i]);
+            payload.resize(4096, 0);
+            data.extend(atom(b"mdat", &payload));
+            index.push(IndexedFragment { pos, end: data.len() as u64, ts: u64::from(i) * 2048, end_ts: u64::from(i + 1) * 2048 });
+        }
+        let reads = Arc::new(AtomicUsize::new(0));
+        let length = data.len() as u64;
+        let source = Measured { data: Cursor::new(data), reads: reads.clone() };
+        let mut iter = AtomIterator::new_root(MediaSourceStream::new(Box::new(source), Default::default()), Some(length));
+        iter.next().unwrap();
+        let moof = iter.read_atom::<MoofAtom>().unwrap();
+        // Build the first fragment with a single-track zero origin.
+        struct Origin;
+        impl StreamSegment for Origin {
+            fn sequence_num(&self) -> u32 { 0 }
+            fn track_sample_range(&self, _: usize) -> std::ops::Range<u32> { 0..0 }
+            fn track_ts_range(&self, _: usize) -> std::ops::Range<u64> { 0..0 }
+            fn sample_timing(&self, _: usize, _: u32) -> Result<Option<SampleTiming>> { Ok(None) }
+            fn ts_sample(&self, _: usize, _: u64) -> Result<Option<u32>> { Ok(None) }
+            fn sample_data(&self, _: usize, _: u32, _: bool) -> Result<SampleDataDesc> { unreachable!() }
+        }
+        let seg = MoofSegment::new(moof, mvex.clone(), &Origin);
+        let mut params = CodecParameters::new();
+        params.with_time_base(TimeBase::new(1, 48000));
+        (IsoMp4Reader {
+            iter, tracks: vec![Track::new(0, params.clone())], cues: vec![], metadata: MetadataLog::default(),
+            segs: vec![Box::new(seg)], mvex: Some(mvex), seek_index: index,
+            track_states: vec![TrackState { codec_params: params, track_num: 0, cur_seg: 0, next_sample: 0, next_sample_pos: 0 }],
+        }, reads)
+    }
+    #[test]
+    fn octave_indexed_seeks_preserve_packets_forward_backward_and_across_fragments() {
+        let (mut reader, reads) = indexed_reader();
+        for i in [1900, 5, 1998, 0, 1500] {
+            let before = reads.load(Ordering::Relaxed);
+            let ts = i * 2048 + 1024;
+            assert_eq!(reader.seek_track_by_ts(0, ts).unwrap().actual_ts, ts);
+            let packet = reader.next_packet().unwrap();
+            assert_eq!(packet.ts(), ts);
+            assert_eq!(&*packet.data, &(i as u32).to_be_bytes());
+            let next = reader.next_packet().unwrap();
+            assert_eq!(next.ts(), ts + 1024);
+            assert_eq!(&*next.data, &((i + 1) as u32).to_be_bytes());
+            assert!(reads.load(Ordering::Relaxed) - before < 32768, "seek scanned intervening media");
+        }
+    }
+    #[test]
+    fn octave_indexed_seek_falls_back_for_inconsistent_duration_and_offsets() {
+        let (mut reader, _) = indexed_reader();
+        reader.seek_index[1500].end_ts += 1;
+        assert_eq!(reader.seek_track_by_ts(0, 1500 * 2048).unwrap().actual_ts, 1500 * 2048);
+        assert!(reader.seek_index.is_empty());
+        let (mut reader, _) = indexed_reader();
+        reader.seek_index[1500].pos += 8;
+        assert_eq!(reader.seek_track_by_ts(0, 1500 * 2048).unwrap().actual_ts, 1500 * 2048);
+        assert!(reader.seek_index.is_empty());
+    }
+    #[test]
+    fn octave_flat_index_rejects_nested_truncated_and_overflowing_references() {
+        let bytes = atom(b"sidx", &words(&[0, 1, 48000, 0, 0, 1, 100, 2048, 0]));
+        let mut index = parse::<SidxAtom>(bytes);
+        assert_eq!(flat_seek_index(&index, 1000).unwrap().len(), 1);
+        assert!(flat_seek_index(&index, 50).is_none());
+        index.first_offset = u64::MAX - 10;
+        assert!(flat_seek_index(&index, u64::MAX).is_none());
+        index.first_offset = 50;
+        index.references[0].reference_type = crate::atoms::sidx::ReferenceType::Segment;
+        assert!(flat_seek_index(&index, 1000).is_none());
+        let bytes = atom(b"sidx", &words(&[0x0100_0000, 1, 48000, 0, 0, u32::MAX, u32::MAX, 0]));
+        let length = bytes.len() as u64;
+        let stream = MediaSourceStream::new(Box::new(Cursor::new(bytes)), Default::default());
+        let mut iter = AtomIterator::new_root(stream, Some(length));
+        iter.next().unwrap();
+        assert!(iter.read_atom::<SidxAtom>().is_err());
     }
     fn movie(fragmented: bool) -> Vec<u8> {
         let mut body = atom(b"mvhd", &[0; 100]);
