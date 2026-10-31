@@ -45,6 +45,29 @@ Relevant provider/security references:
 - [Google desktop OAuth for the YouTube Data API](https://developers.google.com/youtube/data/guides/auth/installed-apps)
 - [OWASP session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
 
+## uYouPlus comparison
+
+Reviewed uYouPlus archived commit `c6f7672e3ab17ddb5ed486a0b8b1e2022ce9ad2c`
+and historical release `v18.08.1-2.3.1`. Its build injects tweaks into the
+existing iOS YouTube app. The historical source patches Google SSO Keychain
+access groups for the re-signed app; the archived source includes a configurable
+bundle-identity sign-in patch. These are iOS integration workarounds, not a
+portable independently authorized desktop OAuth client. The original YouTube
+app and uYou binary are not fully covered by this public-source review.
+
+The project documents repeated sign-in rejection and compatibility fixes.
+Sign-in rejection is different from account suspension; neither those reports
+nor successful user experiences establish a ban probability or a guarantee.
+This review does not establish credential theft, either. Applicable lessons for
+Octave are avoiding manual credential copying, using OS-protected storage if
+persistence is added, and separating credential protection from provider-policy
+acceptance. No uYouPlus login hooks or account credentials were imported.
+
+Sources: [archived sign-in hook](https://github.com/qnblackcat/uYouPlus/blob/c6f7672e3ab17ddb5ed486a0b8b1e2022ce9ad2c/Sources/uYouPlusPatches.xm),
+[historical SSO/Keychain hooks](https://github.com/qnblackcat/uYouPlus/blob/v18.08.1-2.3.1/uYouPlus.xm),
+[build composition](https://github.com/qnblackcat/uYouPlus/blob/c6f7672e3ab17ddb5ed486a0b8b1e2022ce9ad2c/.github/workflows/buildapp.yml),
+[project FAQ](https://github.com/qnblackcat/uYouPlus/wiki/FAQs).
+
 When reporting a security problem, provide a redacted description and synthetic
 reproduction. Do not post session cookies, tokens, private library exports or
 personal databases to the public repository.
