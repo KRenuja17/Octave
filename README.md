@@ -1,5 +1,9 @@
 # Octave
 
+Limusic is the primary application reference for future refinements. See
+[reference direction](REFERENCES.md) for priorities, sign-in findings and the
+proposed account design. Octave retains its native Rust UI and charcoal/sage palette.
+
 Windows package qualification and signing preparation are documented in
 [distribution setup](packaging/DISTRIBUTION.md). The latest evaluation remains
 unsigned; a production release still requires an approved signing provider and

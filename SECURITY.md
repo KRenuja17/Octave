@@ -32,18 +32,44 @@ tracked. Check staged changes before every commit. Current tests use authored
 synthetic credentials; no live account is needed in CI. Never use real account
 data as a regression fixture.
 
-For the current no-account-risk requirement, remain signed out. Before enabling
-personal-account tests, evaluate official Google desktop OAuth with least-access
-scopes for supported YouTube Data API operations. That is a separate adapter,
-not permission to reuse OAuth tokens against unofficial Music endpoints or a
-promise of native Premium playback. User consent, provider policy and live
-security review remain necessary.
+For the current no-account-risk requirement, remain signed out. The desktop
+reference review below identifies a practical browser-session design for future
+work; it does not establish zero account risk or authorize personal-account
+testing. Official Google desktop OAuth is a separate option for supported
+YouTube Data API operations with least-access scopes. It does not replace a
+Music web session or establish native Premium playback. User consent, provider
+policy and implementation review remain necessary for either path.
 
 Relevant provider/security references:
 
 - [YouTube terms](https://www.youtube.com/t/terms)
 - [Google desktop OAuth for the YouTube Data API](https://developers.google.com/youtube/data/guides/auth/installed-apps)
 - [OWASP session management](https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html)
+
+## Desktop application references
+
+[Limusic is the primary Octave reference](REFERENCES.md). The reviewed Limusic,
+Orchard and sndell sign-in paths open Google/YouTube pages in an app-owned browser
+and capture a web session for internal Music API calls. This avoids manual cookie
+copying, but is not an official scoped OAuth grant. A Google-hosted page still
+runs inside an application-controlled browser; its appearance alone is not proof
+of host isolation or credential safety.
+
+At the pinned revisions in REFERENCES.md, Limusic saves cookie headers in SQLite
+text fields and retains accounts on Sign out; Remove account is distinct.
+Its backend settings whitelist withholds auth material from the renderer, and
+refresh checks the expected account. sndell saves browser headers to JSON and
+clears browser data and its auth file on sign-out. Orchard uses QKeychain with
+insecure fallback disabled, and transfers helper credentials through a dedicated
+local socket rather than command arguments or stdout. OS-vault storage does not
+eliminate the separate browser-profile copy or protect a compromised process.
+
+The proposed Octave direction combines Limusic's account lifecycle with
+OS-protected, opt-in persistence and explicit browser-profile cleanup. This is
+documented design work; the existing memory-only manual adapter is unchanged.
+No account credentials, browser profiles or private library data were accessed
+in this public-source review. Community adoption is useful experience, but is
+not evidence of an audited ban rate or a guarantee of provider approval.
 
 ## uYouPlus comparison
 
