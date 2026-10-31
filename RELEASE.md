@@ -37,6 +37,14 @@ these layout fixes (35 opt-in workspace tests remain ignored by the ordinary run
 Physical monitor-DPI transitions and exhaustive native editing remain unqualified.
 The runtime and original palette remain unchanged.
 
+Evaluation package `0.2.0-expansion.28` was built from clean `ab0a423`, with
+five demuxer regressions and all 14 renderer gates passing. Isolated upgrade from
+`.26`, restricted-PATH and portable launches, uninstall, and preservation of the
+test profile, Unicode playlists and unrelated files passed. All 48 modified MPL
+source files match the repository; all 293 renderer provenance hashes verify.
+ZIP SHA256: `687B6EB5209656E347754B65DC8FD9385947C3E70A0C7BB8DC8E3FD31A92AAD1`.
+This does not establish fresh-machine, registration or code-signing acceptance.
+
 ## Indexed long-recording seeks — 31 October 2026
 
 Single-track AAC fragment indexes now allow direct seeks without scanning earlier
