@@ -1,6 +1,6 @@
 //! Native callbacks enqueue commands; the UI thread owns all playback state.
 use octave_core::Track;
-use octave_player::{PlaybackState, Snapshot};
+use octave_player::Snapshot;
 use std::time::Duration;
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))] // Only the Windows backend currently constructs native commands.
@@ -19,6 +19,7 @@ pub enum Command {
 #[cfg(target_os = "windows")]
 mod native {
     use super::*;
+    use octave_player::PlaybackState;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use souvlaki::{
         MediaControlEvent as Event, MediaControls, MediaMetadata, MediaPlayback, MediaPosition,
