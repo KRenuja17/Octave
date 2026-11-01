@@ -1,7 +1,7 @@
 # Windows distribution
 
 The current artifact is an unsigned evaluation package. Attended Windows
-Account/Premium acceptance is recorded in RELEASE.md. Translation is optional and off;
+Account/Premium scope is described in README.md. Translation is optional and off;
 no paid translation service is required. A signature alone does not complete
 listening, fresh-machine or accessibility acceptance.
 
@@ -169,7 +169,7 @@ reputation is not evidence of Octave adoption. No acceptance is guaranteed.
 
 1. Complete the remaining explicitly required listening/accessibility gates and
    record any agreed scope exclusions. Paid translation remains optional;
-   attended Windows Account/Premium acceptance is recorded in RELEASE.md.
+   attended Windows Account/Premium scope is described in README.md.
 2. Build a clean versioned artifact and run installer/registration checks.
 3. Obtain provider approval, sign, verify the exact publisher and timestamps,
    regenerate checksums, and repeat runtime/registration checks on signed bytes.

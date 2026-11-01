@@ -1,15 +1,11 @@
 # Octave
 
-Limusic is the primary application reference for future refinements. See
-[reference direction](REFERENCES.md) for priorities, sign-in findings and the
-account design. Octave retains its native Rust UI and charcoal/sage palette.
-
 Windows package qualification and signing preparation are documented in
 [distribution setup](packaging/DISTRIBUTION.md). The latest evaluation remains
 unsigned; a production release still requires an approved signing provider and
 fresh-machine acceptance.
 
-[Code signing policy](CODE_SIGNING_POLICY.md) · [Privacy policy](PRIVACY.md).
+[Code signing policy](#code-signing-policy) · [Privacy policy](PRIVACY.md).
 
 A native desktop music client in Rust. The default app is the **desktop beta
 preview**: live search, supported unsigned AAC playback, a persistent queue,
@@ -31,8 +27,8 @@ shuffle. Installed Windows fonts are loaded locally and never redistributed.
 Text rendering uses a pinned, patched Rust egui snapshot in `vendor/egui`, with
 RTL shaping, grapheme-aware wrapping and bundled Noto color emoji routing.
 The original proportional text metrics and charcoal/sage palette are preserved.
-See `vendor/egui/README-Octave.md` for provenance and `RELEASE.md` for validation
-and the remaining accessibility acceptance gates.
+See `vendor/egui/README-Octave.md` for renderer provenance. Real composition IME,
+physical monitor/DPI transitions and broader native editing checks remain open.
 
 Search shows a top-result card and an artwork-led Songs list. **Queue top result**
 adds a song without starting playback; **Clear search** cancels pending results
@@ -117,8 +113,9 @@ refresh and stops audio on account changes. **Remember account** is off by defau
 on Windows/macOS it encrypts the session using a key in the OS credential store.
 Restore revalidates identity; Disconnect clears the active session, while Forget
 also removes saved credentials and owned browser profiles. No personal browser
-profile is read, and no credential is saved in SQLite or Git. See [account setup,
-storage and cleanup](ACCOUNT.md) for requirements and limits. Opening Account
+profile is read, and no credential is saved in SQLite or Git. See the
+[privacy policy](PRIVACY.md#local-data-and-account-connection) for storage and
+cleanup details. Opening Account
 alone does not connect. Settings groups desktop behavior, output and sound
 preferences into expandable cards, with appearance controls first.
 
@@ -127,8 +124,8 @@ deduplication and repeated-cursor protection. Open a collection to load its song
 Account Like/Unlike buttons change the actual account only when clicked; visible
 state changes only after YouTube confirms success. Refresh after an uncertain
 network outcome. Expired/rejected sessions prompt reconnection. These unofficial
-account endpoints have fixture coverage; live acceptance is recorded separately
-in [release notes](RELEASE.md). Verified sessions also enable native authenticated
+account endpoints have fixture coverage and attended Windows lifecycle checks.
+Verified sessions also enable native authenticated
 AAC resolution. Full-quality Premium acceptance requires an actual offered
 supported stream; sign-in alone does not prove it. The advanced manual connection
 form remains available for memory-only library access.
@@ -158,7 +155,7 @@ without signing in. Collections expose loaded counts and explicit paging. Pin up
 to 50 collections; History retains the 200 most recent recordings actually heard
 on this computer and can be cleared. These are local conveniences. Private
 library access and verified Windows Premium playback use the optional Account
-connection described in ACCOUNT.md.
+connection described above.
 
 A complete finite public playlist can be imported with cancellation and a
 10,000-entry bound. Whole-playlist **True random** uses OS randomness across every
@@ -181,7 +178,7 @@ and a song link, clears on pause/stop/disable, and reconnects in the background.
 No token or YouTube sign-in is needed. Live lifecycle checks pass with muted
 unsigned playback; the user confirmed the visible card after enabling Discord's
 own activity-sharing switch. Profile visibility depends on Discord's settings.
-See [Discord setup, privacy and verification](DISCORD.md).
+See the [privacy policy](PRIVACY.md#network-services) for the shared metadata.
 
 ## Local Windows package
 
@@ -201,10 +198,22 @@ rights. Uninstall removes only listed package files and preserves listening data
 Quit before upgrading/uninstalling. `-NoRegistration` and an explicit
 `-InstallDir ...\Octave` support isolated packaging QA without registry changes.
 
-Packages are unsigned local evaluation builds. A fresh-machine installation,
-live-account acceptance, distribution licensing/notices and signing remain open
-release gates. The checksum manifest detects accidental damage, not an untrusted
-publisher. Signed update verification groundwork and recovery instructions are documented in [RELEASE.md](RELEASE.md); automatic updates are not enabled.
+Packages are unsigned evaluation builds. Consumer-machine installation,
+remaining accessibility checks and trusted signing remain open release gates.
+The checksum manifest detects accidental damage, not an untrusted publisher.
+Automatic updates are not enabled. Keep profiles backed up before upgrading;
+older binaries cannot read every newer database schema.
+
+## Code signing policy
+
+Octave has applied to SignPath Foundation's no-cost open-source program; approval
+and trusted signing are pending. No sponsorship or certificate is claimed.
+[KRenuja17](https://github.com/KRenuja17) maintains and reviews the project and
+approves signing and publication. Signing and source-host accounts must use MFA.
+Only clean, reviewed, qualified source builds may be signed; credentials stay
+outside Git and packages. Final publisher signatures, timestamps, hashes and
+installation/runtime checks must pass before production publication. See the
+[privacy policy](PRIVACY.md) and [distribution setup](packaging/DISTRIBUTION.md).
 
 ## Listening alpha
 
@@ -397,11 +406,10 @@ Premium access, lossless audio, a measured bitrate, or the hardware output forma
 The resolver selects the highest reported bitrate among supported AAC-LC/MP4
 formats. The unsigned path accepts direct URLs. Verified accounts on Windows can
 also use ciphered URLs through the packaged, contained Rust/Boa signature helper.
-See [account setup and limits](ACCOUNT.md). Unexpected codecs are unsupported.
+Use the optional Account connection described above. Unexpected codecs are unsupported.
 
-Only supported AAC/MP4 streams are playable. Account lifecycle and an attended
-Windows Premium playback check passed; see RELEASE.md for measured quality and
-the scope of that check. This does not guarantee every recording's quality.
+Only supported AAC/MP4 streams are playable. Quality depends on the particular
+recording and the formats offered by the service.
 DRM, manifest-only/live-stream playback and automatic device-switch recovery
 remain unsupported. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
@@ -737,7 +745,7 @@ public application ID, with an optional custom override. It remains off until
 explicitly enabled. IPC is separate from playback, bounded by time/packet limits,
 coalesced and retried after disconnect. Protocol fixtures and an actual muted
 unsigned-playback lifecycle pass; Discord audience/visibility controls still
-apply. See [the integration guide](DISCORD.md). Idle UI repainting is reduced;
+apply. See the [privacy policy](PRIVACY.md#network-services). Idle UI repainting is reduced;
 artwork/lyrics/motion do not force continuous idle animation.
 
 ### Adaptive analysis experiment

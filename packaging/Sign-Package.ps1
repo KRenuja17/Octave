@@ -40,7 +40,7 @@ foreach ($file in Get-ChildItem -LiteralPath $destination -File | Where-Object {
     if ($signature.Status -ne 'Valid' -or -not $signature.TimeStamperCertificate) { throw 'Signing or timestamp validation failed; incomplete artifact must not be released.' }
 }
 @{publisherThumbprint=$certificate.Thumbprint; sourceCommit=$build.sourceCommit; signedAtUtc=[DateTime]::UtcNow.ToString('o'); hashAlgorithm='SHA256'; timestampServer=$TimestampServer.AbsoluteUri} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'SIGNING-INFO.json') -Encoding utf8
-Set-Content -LiteralPath (Join-Path $destination 'EVALUATION-NOTICE.txt') -Value 'Signed release-candidate evaluation build. Signing does not establish listening or fresh-machine acceptance. No production update feed or automatic updater is enabled. See RELEASE.md.'
+Set-Content -LiteralPath (Join-Path $destination 'EVALUATION-NOTICE.txt') -Value 'Signed release-candidate evaluation build. Signing does not establish listening or fresh-machine acceptance. No production update feed or automatic updater is enabled. See README.md.'
 $files = @(Get-ChildItem -LiteralPath $destination -File | ForEach-Object { @{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash} })
 @{product='Octave';version=$manifest.version;files=$files} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $destination 'manifest.json') -Encoding utf8
 & (Join-Path $PSScriptRoot 'Test-ReleaseSignatures.ps1') -PackageDir $destination -PublisherThumbprint $CertificateThumbprint

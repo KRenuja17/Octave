@@ -53,7 +53,7 @@ try {
     }
     foreach ($name in @('Install.ps1','Uninstall.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $package }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $package
-    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md','PRIVACY.md','CODE_SIGNING_POLICY.md','DISCORD.md','ACCOUNT.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
+    foreach ($name in @('LICENSE','PRIVACY.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
     $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor')) + [IO.Path]::DirectorySeparatorChar
@@ -141,7 +141,7 @@ try {
     $gccVersion = & (Join-Path $GccBin 'gcc.exe') -dumpfullversion
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify GCC compiler.' }
     @{ sourceCommit=$commit; dirty=$dirty; buildInvoked=(-not $SkipBuild); version=$version; profile=$Profile; target='x86_64-pc-windows-gnu'; rust=$rustVersion; gcc=$gccVersion; cargoLockSha256=(Get-FileHash -LiteralPath (Join-Path $repo 'Cargo.lock')).Hash; builtAtUtc=[DateTime]::UtcNow.ToString('o'); missingLicenseTexts=$missing } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $package 'BUILD-INFO.json') -Encoding utf8
-    Set-Content -LiteralPath (Join-Path $package 'EVALUATION-NOTICE.txt') -Value 'Unsigned release-candidate evaluation build. See RELEASE.md for open acceptance gates. MIT applies to Octave; third-party obligations require distribution review. No production update feed or automatic updater is enabled.'
+    Set-Content -LiteralPath (Join-Path $package 'EVALUATION-NOTICE.txt') -Value 'Unsigned release-candidate evaluation build. See README.md for scope and open acceptance gates. MIT applies to Octave; third-party obligations require distribution review. No production update feed or automatic updater is enabled.'
     $files = @(Get-ChildItem -LiteralPath $package -File | ForEach-Object { @{ name=$_.Name; sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash } })
     @{product='Octave'; version=$version; files=$files} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $package 'manifest.json') -Encoding utf8
     Compress-Archive -LiteralPath $package -DestinationPath ($package + '.zip')

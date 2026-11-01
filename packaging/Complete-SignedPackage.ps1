@@ -47,7 +47,7 @@ $destination = Join-Path $output ('Octave-'+$manifest.version+'-signed-'+[Guid]:
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 foreach ($name in $names) { Copy-Item -LiteralPath (Join-Path $returned $name) -Destination $destination }
 @{provider='SignPath';publisherThumbprint=$PublisherThumbprint;sourceCommit=$ExpectedSourceCommit;unsignedManifestSha256=(Get-FileHash -LiteralPath (Join-Path $source 'manifest.json')).Hash;assembledAtUtc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $destination 'SIGNING-INFO.json') -Encoding utf8
-Set-Content -LiteralPath (Join-Path $destination 'EVALUATION-NOTICE.txt') -Value 'Signed release-candidate evaluation build. Signatures do not establish consumer-machine, SmartScreen or accessibility acceptance. Automatic updates remain disabled. See RELEASE.md.'
+Set-Content -LiteralPath (Join-Path $destination 'EVALUATION-NOTICE.txt') -Value 'Signed release-candidate evaluation build. Signatures do not establish consumer-machine, SmartScreen or accessibility acceptance. Automatic updates remain disabled. See README.md.'
 $files = @(Get-ChildItem -LiteralPath $destination -File | ForEach-Object { @{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash} })
 @{product='Octave';version=$manifest.version;files=$files} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $destination 'manifest.json') -Encoding utf8
 & (Join-Path $PSScriptRoot 'Test-ReleaseSignatures.ps1') -PackageDir $destination -PublisherThumbprint $PublisherThumbprint | Out-Host

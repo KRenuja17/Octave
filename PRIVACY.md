@@ -32,7 +32,7 @@ application ID or an optional override; no Discord token or account linking is
 required. Only the opt-in preference and custom public ID are saved locally.
 Pause/buffering/stop/disable clear the activity; normal quit attempts a bounded
 clear. Discord's READY account fields are discarded without logging/storage.
-See [Discord setup and verification](DISCORD.md). Automatic update hosting is
+See [Discord setup](README.md#listening-experience). Automatic update hosting is
 not configured and automatic updating remains disabled.
 
 ## Local data and account connection
@@ -60,7 +60,8 @@ removes remembered files, the vault key and owned browser profiles. Neither
 remotely revokes Google sessions. Uninstall preserves user data, so use Forget
 first to remove the vault entry. Bounded in-flight requests may retain a copy
 until cancelled or timed out. Credentials are sent only to the fixed HTTPS
-YouTube Music API origin, never to media/artwork hosts. See [account setup](ACCOUNT.md).
+YouTube Music API origin, never to media/artwork hosts. See
+[account setup](README.md#account-and-desktop-beta-preview).
 
 Private library responses and fetched lyrics are memory-only unless the user
 performs an action that persists song metadata as described above. Local OS media
@@ -68,6 +69,6 @@ controls display playing metadata. Clipboard use, OS paging/crash dumps, malware
 and manual diagnostic sharing have privacy implications outside that storage
 policy; do not include account cookies or personal profiles in reports.
 
-Use [credential safety guidance](SECURITY.md) for redacted reporting. Package
-builds include this policy. Any future telemetry, changes to credential storage or
+Reports must omit credentials, cookies, private library responses and personal
+browser/profile files. Package builds include this policy. Any future telemetry, changes to credential storage or
 update service requires an updated policy and appropriate user controls.
