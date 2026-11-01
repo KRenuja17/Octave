@@ -9,6 +9,8 @@ Windows package qualification and signing preparation are documented in
 unsigned; a production release still requires an approved signing provider and
 fresh-machine acceptance.
 
+[Code signing policy](CODE_SIGNING_POLICY.md) · [Privacy policy](PRIVACY.md).
+
 A native desktop music client in Rust. The default app is the **desktop beta
 preview**: live search, supported unsigned AAC playback, a persistent queue,
 Windows media/tray integration and an experimental account library connection.

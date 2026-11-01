@@ -1,5 +1,37 @@
 # Release candidate evaluation
 
+## Windows metadata and native editing — 1 November 2026
+
+Candidate version: `0.2.0-rc.1`. Windows executable resources now identify Octave,
+its description, contributor attribution, original filename and the exact package
+version. Numeric and string versions and prerelease/debug flags are qualified;
+missing metadata, version mismatches and debug release input are rejected.
+The existing GNU toolchain builds this locally without installing Visual Studio.
+
+Native checks reproduced partial combining-mark and flag deletion in `.28`.
+The patched renderer moves keyboard cursors and Shift-selection across whole
+extended graphemes and deletes complete clusters with Backspace/Delete/Ctrl+H.
+Character-indexed buffer and IME surrounding-text APIs retain their semantics.
+Two regressions fail before and pass after; the local workspace has 157 passing
+tests, with 35 explicitly opt-in tests ignored. Strict Clippy passes.
+Native verification confirms complete combining/flag/skin-tone-ZWJ deletion,
+whole-cluster Shift-selection, exact mixed Hebrew/Arabic prefix preservation,
+undo/redo and Arabic letter-plus-mark deletion. This is logical-order editing;
+visual-order bidi keyboard navigation is not claimed.
+
+Only English US input remains installed under the user's installed-IME-only
+constraint. Real composition/candidate-window testing is still unavailable.
+The user confirmed only one monitor is available; physical transitions between
+monitors with different DPI remain untested. Application scaling is separate.
+
+The metadata and renderer checkpoints were pushed and remote CI/distribution
+qualification dispatched. Final run results and package checksums must be
+recorded before release approval. The [code signing policy](CODE_SIGNING_POLICY.md)
+and [privacy policy](PRIVACY.md) describe the intended release process and current
+data behavior. No approved provider/certificate, timestamped signed artifact,
+fresh consumer-machine result or production publication is claimed. Automatic
+updates remain disabled. Live Account/Premium and Discord remain excluded.
+
 ## Attended listening and distribution setup — 31 October 2026
 
 The user confirmed clean audible playback on the default output, physical media
