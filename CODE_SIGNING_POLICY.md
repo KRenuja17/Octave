@@ -3,6 +3,9 @@
 Octave is pursuing SignPath Foundation's no-cost open-source route. The project
 has not been approved and the signing environment is not configured. Current
 evaluation packages are unsigned. No sponsorship or certificate is claimed.
+The maintainer reported submitting the Foundation application on 1 November
+2026, after approving publication of the unsigned rc.4 evaluation prerelease.
+Submission is not approval; no trusted signing request has been executed.
 
 The repository owner, [KRenuja17](https://github.com/KRenuja17), reviews and
 approves production signing and publication. Signing access and provider roles

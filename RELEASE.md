@@ -61,16 +61,19 @@ production release; the earlier evaluation draft is retained. This addresses
 the public-download prerequisite for a SignPath application, not provider
 acceptance or production approval.
 
+The maintainer reported submitting the SignPath application on 1 November 2026.
+Only public project fields were prepared by the agent; owner contact/consent
+was supplied directly by the maintainer. No provider acceptance is claimed.
+
 Still required: an installed real composition IME, actual different-scale
 displays, broader attended native editing, the separate consumer Windows test,
-owner application/contact/MFA and provider acceptance, trusted signing and
+provider acceptance and owner MFA/role/environment setup, trusted signing and
 retests on final signed bytes, and review/approval of the resulting production
 artifact/notes/checksums. SignPath's released-project/reputation requirements
 remain external eligibility questions despite the public unsigned preview.
-Only public project details were prefilled in the application; owner contact,
-consent/account/MFA steps and the provider's decision remain outside automated
+Provider review and owner-controlled account/MFA setup remain outside automated
 acceptance. No owner contact information, private account session or service
-credential was entered by the agent.
+credential was entered by the agent or added to Git.
 Automatic updates remain disabled.
 
 ## Isolated Account/Premium acceptance — 1 November 2026
