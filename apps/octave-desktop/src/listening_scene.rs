@@ -5,6 +5,12 @@ use crate::shell::Destination;
 impl Alpha {
     pub(super) fn catalog_body(&mut self, ui: &mut egui::Ui) {
         use crate::catalog_ui::Action;
+        if self.catalog.route == "FEmusic_home"
+            && let Some(action) = self.account.home_library(ui)
+        {
+            self.library_action(action);
+            return;
+        }
         if let Some(action) = self.catalog.render(
             ui,
             &self.session.history,
@@ -109,7 +115,9 @@ impl Alpha {
         }
     }
     pub(super) fn destination(&self) -> Destination {
-        if self.catalog_page {
+        if self.library_page {
+            Destination::Library(self.library_route.clone())
+        } else if self.catalog_page {
             Destination::Catalog(self.catalog.route.clone())
         } else if self.settings_page {
             Destination::Settings
@@ -125,6 +133,7 @@ impl Alpha {
     }
     pub(super) fn navigate(&mut self, target: Destination) {
         self.catalog_page = matches!(&target, Destination::Catalog(_));
+        self.library_page = matches!(&target, Destination::Library(_));
         self.settings_page = target == Destination::Settings;
         self.playlists_page = target == Destination::Playlists;
         self.account_page = target == Destination::Account;
@@ -132,7 +141,44 @@ impl Alpha {
         match target {
             Destination::Listening(tab) => self.listening_tab = tab,
             Destination::Catalog(route) => self.catalog.route = route,
+            Destination::Library(route) => {
+                self.account.select_library(&route);
+                self.library_route = route;
+            }
             _ => (),
+        }
+    }
+    pub(super) fn library_action(&mut self, action: crate::account_ui::Action) {
+        use crate::account_ui::Action;
+        match action {
+            Action::OpenLibrary(route) => self.navigate(Destination::Library(route)),
+            Action::OpenAccount => self.navigate(Destination::Account),
+            Action::LocalPlaylists => self.navigate(Destination::Playlists),
+            Action::Play(tracks, index) => {
+                if index < tracks.len() {
+                    self.halt();
+                    self.session.queue = tracks.into();
+                    self.session.select(index);
+                    self.start(true);
+                }
+            }
+            Action::Shuffle(tracks) => {
+                if !tracks.is_empty() {
+                    self.halt();
+                    self.session.queue = tracks.into();
+                    self.session.select(0);
+                    if self.session.shuffle_all().is_err() {
+                        self.message = "Shuffle unavailable; playing in source order.".into();
+                    }
+                    self.start(true);
+                }
+            }
+            Action::Append(track) => self.add(track, false),
+            Action::AppendAll(tracks) => {
+                for track in tracks {
+                    self.add(track, false);
+                }
+            }
         }
     }
     pub(super) fn show_compact_panel(&mut self) {

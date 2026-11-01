@@ -17,8 +17,11 @@ The listening UI follows YouTube Music's sidebar, search and persistent-player
 layout while keeping Octave's original charcoal and sage palette. Narrow windows
 use a compact navigation header. Navigation stays fixed while page content scrolls,
 and each destination retains its own scroll position during the session.
-Search, Queue, Account, Playlists and Settings remain
-available, alongside Dark, Light and High contrast appearances. Visible songs and the current player load public YouTube thumbnails in the
+Home opens by default. **Library** and a persistent **Liked Music** shortcut put
+your connected music in the sidebar; Home also has a Liked Music card. Search,
+Queue, Account, Local playlists and Settings remain available; compact navigation
+puts secondary destinations in **More**. Dark, Light and High contrast appearances
+are available. Visible songs and the current player load public YouTube thumbnails in the
 background, cropped to square covers with a neutral fallback. Artwork uses a
 bounded memory-only cache and never sends account cookies. The player keeps
 previous/play/next and volume visible; its options menu holds stop, repeat and
@@ -37,7 +40,7 @@ You can also launch with `--search "artist or song"` to open a search without au
 
 ## Expansion: local playlists
 
-Open **Playlists**, enter a name, and **Save queue as new playlist**.
+Open **Local playlists**, enter a name, and **Save queue as new playlist**.
 Browse cover cards to preview a playlist and its songs without changing the queue.
 Select a saved playlist and **Load into queue** to replace the queue without
 autoplay. Reorder, remove or add songs with the existing Queue controls, then
@@ -119,9 +122,17 @@ cleanup details. Opening Account
 alone does not connect. Settings groups desktop behavior, output and sound
 preferences into expandable cards, with appearance controls first.
 
-Library songs, liked songs, albums and playlists have explicit Load more controls,
-deduplication and repeated-cursor protection. Open a collection to load its songs.
-Account Like/Unlike buttons change the actual account only when clicked; visible
+After connecting or restoring, Octave loads the first **Liked Music** page.
+Open **Library** for Liked Music, Songs, Albums and Playlists, or use the sidebar's
+Liked Music shortcut from any page. Account contains connection/storage controls.
+Library uses artwork-led song rows, a loaded-music filter and collection cards.
+**Play all**, **Shuffle** and **Add to queue** apply to the loaded, filtered songs;
+when more pages exist the playback buttons explicitly say **Play loaded** and
+**Shuffle loaded**. A song's Play button starts the loaded list at that song.
+Opening a library tab or collection does not replace the queue or start playback.
+Pages have explicit **Load more music**, deduplication and repeated-cursor protection;
+up to eight inactive pages are cached in memory and discarded on account changes.
+Like/Unlike actions in each song's options menu change the account only when clicked; visible
 state changes only after YouTube confirms success. Refresh after an uncertain
 network outcome. Expired/rejected sessions prompt reconnection. These unofficial
 account endpoints have fixture coverage and attended Windows lifecycle checks.

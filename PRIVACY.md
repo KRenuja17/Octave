@@ -63,7 +63,11 @@ until cancelled or timed out. Credentials are sent only to the fixed HTTPS
 YouTube Music API origin, never to media/artwork hosts. See
 [account setup](README.md#account-and-desktop-beta-preview).
 
-Private library responses and fetched lyrics are memory-only unless the user
+The first Liked Music page loads after a verified account connection or restore.
+Other private library pages load when selected, refreshed or explicitly paged.
+Up to eight inactive library pages are cached in memory during the connection;
+changing account/channel or disconnecting clears that cache. Private library
+responses and fetched lyrics are memory-only unless the user
 performs an action that persists song metadata as described above. Local OS media
 controls display playing metadata. Clipboard use, OS paging/crash dumps, malware
 and manual diagnostic sharing have privacy implications outside that storage

@@ -41,10 +41,24 @@ pub fn run() -> eframe::Result {
                 cc.egui_ctx.set_pixels_per_point(scale.clamp(1.0, 2.0));
             }
             let mut app = Alpha::new(path);
-            app.account_page = crate::argument("--page").as_deref() == Some("account");
+            if crate::argument("--page").is_none() {
+                app.navigate(crate::shell::Destination::Catalog("FEmusic_home".into()));
+            }
             if let Some(query) = crate::argument("--search") {
+                app.navigate(crate::shell::Destination::Search);
                 app.query = query.chars().take(512).collect();
                 app.debounce = Some(Instant::now());
+            }
+            #[cfg(debug_assertions)]
+            if std::env::args().any(|arg| arg == "--library-preview") {
+                // Visual QA must opt into both capture and an isolated profile.
+                if crate::argument("--capture").is_none() || crate::argument("--data-dir").is_none()
+                {
+                    return Err(
+                        "Library preview requires --capture and an isolated --data-dir".into(),
+                    );
+                }
+                app.account.preview_library(&cc.egui_ctx);
             }
             app.desktop = Some(crate::desktop::Desktop::new(cc));
             Ok(Box::new(app))
@@ -75,6 +89,8 @@ struct Alpha {
     account: crate::account_ui::AccountUi,
     related: crate::related_ui::RelatedUi,
     account_page: bool,
+    library_page: bool,
+    library_route: crate::account_ui::LibraryRoute,
     desktop: Option<crate::desktop::Desktop>,
     presence: crate::discord::Presence,
     quitting: bool,
@@ -152,7 +168,17 @@ impl Alpha {
                     .to_path_buf(),
             ),
             related: crate::related_ui::RelatedUi::default(),
-            account_page: false,
+            account_page: crate::argument("--page").as_deref() == Some("account"),
+            library_page: matches!(
+                crate::argument("--page").as_deref(),
+                Some("library" | "liked-music")
+            ),
+            library_route: match crate::argument("--library-tab").as_deref() {
+                Some("songs") => crate::account_ui::LibraryRoute::Songs,
+                Some("albums") => crate::account_ui::LibraryRoute::Albums,
+                Some("playlists") => crate::account_ui::LibraryRoute::Playlists,
+                _ => crate::account_ui::LibraryRoute::Liked,
+            },
             desktop: None,
             presence: Default::default(),
             quitting: false,
@@ -261,6 +287,9 @@ impl Alpha {
     fn poll(&mut self) {
         self.account.poll();
         if let Some(account) = self.account.take_playback_change() {
+            self.library_route = crate::account_ui::LibraryRoute::Liked;
+            // History can contain private collection names and IDs from the old channel.
+            self.history = Default::default();
             self.halt_at_current_position();
             self.player.set_account(account);
             self.message =
@@ -611,12 +640,7 @@ impl Alpha {
             .response
             .on_hover_text("Playback options");
             if ui.button("Now playing").clicked() {
-                self.catalog_page = false;
-                self.listening_tab = 0;
-                self.queue_page = true;
-                self.settings_page = false;
-                self.account_page = false;
-                self.playlists_page = false;
+                self.navigate(crate::shell::Destination::Listening(0));
             }
             if ui.button("Focus").clicked() {
                 self.focus = true;
@@ -688,92 +712,104 @@ impl Alpha {
         });
     }
     fn navigation(&mut self, ui: &mut egui::Ui) {
-        for (label, route) in [
-            ("Home", "FEmusic_home"),
-            ("Explore", "FEmusic_explore"),
-            ("History", "local:history"),
+        use crate::{account_ui::LibraryRoute, shell::Destination};
+        let vertical = ui.layout().main_dir() == egui::Direction::TopDown;
+        for (label, target) in [
+            ("Home".into(), Destination::Catalog("FEmusic_home".into())),
+            (
+                "Explore".into(),
+                Destination::Catalog("FEmusic_explore".into()),
+            ),
+            (
+                "Library".into(),
+                Destination::Library(self.library_route.clone()),
+            ),
+            ("Search".into(), Destination::Search),
+            (
+                format!("Queue · {}", self.session.queue.len()),
+                Destination::Listening(1),
+            ),
         ] {
-            if theme::nav(ui, self.catalog_page && self.catalog.route == route, label).clicked() {
-                self.navigate(crate::shell::Destination::Catalog(route.into()));
+            if !vertical && label == "Explore" {
+                continue;
+            }
+            let selected = match &target {
+                Destination::Library(_) => self.library_page,
+                Destination::Listening(_) => self.queue_page,
+                _ => self.destination() == target,
+            };
+            if theme::nav(ui, selected, label).clicked() {
+                self.navigate(target);
             }
         }
-
-        if theme::nav(
-            ui,
-            !self.catalog_page
-                && !self.queue_page
-                && !self.account_page
-                && !self.settings_page
-                && !self.playlists_page,
-            "Search",
-        )
-        .clicked()
-        {
-            self.catalog_page = false;
-            self.settings_page = false;
-            self.playlists_page = false;
-            self.account_page = false;
-            self.queue_page = false;
+        if vertical {
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
         }
         if theme::nav(
             ui,
-            self.queue_page && !self.account_page,
-            format!("Queue · {}", self.session.queue.len()),
+            self.library_page && self.library_route == LibraryRoute::Liked,
+            "♥  Liked Music",
         )
         .clicked()
         {
-            self.catalog_page = false;
-            self.settings_page = false;
-            self.playlists_page = false;
-            self.account_page = false;
-            self.queue_page = true;
-            self.listening_tab = 1;
+            self.navigate(Destination::Library(LibraryRoute::Liked));
         }
-        if theme::nav(ui, self.account_page, "Account").clicked() {
-            self.catalog_page = false;
-            self.settings_page = false;
-            self.playlists_page = false;
-            self.account_page = true;
+        if vertical {
+            ui.add_space(8.0);
         }
-        if theme::nav(ui, self.playlists_page, "Playlists").clicked() {
-            self.playlists_page = true;
-            self.catalog_page = false;
-            self.settings_page = false;
-            self.account_page = false;
-            self.queue_page = false;
+        let secondary = [
+            ("Explore", Destination::Catalog("FEmusic_explore".into())),
+            ("Local playlists", Destination::Playlists),
+            ("History", Destination::Catalog("local:history".into())),
+            ("Account", Destination::Account),
+            ("Settings", Destination::Settings),
+        ];
+        if vertical {
+            for (label, target) in secondary.into_iter().skip(1) {
+                if theme::nav(ui, self.destination() == target, label).clicked() {
+                    self.navigate(target);
+                }
+            }
+        } else {
+            ui.menu_button("More", |ui| {
+                for (label, target) in secondary {
+                    if ui.button(label).clicked() {
+                        self.navigate(target);
+                        ui.close();
+                    }
+                }
+            });
         }
-        if theme::nav(ui, self.settings_page, "Settings").clicked() {
-            self.catalog_page = false;
-            self.settings_page = true;
-            self.playlists_page = false;
-            self.account_page = false;
-            self.queue_page = false;
-        }
-        if ui.available_width() < 240.0 && !self.session.pinned.is_empty() {
+        if vertical && !self.session.pinned.is_empty() {
             ui.separator();
             ui.weak("Pinned collections");
             let mut open = None;
-            egui::ScrollArea::vertical()
-                .id_salt("pinned-navigation")
-                .max_height(ui.available_height().max(80.0))
-                .show(ui, |ui| {
-                    for collection in &self.session.pinned {
-                        let title: String = collection.title.chars().take(36).collect();
-                        if ui
-                            .small_button(title)
-                            .on_hover_text(&collection.title)
-                            .clicked()
-                        {
-                            open = Some(collection.id.clone());
-                        }
-                    }
-                });
+            for collection in self.session.pinned.iter().take(8) {
+                if ui
+                    .add(egui::Button::new(&collection.title).frame(false).truncate())
+                    .on_hover_text(&collection.title)
+                    .clicked()
+                {
+                    open = Some(collection.id.clone());
+                }
+            }
             if let Some(id) = open {
-                self.navigate(crate::shell::Destination::Catalog(id));
+                self.navigate(Destination::Catalog(id));
             }
         }
     }
     fn page_scroll(&mut self, ui: &mut egui::Ui) {
+        if self.library_page {
+            let action =
+                self.account
+                    .render_library(ui, &self.library_route, self.session.current());
+            if let Some(action) = action {
+                self.library_action(action);
+            }
+            return;
+        }
         let page = if self.settings_page {
             4
         } else if self.playlists_page {
@@ -896,12 +932,12 @@ impl Alpha {
                     egui::Layout::top_down(egui::Align::Min),
                     |ui| {
                         ui.heading("Octave");
-                        ui.add_space(24.0);
-                        ui.spacing_mut().item_spacing.y = 12.0;
-                        self.navigation(ui);
-                        ui.add_space(24.0);
-                        ui.separator();
-                        ui.weak("Your music, on desktop");
+                        ui.add_space(16.0);
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        egui::ScrollArea::vertical()
+                            .id_salt("main-navigation")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| self.navigation(ui));
                     },
                 );
                 ui.separator();
@@ -1088,9 +1124,7 @@ impl Alpha {
                 self.session.queue = tracks.into();
                 self.session.cursor = 0;
                 self.session.position = 0.0;
-                self.queue_page = true;
-                self.listening_tab = 1;
-                self.account_page = false;
+                self.navigate(crate::shell::Destination::Listening(1));
                 self.message = "Playlist loaded. Press Resume to start listening.".into();
                 if self.playlists.as_ref().is_some_and(|p| p.random_on_load)
                     && self.session.shuffle_all().is_err()
@@ -1104,31 +1138,8 @@ impl Alpha {
             return;
         }
         if self.account_page {
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Search music").clicked() {
-                    self.account_page = false;
-                    self.queue_page = false;
-                }
-                if ui.button("Local playlists").clicked() {
-                    self.account_page = false;
-                    self.playlists_page = true;
-                    self.queue_page = false;
-                }
-            });
-            ui.add_space(12.0);
-            // The shared page scroll owns the entire Account surface. Nesting
-            // another page-sized scroller here traps short high-scale viewports.
-            // Account's virtualized library keeps its own bounded list scroller.
-            let action = self.account.render(ui, self.session.current());
-            if let Some(action) = action {
-                match action {
-                    crate::account_ui::Action::Play(track) => {
-                        self.session.queue = vec![track].into();
-                        self.session.select(0);
-                        self.start(true);
-                    }
-                    crate::account_ui::Action::Append(track) => self.add(track, false),
-                }
+            if let Some(action) = self.account.render(ui) {
+                self.library_action(action);
             }
             return;
         }
@@ -1595,6 +1606,7 @@ impl eframe::App for Alpha {
                 && self.artwork.settled()
                 && self.lyrics.settled()
                 && (!self.catalog_page || self.catalog.settled())
+                && (!self.library_page || self.account.library_settled())
                 && !self.capture_load_lyrics
             {
                 self.capture_ready_at.get_or_insert_with(Instant::now);
@@ -1758,6 +1770,118 @@ mod tests {
         );
         output.textures_delta.clear();
         output
+    }
+    #[test]
+    fn home_and_sidebar_open_the_library_without_changing_playback() {
+        use crate::{account_ui::LibraryRoute, shell::Destination};
+        let path = path("library-navigation");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        app.account.preview_library(&ctx);
+        app.session.queue = vec![track(1), track(2)].into();
+        app.session.position = 77.0;
+        let before = app.session.clone();
+        click(&ctx, &mut app, "Home");
+        click(&ctx, &mut app, "Liked Music");
+        assert_eq!(app.destination(), Destination::Library(LibraryRoute::Liked));
+        click(&ctx, &mut app, "Albums");
+        assert_eq!(
+            app.destination(),
+            Destination::Library(LibraryRoute::Albums)
+        );
+        click(&ctx, &mut app, "♥  Liked Music");
+        assert_eq!(app.destination(), Destination::Library(LibraryRoute::Liked));
+        click(&ctx, &mut app, "← Back");
+        assert_eq!(
+            app.destination(),
+            Destination::Library(LibraryRoute::Albums)
+        );
+        assert_eq!(app.session, before);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        click(&ctx, &mut app, "♥  Liked Music");
+        click(&ctx, &mut app, "Add to queue");
+        assert_eq!(app.session.queue.len(), 14);
+        assert_eq!(app.session.position, 77.0);
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn compact_library_scrolling_keeps_navigation_and_reaches_song_controls() {
+        use crate::{account_ui::LibraryRoute, shell::Destination};
+        let path = path("compact-library-scroll");
+        let mut app = loaded(path.clone());
+        let ctx = egui::Context::default();
+        theme::install(&ctx);
+        ctx.enable_accesskit();
+        app.account.preview_library(&ctx);
+        app.navigate(Destination::Library(LibraryRoute::Liked));
+        let render = |app: &mut Alpha, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(350.0, 377.0),
+                    )),
+                    events,
+                    ..Default::default()
+                },
+                |ui| app.content(ui),
+            );
+            output.textures_delta.clear();
+            output.platform_output.accesskit_update.unwrap()
+        };
+        render(&mut app, vec![]);
+        let tree = render(&mut app, vec![]);
+        let nav = tree
+            .nodes
+            .iter()
+            .find_map(|(_, n)| {
+                (n.label() == Some("♥  Liked Music"))
+                    .then(|| n.bounds())
+                    .flatten()
+            })
+            .unwrap();
+        render(
+            &mut app,
+            vec![
+                egui::Event::PointerMoved(egui::pos2(180.0, 300.0)),
+                egui::Event::MouseWheel {
+                    unit: egui::MouseWheelUnit::Point,
+                    phase: egui::TouchPhase::Move,
+                    delta: egui::vec2(0.0, -550.0),
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        for _ in 0..30 {
+            render(&mut app, vec![]);
+        }
+        let tree = render(&mut app, vec![]);
+        let after = tree
+            .nodes
+            .iter()
+            .find_map(|(_, n)| {
+                (n.label() == Some("♥  Liked Music"))
+                    .then(|| n.bounds())
+                    .flatten()
+            })
+            .unwrap();
+        assert_eq!(nav, after);
+        assert!(
+            tree.nodes.iter().any(|(_, n)| n
+                .label()
+                .is_some_and(|label| label.starts_with("More options for "))
+                && n.bounds()
+                    .is_some_and(|rect| rect.y0 >= nav.y1 && rect.y1 <= 377.0)),
+            "Scrolled songs expose their action menus inside the compact viewport"
+        );
+        assert!(app.session.queue.is_empty());
+        assert_eq!(app.player.snapshot().state, PlaybackState::Idle);
+        drop(app);
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn search_shortcut_uses_event_modifiers_after_control_is_released() {
@@ -2099,7 +2223,7 @@ mod tests {
                 .unwrap_or_else(|| panic!("Missing {name}"))
         };
         render(&mut app, vec![]);
-        let nav = bounds(render(&mut app, vec![]), "Settings");
+        let nav = bounds(render(&mut app, vec![]), "More");
         render(
             &mut app,
             vec![
@@ -2116,7 +2240,7 @@ mod tests {
             render(&mut app, vec![]);
         }
         let connection = bounds(render(&mut app, vec![]), "Connection options");
-        let nav_after = bounds(render(&mut app, vec![]), "Settings");
+        let nav_after = bounds(render(&mut app, vec![]), "More");
         assert!(
             connection.y0 >= nav.y1 && connection.y1 <= 377.0,
             "{connection:?}"

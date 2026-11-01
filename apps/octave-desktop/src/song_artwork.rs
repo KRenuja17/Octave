@@ -69,6 +69,26 @@ fn decode_tier(bytes: &[u8], edge: u32) -> Option<ColorImage> {
     ))
 }
 impl SongArtwork {
+    #[cfg(any(test, debug_assertions))]
+    pub(crate) fn preview_covers(&mut self, ctx: &egui::Context, tracks: &[octave_core::Track]) {
+        let covers: [&[u8]; 6] = [
+            include_bytes!("../assets/cover-0.png"),
+            include_bytes!("../assets/cover-1.png"),
+            include_bytes!("../assets/cover-2.png"),
+            include_bytes!("../assets/cover-3.png"),
+            include_bytes!("../assets/cover-4.png"),
+            include_bytes!("../assets/cover-5.png"),
+        ];
+        for (index, track) in tracks.iter().take(96).enumerate() {
+            let texture = ctx.load_texture(
+                format!("library-fixture-{index}"),
+                decode_tier(covers[index % 6], 160).unwrap(),
+                egui::TextureOptions::LINEAR,
+            );
+            self.cache
+                .push_back(((track.id.0.clone(), false), Some(texture)));
+        }
+    }
     pub fn settled(&self) -> bool {
         self.pending.is_empty()
     }

@@ -149,7 +149,7 @@ pub fn nav(ui: &mut egui::Ui, selected: bool, text: impl Into<egui::WidgetText>)
         .frame(selected)
         .corner_radius(8.0);
     if ui.layout().main_dir() == egui::Direction::TopDown {
-        ui.add_sized([168.0, 42.0], button)
+        ui.add_sized([ui.available_width().min(168.0), 42.0], button)
     } else {
         ui.add(button)
     }

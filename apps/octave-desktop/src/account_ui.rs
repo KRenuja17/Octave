@@ -7,13 +7,20 @@ use std::{
     sync::mpsc::{self, Receiver},
 };
 use zeroize::Zeroize;
+mod library;
+pub use library::LibraryRoute;
 enum ResultMessage {
     Page(Result<Page, Error>, bool),
     Rated(Track, bool, Result<(), Error>),
 }
 pub enum Action {
-    Play(Track),
+    Play(Vec<Track>, usize),
+    Shuffle(Vec<Track>),
     Append(Track),
+    AppendAll(Vec<Track>),
+    OpenLibrary(LibraryRoute),
+    OpenAccount,
+    LocalPlaylists,
 }
 pub struct AccountUi {
     auth: crate::account_auth::Auth,
@@ -36,6 +43,8 @@ pub struct AccountUi {
     ratings: HashMap<String, bool>,
     generation: u64,
     pending_generation: u64,
+    pending_browse: Option<String>,
+    library: library::Library,
 }
 impl Default for AccountUi {
     fn default() -> Self {
@@ -60,6 +69,8 @@ impl Default for AccountUi {
             ratings: HashMap::new(),
             generation: 0,
             pending_generation: 0,
+            pending_browse: None,
+            library: Default::default(),
         }
     }
 }
@@ -89,6 +100,7 @@ impl AccountUi {
         self.page = Page::default();
         self.ratings.clear();
         self.seen.clear();
+        self.library = Default::default();
         self.verified = false;
         self.identity = None;
         self.channels.clear();
@@ -121,19 +133,24 @@ impl AccountUi {
             && !self.seen.insert(token.clone())
         {
             self.page.continuation = None;
-            self.message = "Pagination stopped because the server repeated a page token.".into();
+            self.library.message =
+                "Pagination stopped because the server repeated a page token.".into();
             return;
         }
         self.browse_id = id.clone();
+        self.pending_browse = Some(id.clone());
+        self.library.loaded = true;
         self.pending_generation = self.generation;
         let (tx, rx) = mpsc::sync_channel(1);
         self.pending = Some(rx);
-        self.message = "Loading account library…".into();
+        self.library.message = "Loading your music…".into();
         std::thread::spawn(move || {
-            let _ = tx.send(ResultMessage::Page(
-                account.browse(&id, token.as_deref()),
-                more,
-            ));
+            let result = if cfg!(test) {
+                Err(Error::Network)
+            } else {
+                account.browse(&id, token.as_deref())
+            };
+            let _ = tx.send(ResultMessage::Page(result, more));
         });
     }
     fn rate(&mut self, track: Track, liked: bool) {
@@ -144,11 +161,17 @@ impl AccountUi {
             return;
         };
         self.pending_generation = self.generation;
+        self.pending_browse = None;
         let (tx, rx) = mpsc::sync_channel(1);
         self.pending = Some(rx);
         self.message = "Waiting for YouTube to confirm the change…".into();
+        self.library.message = self.message.clone();
         std::thread::spawn(move || {
-            let result = account.rate(&track.id, liked);
+            let result = if cfg!(test) {
+                Err(Error::Network)
+            } else {
+                account.rate(&track.id, liked)
+            };
             let _ = tx.send(ResultMessage::Rated(track, liked, result));
         });
     }
@@ -177,9 +200,11 @@ impl AccountUi {
                         self.page = Page::default();
                         self.ratings.clear();
                         self.seen.clear();
+                        self.library = Default::default();
+                        self.library.requested = true;
+                        self.browse_id = LibraryRoute::Liked.id().into();
                     }
-                    self.message =
-                        "Account verified. Choose a library view or resume playback.".into();
+                    self.message = "Account connected. Your music is available in Library.".into();
                     if self.remember && changed {
                         self.auth.save(account, identity);
                     }
@@ -228,6 +253,7 @@ impl AccountUi {
             self.auth.verify(account);
             self.verified_at = std::time::Instant::now();
         }
+        self.load_library_if_needed();
         let result = self.pending.as_ref().and_then(|rx| match rx.try_recv() {
             Ok(result) => Some(result),
             Err(mpsc::TryRecvError::Disconnected) => {
@@ -239,34 +265,17 @@ impl AccountUi {
             return;
         };
         self.pending = None;
+        let result_id = self
+            .pending_browse
+            .take()
+            .unwrap_or_else(|| self.browse_id.clone());
         if self.generation != self.pending_generation {
             return;
         }
         let error = match result {
             ResultMessage::Page(Ok(page), more) => {
-                if !more {
-                    self.page = Page::default();
-                }
-                for track in page.tracks {
-                    if !self.page.tracks.iter().any(|t| t.id == track.id) {
-                        if self.browse_id == "VLLM" {
-                            self.ratings.insert(track.id.0.clone(), true);
-                        }
-                        self.page.tracks.push(track);
-                    }
-                }
-                for collection in page.collections {
-                    if !self.page.collections.iter().any(|c| c.id == collection.id) {
-                        self.page.collections.push(collection);
-                    }
-                }
-                self.page.continuation = page.continuation;
+                self.accept_library_page(&result_id, page, more);
                 self.verified = true;
-                self.message = format!(
-                    "{} songs · {} collections",
-                    self.page.tracks.len(),
-                    self.page.collections.len()
-                );
                 None
             }
             ResultMessage::Rated(track, liked, Ok(())) => {
@@ -274,16 +283,19 @@ impl AccountUi {
                 if !liked && self.browse_id == "VLLM" {
                     self.page.tracks.retain(|t| t.id != track.id);
                 }
+                self.library.remove_unliked(&track, liked);
                 self.message = "YouTube confirmed the change.".into();
+                self.library.message = self.message.clone();
                 None
             }
             ResultMessage::Page(Err(error), more) => {
-                if more && let Some(token) = &self.page.continuation {
-                    self.seen.remove(token);
-                }
+                self.library_error(&result_id, more, error);
                 Some(error)
             }
-            ResultMessage::Rated(_, _, Err(error)) => Some(error),
+            ResultMessage::Rated(_, _, Err(error)) => {
+                self.library.message = error.to_string();
+                Some(error)
+            }
         };
         if let Some(error) = error {
             if error == Error::Expired {
@@ -292,10 +304,10 @@ impl AccountUi {
             self.message = error.to_string();
         }
     }
-    pub fn render(&mut self, ui: &mut egui::Ui, current: Option<&Track>) -> Option<Action> {
+    pub fn render(&mut self, ui: &mut egui::Ui) -> Option<Action> {
         let mut action = None;
         ui.heading("Account");
-        ui.weak("Your YouTube Music library in Octave.");
+        ui.weak("Manage your YouTube Music connection and account storage.");
         ui.add_space(18.0);
         if self.account.is_none() {
             crate::theme::surface(ui, |ui| {
@@ -428,49 +440,9 @@ impl AccountUi {
                         self.message = "Verifying the selected YouTube channel…".into();
                     }
                 }
-                ui.horizontal_wrapped(|ui| {
-                    for (label, id) in [
-                        ("Liked songs", "VLLM"),
-                        ("Library songs", "FEmusic_liked_videos"),
-                        ("Albums", "FEmusic_liked_albums"),
-                        ("Playlists", "FEmusic_liked_playlists"),
-                    ] {
-                        if ui
-                            .add_enabled(self.pending.is_none(), egui::Button::new(label))
-                            .clicked()
-                        {
-                            self.browse(id.into(), false);
-                        }
-                    }
-                    if ui
-                        .add_enabled(self.pending.is_none(), egui::Button::new("Refresh"))
-                        .clicked()
-                    {
-                        self.browse(self.browse_id.clone(), false);
-                    }
-                });
-                if let Some(track) = current {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(format!("Current song: {}", track.title));
-                        for (label, liked) in [("Like song", true), ("Remove like", false)] {
-                            if ui
-                                .add_enabled(
-                                    self.pending.is_none() && self.verified,
-                                    egui::Button::new(label),
-                                )
-                                .clicked()
-                            {
-                                self.rate(track.clone(), liked);
-                            }
-                        }
-                        if let Some(liked) = self.ratings.get(&track.id.0) {
-                            ui.weak(if *liked {
-                                "Confirmed liked"
-                            } else {
-                                "Confirmed not liked"
-                            });
-                        }
-                    });
+                ui.add_space(14.0);
+                if crate::theme::primary(ui, "Open Library").clicked() {
+                    action = Some(Action::OpenLibrary(LibraryRoute::Liked));
                 }
             });
         }
@@ -497,76 +469,6 @@ impl AccountUi {
             ui.add_space(10.0);
             ui.label(&self.message);
         }
-        let mut chosen = None;
-        let mut unlike = None;
-        egui::ScrollArea::vertical()
-            .id_salt("account-library")
-            .max_height(360.0)
-            .show_rows(
-                ui,
-                64.0,
-                self.page.collections.len() + self.page.tracks.len(),
-                |ui, range| {
-                    for index in range {
-                        if let Some(collection) = self.page.collections.get(index) {
-                            if ui
-                                .add_enabled(
-                                    self.pending.is_none(),
-                                    egui::Button::new(&collection.title),
-                                )
-                                .clicked()
-                            {
-                                chosen = Some(collection.id.clone());
-                            }
-                            continue;
-                        }
-                        let track = &self.page.tracks[index - self.page.collections.len()];
-                        ui.push_id(&track.id.0, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("Play").clicked() {
-                                    action = Some(Action::Play(track.clone()));
-                                }
-                                if ui.button("Queue").clicked() {
-                                    action = Some(Action::Append(track.clone()));
-                                }
-                                if self.browse_id == "VLLM"
-                                    && ui
-                                        .add_enabled(
-                                            self.pending.is_none(),
-                                            egui::Button::new("Unlike"),
-                                        )
-                                        .clicked()
-                                {
-                                    unlike = Some(track.clone());
-                                }
-                                ui.add(egui::Label::new(&track.title).truncate())
-                                    .on_hover_text(&track.title);
-                            });
-                            if !track.artists.is_empty() {
-                                ui.weak(track.artists.join(" · "));
-                            }
-                            ui.separator();
-                        });
-                    }
-                },
-            );
-        if self.page.continuation.is_some()
-            && ui
-                .add_enabled(self.pending.is_none(), egui::Button::new("Load more"))
-                .clicked()
-        {
-            chosen = Some(String::new());
-        }
-        if let Some(id) = chosen {
-            if id.is_empty() {
-                self.browse(self.browse_id.clone(), true);
-            } else {
-                self.browse(id, false);
-            }
-        }
-        if let Some(track) = unlike {
-            self.rate(track, false);
-        }
         action
     }
 }
@@ -588,7 +490,7 @@ mod tests {
                     ..Default::default()
                 },
                 |ui| {
-                    assert!(account.render(ui, None).is_none());
+                    assert!(account.render(ui).is_none());
                 },
             );
             output.textures_delta.clear();
@@ -639,7 +541,7 @@ mod tests {
                 ..Default::default()
             },
             |ui| {
-                account.render(ui, None);
+                account.render_library(ui, &LibraryRoute::Liked, None);
             },
         );
         output.textures_delta.clear();

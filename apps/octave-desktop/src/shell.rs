@@ -4,6 +4,7 @@ pub enum Destination {
     #[default]
     Search,
     Catalog(String),
+    Library(crate::account_ui::LibraryRoute),
     Listening(u8),
     Playlists,
     Account,
