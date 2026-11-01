@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::{
     fmt,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
     },
     time::{SystemTime, UNIX_EPOCH},
@@ -35,11 +35,21 @@ impl fmt::Display for Error {
     }
 }
 struct Credentials {
+    session: Mutex<Session>,
+    index: u8,
+    revoked: Arc<AtomicBool>,
+    request_gate: Mutex<()>,
+}
+#[derive(Clone)]
+struct Session {
     cookie: Zeroizing<String>,
     sapisid: Zeroizing<String>,
-    index: u8,
-    revoked: AtomicBool,
+    delegated: Option<String>,
+    identity: Option<Identity>,
+    visitor: Option<String>,
 }
+mod identity;
+pub use identity::{Channel, Identity};
 #[derive(Clone)]
 pub struct Account {
     credentials: Arc<Credentials>,
@@ -58,8 +68,16 @@ pub struct Page {
 }
 impl Account {
     pub fn new(cookie: String, index: u8) -> Result<Self, Error> {
+        Self::with_cancellation(cookie, index, Arc::new(AtomicBool::new(false)))
+    }
+    pub fn with_cancellation(
+        cookie: String,
+        index: u8,
+        revoked: Arc<AtomicBool>,
+    ) -> Result<Self, Error> {
         let cookie = Zeroizing::new(cookie);
-        if cookie.len() > 16384
+        if index > 99
+            || cookie.len() > 16384
             || cookie.contains(['\r', '\n'])
             || HeaderValue::from_str(&cookie).is_err()
         {
@@ -69,16 +87,23 @@ impl Account {
             .split(';')
             .filter_map(|p| p.trim().split_once('='))
             .find(|(name, value)| {
-                matches!(*name, "SAPISID" | "__Secure-3PAPISID") && !value.is_empty()
+                matches!(*name, "SAPISID" | "__Secure-3PAPISID" | "__Secure-1PAPISID")
+                    && !value.is_empty()
             })
             .map(|(_, value)| Zeroizing::new(value.to_owned()))
             .ok_or(Error::InvalidSession)?;
         Ok(Self {
             credentials: Arc::new(Credentials {
-                cookie,
-                sapisid,
+                session: Mutex::new(Session {
+                    cookie,
+                    sapisid,
+                    delegated: None,
+                    identity: None,
+                    visitor: None,
+                }),
                 index,
-                revoked: AtomicBool::new(false),
+                revoked,
+                request_gate: Mutex::new(()),
             }),
         })
     }
@@ -92,18 +117,31 @@ impl Account {
             Ok(())
         }
     }
-    fn request(&self, endpoint: &str, mut body: Value) -> Result<Value, Error> {
+    fn request(&self, endpoint: &str, body: Value) -> Result<Value, Error> {
+        self.request_with(endpoint, body, || false)
+    }
+    fn request_with(
+        &self,
+        endpoint: &str,
+        mut body: Value,
+        cancelled: impl Fn() -> bool,
+    ) -> Result<Value, Error> {
+        let _gate = self.credentials.request_gate.lock().unwrap();
         self.active()?;
+        let session = self.credentials.session.lock().unwrap().clone();
         let version = "1.20260707.12.00";
         body["context"] = json!({"client":{"clientName":"WEB_REMIX","clientVersion":version,"hl":"en"},"user":{}});
+        if let Some(delegated) = &session.delegated {
+            body["context"]["user"]["onBehalfOfUser"] = json!(delegated);
+        }
+        if let Some(visitor) = &session.visitor {
+            body["context"]["client"]["visitorData"] = json!(visitor);
+        }
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|_| Error::InvalidSession)?
             .as_secs();
-        let input = Zeroizing::new(format!(
-            "{timestamp} {} {ORIGIN}",
-            self.credentials.sapisid.as_str()
-        ));
+        let input = Zeroizing::new(format!("{timestamp} {} {ORIGIN}", session.sapisid.as_str()));
         let digest =
             ring::digest::digest(&ring::digest::SHA1_FOR_LEGACY_USE_ONLY, input.as_bytes());
         let hash: String = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
@@ -111,11 +149,11 @@ impl Account {
             .map_err(|_| Error::InvalidSession)?;
         authorization.set_sensitive(true);
         let mut cookie =
-            HeaderValue::from_str(&self.credentials.cookie).map_err(|_| Error::InvalidSession)?;
+            HeaderValue::from_str(&session.cookie).map_err(|_| Error::InvalidSession)?;
         cookie.set_sensitive(true);
         let provider = Provider::new().map_err(|_| Error::Network)?;
         self.active()?;
-        let request = provider
+        let mut builder = provider
             .transport
             .client
             .post(format!("{ORIGIN}/youtubei/v1/{endpoint}?prettyPrint=false"))
@@ -127,17 +165,19 @@ impl Account {
             .header("X-Goog-AuthUser", self.credentials.index.to_string())
             .header("Authorization", authorization)
             .header("Cookie", cookie)
-            .json(&body)
-            .build()
-            .map_err(|_| Error::Network)?;
-        let bytes = provider
+            .json(&body);
+        if let Some(delegated) = &session.delegated {
+            builder = builder.header("X-Goog-PageId", delegated);
+        }
+        let request = builder.build().map_err(|_| Error::Network)?;
+        let reply = provider
             .transport
-            .bytes(
+            .reply(
                 request,
                 crate::transport::Expected::Bytes(JSON_LIMIT as usize),
                 crate::transport::Lane::Metadata,
                 crate::transport::REQUEST_TIMEOUT,
-                || self.active().is_err(),
+                || self.active().is_err() || cancelled(),
             )
             .map_err(|error| match error {
                 crate::Error::Http(401 | 403) => Error::Expired,
@@ -146,6 +186,7 @@ impl Account {
                 _ => Error::Network,
             })?;
         self.active()?;
+        let bytes = Zeroizing::new(reply.bytes);
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unexpected)?;
         if value
             .pointer("/responseContext/mainAppWebResponseContext/loggedOut")
@@ -156,6 +197,19 @@ impl Account {
         }
         if value.get("error").is_some() {
             return Err(Error::Rejected);
+        }
+        let mut current = self.credentials.session.lock().unwrap();
+        if let Err(error) = identity::rotate(&mut current, &reply.session_updates) {
+            drop(current);
+            self.disconnect();
+            return Err(error);
+        }
+        if let Some(visitor) = value
+            .pointer("/responseContext/visitorData")
+            .and_then(Value::as_str)
+            .filter(|s| s.len() <= 4096)
+        {
+            current.visitor = Some(visitor.into());
         }
         Ok(value)
     }

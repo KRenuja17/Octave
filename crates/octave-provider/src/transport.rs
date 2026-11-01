@@ -125,6 +125,7 @@ struct Route {
 // Production byte callers do not retain response metadata or gain a cookie jar.
 pub(crate) struct Reply {
     pub bytes: Vec<u8>,
+    pub session_updates: Vec<zeroize::Zeroizing<String>>,
     #[cfg(test)]
     pub headers: reqwest::header::HeaderMap,
 }
@@ -320,6 +321,12 @@ impl Transport {
             let _permit = permit;
             let result = tokio::time::timeout_at(tokio::time::Instant::from_std(deadline), async {
                 let mut request = request;
+                let account_request = request
+                    .url()
+                    .as_str()
+                    .starts_with("https://music.youtube.com/youtubei/v1/")
+                    && request.headers().contains_key("cookie")
+                    && request.headers().contains_key("authorization");
                 let mut redirects = 0;
                 let mut response = loop {
                     let replay = request.try_clone();
@@ -353,6 +360,19 @@ impl Transport {
                     trace.headers(response.status().as_u16());
                 }
                 expected.validate(&response)?;
+                let session_updates = if account_request {
+                    response
+                        .headers()
+                        .get_all(reqwest::header::SET_COOKIE)
+                        .iter()
+                        .take(64)
+                        .filter_map(|value| value.to_str().ok())
+                        .filter(|s| s.len() <= 8192)
+                        .map(|s| zeroize::Zeroizing::new(s.to_owned()))
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 #[cfg(test)]
                 let headers = {
                     let mut headers = response.headers().clone();
@@ -387,6 +407,7 @@ impl Transport {
                 }
                 Ok(Reply {
                     bytes,
+                    session_updates,
                     #[cfg(test)]
                     headers,
                 })

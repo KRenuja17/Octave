@@ -21,10 +21,14 @@ zeroize = "=1.9.1"
 ring = "=0.17.14"
 tokio = { version = "=1.53.2", features = ["rt", "net", "time", "io-util"] }
 unicode-segmentation = "=1.13.3"
+tungstenite = { version = "=0.30.0", default-features = false, features = ["handshake"] }
 [target.'cfg(target_os = "windows")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["windows-native"] }
 souvlaki = { version = "=0.8.3", default-features = false }
 tray-icon = { version = "=0.26.0", default-features = false }
 raw-window-handle = "=0.6.2"
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
 [lints]
 workspace = true
 
