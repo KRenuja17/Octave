@@ -24,13 +24,31 @@ constraint. Real composition/candidate-window testing is still unavailable.
 The user confirmed only one monitor is available; physical transitions between
 monitors with different DPI remain untested. Application scaling is separate.
 
-The metadata and renderer checkpoints were pushed and remote CI/distribution
-qualification dispatched. Final run results and package checksums must be
-recorded before release approval. The [code signing policy](CODE_SIGNING_POLICY.md)
-and [privacy policy](PRIVACY.md) describe the intended release process and current
-data behavior. No approved provider/certificate, timestamped signed artifact,
-fresh consumer-machine result or production publication is claimed. Automatic
-updates remain disabled. Live Account/Premium and Discord remain excluded.
+[Cross-platform CI](https://github.com/KRenuja17/Octave/actions/runs/41274232794)
+passes on `230c0f1`. Windows test parallelism is bounded to two without changing
+the five-second fixture deadline or assertions; an earlier run's fixture-loading
+timeouts remain recorded. The non-Windows unused import is fixed.
+[Distribution qualification](https://github.com/KRenuja17/Octave/actions/runs/41273767463)
+passes on `ef78192`, including separate-runner registration, native launch,
+unregistration and data preservation. That Windows Server image needs an isolated,
+checksum-pinned Mesa llvmpipe driver for OpenGL 2.0+; it is not included in the
+shipping payload. This is not hardware-GPU or fresh consumer-machine acceptance.
+The CI-built payload also passes upgrade/portable/registration checks on this
+host with its normal graphics driver.
+
+The [unpublished evaluation draft](https://github.com/KRenuja17/Octave/releases/tag/untagged-2e36507f42177e0436d2)
+contains the CI-built `ef78192` payload wrapped locally without payload changes.
+`Octave-0.2.0-rc.1-windows-x64-unsigned.zip` SHA256:
+`FD5ECACF529256B92610FF61CDAA1FC60D211E848AE1574369DB8C6620F120AC`.
+All 16 ZIP payloads and the manifest match; uploaded asset digest matches the local
+checksum. The draft is explicitly unsigned/prerelease and held for review.
+No production release was published.
+
+Signing remains pending by the user's decision. The
+[code signing policy](CODE_SIGNING_POLICY.md) and [privacy policy](PRIVACY.md)
+describe release controls and current data behavior. No approved certificate,
+timestamped signed artifact or fresh consumer-machine result is claimed.
+Automatic updates remain disabled. Live Account/Premium and Discord remain excluded.
 
 ## Attended listening and distribution setup — 31 October 2026
 
