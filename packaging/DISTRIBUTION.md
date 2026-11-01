@@ -168,8 +168,8 @@ reputation is not evidence of Octave adoption. No acceptance is guaranteed.
 ## Production release checkpoint
 
 1. Complete the remaining explicitly required listening/accessibility gates and
-   record any agreed scope exclusions. Paid translation and Account/Premium
-   are not prerequisites for the signed-out evaluation scope.
+   record any agreed scope exclusions. Paid translation remains optional;
+   attended Windows Account/Premium acceptance is recorded in RELEASE.md.
 2. Build a clean versioned artifact and run installer/registration checks.
 3. Obtain provider approval, sign, verify the exact publisher and timestamps,
    regenerate checksums, and repeat runtime/registration checks on signed bytes.

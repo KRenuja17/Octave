@@ -1,5 +1,71 @@
 # Release candidate evaluation
 
+## Release gates — 1 November 2026
+
+**Release preparation advanced; production remains held.** The owner selected
+SignPath Foundation's no-cost route, retained the installed-IME-only restriction,
+and confirmed one monitor. A separate Acer i5/MX130/6 GB laptop is a proposed
+consumer target but is not currently accessible. No IME, display setting,
+certificate, provider account or security exception was installed/configured.
+
+- Native signed-out Playlist editing preserved authored mixed Hebrew/Arabic/
+  Latin logical text and marks. Flag deletion, whole ZWJ-emoji selection,
+  replacement and undo passed through the real window/keyboard/accessibility
+  path. Further input stopped after the native tool detected user input. This
+  is a field-level native check, not exhaustive RTL or OS-IME acceptance.
+- Focused regressions passed: two grapheme, six accessibility, three synthetic
+  IME cases and fourteen explicit shipping-renderer gates. Synthetic IME and
+  application scale fixtures do not establish composition-input or physical
+  monitor/DPI acceptance.
+- Both desktop and contained-worker Windows executables now share enforced
+  Octave product/version metadata with their own descriptions/internal/original
+  filenames. Actual release PE resources pass; swapped role/stale version fail.
+- Opt-in SignPath artifact/configuration and signed-return import are prepared.
+  Real unsigned rejection and synthetic source/file-set/support-file/timestamp
+  fixtures pass. The workflow defaults to `sign=false`, cannot publish and
+  requires an approved protected environment/provider policy before use. No
+  real trusted signature or timestamp has been obtained or verified.
+- Consumer evidence collection and attended install/upgrade/render/uninstall/
+  SmartScreen steps are in [consumer acceptance](packaging/CONSUMER_ACCEPTANCE.md).
+  The collector requires the reviewed signed manifest/publisher and leaves
+  attended acceptance pending. It rejected the real unsigned evaluation input.
+
+Clean local **0.2.0-rc.4** was built from
+`7c2c5c21564d4a7b1dd18dfdb1bea071e60bbfbd` with eighteen verified manifest
+entries and the existing dependency/source notices. Both metadata checks,
+installer integrity/upgrade/rollback/preservation, actual host-driver registration,
+restricted-PATH launch/uninstall and import-policy fixtures passed. ZIP SHA256:
+`466719462384BA816FCB25899DDFD5D87E771CDDFF0E8520AE7F6D2A4D2442D5`.
+Manifest SHA256:
+`7F06C04DA7B029E07204FD95DAC16A6731E0D9FF1DA336ECAA1307260769EA1C`.
+This remains unsigned developer-host evidence. CI artifacts are separate builds;
+do not assign the local ZIP hash to their bytes.
+
+The exact packaged worker also passed a public unsigned cipher and media-prefix
+read with a restricted PATH, without account data or audio. The full local
+workspace suite passed 192 tests, with 42 opt-in cases excluded. Policy-fixture
+binary copies were removed after successful checks; only small receipts remain.
+
+Windows/Linux/macOS [source CI](https://github.com/KRenuja17/Octave/actions/runs/41311966975)
+passed at the source above. [Evaluation distribution](https://github.com/KRenuja17/Octave/actions/runs/41311968045)
+also passed packaging/policy qualification and separate-runner registration.
+The signing job was intentionally skipped (`sign=false`); this supplies no
+trusted-signature or consumer-machine evidence.
+
+An [unpublished rc.4 evaluation draft](https://github.com/KRenuja17/Octave/releases/tag/untagged-0f4b86f2cc484daae392)
+contains the reviewed local unsigned ZIP, checksum and explicit open-gate notes.
+Its uploaded asset digest matches the local hash. The previous draft is retained.
+Preparing this draft does not authorize public evaluation/production publication.
+
+Still required: an installed real composition IME, actual different-scale
+displays, broader attended native editing, the separate consumer Windows test,
+owner application/contact/MFA and provider acceptance, trusted signing and
+retests on final signed bytes, and review/approval of the resulting production
+artifact/notes/checksums. SignPath's released-project/reputation requirements
+remain external eligibility questions; an unpublished draft is not a public
+release. No unsigned evaluation approval is implied by production preparation.
+Automatic updates remain disabled.
+
 ## Isolated Account/Premium acceptance — 1 November 2026
 
 **Attended Windows acceptance passed.** The final isolated Brave probe verified
