@@ -354,7 +354,7 @@ impl AccountUi {
             );
             if ui
                 .add_enabled(
-                    self.pending.is_none() && !self.cookie.is_empty(),
+                    self.pending.is_none() && !self.auth.pending && !self.cookie.is_empty(),
                     egui::Button::new("Connect session"),
                 )
                 .clicked()
@@ -474,8 +474,14 @@ impl AccountUi {
                 }
             });
         }
-        if (self.auth.saved() || self.account.is_some() || self.auth.needs_cleanup())
-            && ui.button("Forget account and sign out").clicked()
+        // Also allow removal of an orphan vault key when no sealed file remains.
+        if self.auth.available()
+            && ui
+                .add_enabled(
+                    !self.auth.pending,
+                    egui::Button::new("Forget account and sign out"),
+                )
+                .clicked()
         {
             self.disconnect();
             self.auth.forget();

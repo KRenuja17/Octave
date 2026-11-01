@@ -52,6 +52,7 @@ pub enum Error {
     Account(octave_provider::account::Error),
     ChannelDiscovery(octave_provider::account::Error),
     IdentityChanged,
+    Busy,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -83,6 +84,7 @@ impl std::fmt::Display for Error {
         Self::CaptureCookieMissing=>"The isolated profile did not provide a YouTube login cookie after reopening. No account was connected.",
         Self::Account(_) | Self::ChannelDiscovery(_)=>unreachable!(),
         Self::IdentityChanged=>"The account or channel changed. The refresh was rejected; sign in again.",
+        Self::Busy=>"The account worker could not accept the operation. Wait for cleanup to finish, then retry.",
     })
     }
 }
@@ -114,6 +116,7 @@ pub struct Auth {
     cancelled: Arc<AtomicBool>,
     epoch: u64,
     pub pending: bool,
+    submission_error: Option<Error>,
 }
 impl Default for Auth {
     fn default() -> Self {
@@ -125,6 +128,7 @@ impl Default for Auth {
             cancelled: Arc::new(AtomicBool::new(false)),
             epoch: 0,
             pending: false,
+            submission_error: None,
         }
     }
 }
@@ -142,18 +146,11 @@ impl Auth {
             .as_ref()
             .is_some_and(|r| r.join("session.sealed").is_file())
     }
-    pub fn needs_cleanup(&self) -> bool {
-        self.root.as_ref().is_some_and(|r| {
-            std::fs::read_dir(r.join("browser"))
-                .ok()
-                .and_then(|mut entries| entries.next())
-                .is_some()
-        })
-    }
     pub fn cancel(&mut self) {
         self.cancelled.store(true, Ordering::Release);
         self.epoch += 1;
         self.pending = false;
+        self.submission_error = None;
         self.cancelled = Arc::new(AtomicBool::new(false));
     }
     fn submit(&mut self, job: Job) {
@@ -212,6 +209,8 @@ impl Auth {
             .is_ok()
         }) {
             self.pending = true;
+        } else {
+            self.submission_error = Some(Error::Busy);
         }
     }
     pub fn sign_in(&mut self, browser: Browser) {
@@ -233,6 +232,9 @@ impl Auth {
         self.submit(Job::Forget);
     }
     pub fn poll(&mut self) -> Option<Event> {
+        if let Some(error) = self.submission_error.take() {
+            return Some(Event::Failed(error));
+        }
         while let Some(Ok((epoch, event))) = self.rx.as_ref().map(|rx| rx.try_recv()) {
             if epoch != self.epoch {
                 if matches!(
@@ -350,6 +352,21 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_full_worker_queue_reports_failure_instead_of_silently_losing_cleanup() {
+        let mut auth = Auth::default();
+        let (tx, _commands) = mpsc::sync_channel(1);
+        tx.try_send(Command {
+            epoch: 0,
+            cancelled: Arc::new(AtomicBool::new(false)),
+            job: Job::Forget,
+        })
+        .unwrap_or_else(|_| panic!("Synthetic queue setup failed"));
+        auth.tx = Some(tx);
+        auth.forget();
+        assert!(!auth.pending);
+        assert!(matches!(auth.poll(), Some(Event::Failed(Error::Busy))));
+    }
     #[test]
     fn cancelled_generation_revokes_late_credentials_instead_of_activating_them() {
         let mut auth = Auth::default();
