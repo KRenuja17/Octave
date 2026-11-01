@@ -48,7 +48,9 @@ jobs:
         run: ./packaging/Test-Installer.ps1 -WorkDir "$env:RUNNER_TEMP/installer-qa"
       - name: Executable product and version metadata
         shell: pwsh
-        run: ./packaging/Test-ExecutableMetadata.ps1 -Executable "$env:PACKAGE_DIR/octave-desktop.exe" -Version $env:RELEASE_VERSION
+        run: |
+          ./packaging/Test-ExecutableMetadata.ps1 -Executable "$env:PACKAGE_DIR/octave-desktop.exe" -Version $env:RELEASE_VERSION
+          ./packaging/Test-ExecutableMetadata.ps1 -Executable "$env:PACKAGE_DIR/octave-signature.exe" -Version $env:RELEASE_VERSION -Kind signature
       - name: Signature policy fixtures
         shell: pwsh
         run: ./packaging/Test-SigningPolicy.ps1 -WorkDir "$env:RUNNER_TEMP/signing-qa"

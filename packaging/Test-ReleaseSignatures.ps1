@@ -8,7 +8,7 @@ $manifest = Get-Content -LiteralPath (Join-Path $package 'manifest.json') -Raw |
 if ($manifest.product -ne 'Octave' -or -not $manifest.files) { throw 'Not an Octave package.' }
 $names = @($manifest.files.name)
 if (@($names | Sort-Object -Unique).Count -ne $names.Count) { throw 'Duplicate package filenames.' }
-foreach ($required in @('octave-desktop.exe','Install.ps1','Uninstall.ps1')) {
+foreach ($required in @('octave-desktop.exe','octave-signature.exe','Install.ps1','Uninstall.ps1')) {
     if ($required -notin $names) { throw "Missing signed payload: $required" }
 }
 foreach ($item in Get-ChildItem -LiteralPath $package -Force) {

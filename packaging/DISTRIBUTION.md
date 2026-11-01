@@ -29,8 +29,10 @@ The build uses `winresource` with the existing GNU `windres` toolchain locally;
 no Visual Studio installation is needed. MSVC CI uses its installed SDK tools.
 
 `Test-ExecutableMetadata.ps1 -Executable <exe> -Version <version>` verifies the
-actual PE resource, including prerelease/debug flags and both numeric/string
-versions. Packaging and CI reject an executable with missing or mismatched
+actual desktop PE resource, including prerelease/debug flags and both numeric/string
+versions. Use `-Kind signature` for the contained playback worker. Both share
+product/version generation and retain their own description/internal/original
+filename. Packaging and CI reject either executable with missing or mismatched
 metadata, including stale `-SkipBuild` input. Repeat this check on the final
 provider-signed executable as well as the signature and package-integrity checks.
 

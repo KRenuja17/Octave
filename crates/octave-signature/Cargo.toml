@@ -11,5 +11,9 @@ octave-ejs = { path = "../../vendor/octave-ejs" }
 boa_engine = { version = "=0.22.0", default-features = false }
 serde_json.workspace = true
 
+[build-dependencies]
+semver = "=1.0.28"
+winresource = "=0.1.30"
+
 [lints]
 workspace = true

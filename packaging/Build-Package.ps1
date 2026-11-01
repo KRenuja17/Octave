@@ -33,6 +33,7 @@ try {
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$Profile\octave-desktop.exe") -Destination $package
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$Profile\octave-signature.exe") -Destination $package
     & (Join-Path $PSScriptRoot 'Test-ExecutableMetadata.ps1') -Executable (Join-Path $package 'octave-desktop.exe') -Version $Version -AllowDebug:($Profile -eq 'debug') | Out-Host
+    & (Join-Path $PSScriptRoot 'Test-ExecutableMetadata.ps1') -Executable (Join-Path $package 'octave-signature.exe') -Version $Version -Kind signature -AllowDebug:($Profile -eq 'debug') | Out-Host
     if (-not $GccBin) { $GccBin = Split-Path (Get-Command gcc -ErrorAction Stop).Source -Parent }
     $objdump = Join-Path $GccBin 'objdump.exe'
     $imports = (& $objdump -p (Join-Path $package 'octave-desktop.exe') | Out-String)

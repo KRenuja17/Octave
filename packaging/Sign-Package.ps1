@@ -22,13 +22,16 @@ $manifest = Get-Content -LiteralPath (Join-Path $source 'manifest.json') -Raw | 
 if ($manifest.product -ne 'Octave' -or -not $manifest.files) { throw 'Not an Octave package.' }
 $names = @($manifest.files.name)
 if (@($names | Sort-Object -Unique).Count -ne $names.Count) { throw 'Duplicate package filenames.' }
-foreach ($required in @('octave-desktop.exe','Install.ps1','Uninstall.ps1','BUILD-INFO.json','EVALUATION-NOTICE.txt')) { if ($required -notin $names) { throw "Missing payload: $required" } }
+foreach ($required in @('octave-desktop.exe','octave-signature.exe','Install.ps1','Uninstall.ps1','BUILD-INFO.json','EVALUATION-NOTICE.txt')) { if ($required -notin $names) { throw "Missing payload: $required" } }
 foreach ($entry in $manifest.files) {
     if ($entry.name -ne [IO.Path]::GetFileName($entry.name) -or $entry.name -match '[\\/:]' -or $entry.name -in '.', '..') { throw 'Invalid package filename.' }
     $file = Get-Item -LiteralPath (Join-Path $source $entry.name) -Force
     if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-FileHash -LiteralPath $file.FullName).Hash -ne $entry.sha256) { throw 'Input payload verification failed.' }
 }
 # Signing is a separate immutable artifact; the unsigned input stays available.
+foreach ($kind in @('desktop','signature')) {
+    & (Join-Path $PSScriptRoot 'Test-ExecutableMetadata.ps1') -Executable (Join-Path $source "octave-$kind.exe") -Version $manifest.version -Kind $kind | Out-Host
+}
 $destination = Join-Path $output ('Octave-'+$manifest.version+'-signed-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
 foreach ($entry in $manifest.files) { Copy-Item -LiteralPath (Join-Path $source $entry.name) -Destination $destination }

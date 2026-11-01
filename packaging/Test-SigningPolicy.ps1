@@ -5,7 +5,7 @@ $root = [IO.Path]::GetFullPath($WorkDir)
 if ($root -eq $repo -or $root.StartsWith($repo+'\',[StringComparison]::OrdinalIgnoreCase)) { throw 'Fixtures must be outside the repository.' }
 $root = Join-Path $root ('signing-policy-'+[Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
-foreach ($name in @('octave-desktop.exe','Install.ps1','Uninstall.ps1')) { Set-Content -LiteralPath (Join-Path $root $name) -Value 'Unsigned fixture, never executed.' }
+foreach ($name in @('octave-desktop.exe','octave-signature.exe','Install.ps1','Uninstall.ps1')) { Set-Content -LiteralPath (Join-Path $root $name) -Value 'Unsigned fixture, never executed.' }
 $files = @(Get-ChildItem -LiteralPath $root -File | ForEach-Object { @{name=$_.Name;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash} })
 $manifest = @{product='Octave';version='0.0.0-fixture';files=$files}
 $manifestPath = Join-Path $root 'manifest.json'
