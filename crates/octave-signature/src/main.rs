@@ -11,6 +11,21 @@ const INPUT_LIMIT: u64 = 8 * 1024 * 1024;
 const PLAYER_LIMIT: usize = 6 * 1024 * 1024;
 const VALUE_LIMIT: usize = 8192;
 
+#[derive(Clone, Copy, Debug)]
+enum Failure {
+    Input = 65,
+    Player = 66,
+    Engine = 67,
+    N = 68,
+    Signature = 69,
+    Output = 71,
+}
+impl From<()> for Failure {
+    fn from(_: ()) -> Self {
+        Self::Input
+    }
+}
+
 fn main() {
     // The parent applies OS limits before providing any input. A second,
     // independent deadline also bounds lifetime if the parent disappears.
@@ -27,10 +42,11 @@ fn main() {
         .stack_size(16 * 1024 * 1024)
         .spawn(run)
         .ok()
-        .and_then(|thread| thread.join().ok())
-        .and_then(Result::ok);
-    let Some(value) = result else {
-        std::process::exit(65);
+        .and_then(|thread| thread.join().ok());
+    let value = match result {
+        Some(Ok(value)) => value,
+        Some(Err(failure)) => std::process::exit(failure as i32),
+        None => std::process::exit(72),
     };
     if serde_json::to_writer(std::io::stdout().lock(), &value).is_err()
         || std::io::stdout().flush().is_err()
@@ -39,14 +55,14 @@ fn main() {
     }
 }
 
-fn run() -> Result<Value, ()> {
+fn run() -> Result<Value, Failure> {
     let mut bytes = Vec::new();
     std::io::stdin()
         .take(INPUT_LIMIT + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| ())?;
     if bytes.len() as u64 > INPUT_LIMIT {
-        return Err(());
+        return Err(Failure::Input);
     }
     let request: Value = serde_json::from_slice(&bytes).map_err(|_| ())?;
     let object = request.as_object().ok_or(())?;
@@ -54,7 +70,7 @@ fn run() -> Result<Value, ()> {
         .keys()
         .any(|key| !["player", "n", "signature"].contains(&key.as_str()))
     {
-        return Err(());
+        return Err(Failure::Input);
     }
     let player = request["player"]
         .as_str()
@@ -63,11 +79,11 @@ fn run() -> Result<Value, ()> {
     let n = argument(&request, "n")?;
     let signature = argument(&request, "signature")?;
     if n.is_none() && signature.is_none() {
-        return Err(());
+        return Err(Failure::Input);
     }
-    let code = octave_ejs::preprocessor::preprocess_player(player).map_err(|_| ())?;
+    let code = octave_ejs::preprocessor::preprocess_player(player).map_err(|_| Failure::Player)?;
     if code.len() > 12 * 1024 * 1024 {
-        return Err(());
+        return Err(Failure::Player);
     }
     solve(&code, n, signature)
 }
@@ -98,8 +114,8 @@ fn context() -> Result<Context, ()> {
     Ok(context)
 }
 
-fn solve(code: &str, n: Option<&str>, signature: Option<&str>) -> Result<Value, ()> {
-    let mut context = context()?;
+fn solve(code: &str, n: Option<&str>, signature: Option<&str>) -> Result<Value, Failure> {
+    let mut context = context().map_err(|_| Failure::Engine)?;
     let result = boa_engine::object::ObjectInitializer::new(&mut context).build();
     context
         .register_global_property(
@@ -107,8 +123,10 @@ fn solve(code: &str, n: Option<&str>, signature: Option<&str>) -> Result<Value, 
             result.clone(),
             boa_engine::property::Attribute::all(),
         )
-        .map_err(|_| ())?;
-    context.eval(Source::from_bytes(code)).map_err(|_| ())?;
+        .map_err(|_| Failure::Engine)?;
+    context
+        .eval(Source::from_bytes(code))
+        .map_err(|_| Failure::Engine)?;
     let mut response = json!({});
     for (name, input, output) in [("n", n, "n"), ("sig", signature, "signature")] {
         let Some(input) = input else {
@@ -116,9 +134,9 @@ fn solve(code: &str, n: Option<&str>, signature: Option<&str>) -> Result<Value, 
         };
         let function = result
             .get(JsString::from(name), &mut context)
-            .map_err(|_| ())?
+            .map_err(|_| Failure::Engine)?
             .as_callable()
-            .ok_or(())?;
+            .ok_or(Failure::Engine)?;
         // Pass a JS value directly. Never interpolate challenge text into code.
         let value = function
             .call(
@@ -126,19 +144,25 @@ fn solve(code: &str, n: Option<&str>, signature: Option<&str>) -> Result<Value, 
                 &[JsString::from(input).into()],
                 &mut context,
             )
-            .map_err(|_| ())?;
+            .map_err(|_| {
+                if name == "n" {
+                    Failure::N
+                } else {
+                    Failure::Signature
+                }
+            })?;
         let value = value
             .as_string()
-            .ok_or(())?
+            .ok_or(Failure::Output)?
             .to_std_string()
-            .map_err(|_| ())?;
+            .map_err(|_| Failure::Output)?;
         if value.is_empty()
             || value.len() > VALUE_LIMIT
             || !value
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b"_-.=+/".contains(&b))
         {
-            return Err(());
+            return Err(Failure::Output);
         }
         response[output] = value.into();
     }
@@ -188,6 +212,13 @@ mod tests {
                 None
             )
             .is_err()
+        );
+    }
+    #[test]
+    fn padded_base64_results_are_valid_transform_values() {
+        assert_eq!(
+            solve("_result.sig = x => 'ABCD+/=='", None, Some("synthetic")).unwrap(),
+            json!({"signature":"ABCD+/=="})
         );
     }
 }

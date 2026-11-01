@@ -391,12 +391,13 @@ fn worker(input: &[u8], cancelled: impl Fn() -> bool) -> Result<Vec<u8>, Error> 
         }
         match child.wait(Some(Duration::from_millis(20))) {
             Ok(WaitOutcome::Signaled) => {
-                break child.exit_code().map_err(map).and_then(|code| {
-                    if code == Some(0) {
-                        Ok(())
-                    } else {
-                        Err(Error::SignatureWorker)
-                    }
+                break child.exit_code().map_err(map).and_then(|code| match code {
+                    Some(0) => Ok(()),
+                    Some(66) => Err(Error::SignaturePlayer),
+                    Some(67) => Err(Error::SignatureEngine),
+                    Some(68 | 69) => Err(Error::SignatureTransform),
+                    Some(65 | 71) => Err(Error::SignatureProtocol),
+                    _ => Err(Error::SignatureWorker),
                 });
             }
             Ok(_) => (),
@@ -423,6 +424,64 @@ fn worker(input: &[u8], cancelled: impl Fn() -> bool) -> Result<Vec<u8>, Error> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "Explicit public network/player-worker check; no account or audio"]
+    fn live_public_player_worker() {
+        let provider = Provider::new().unwrap();
+        let player = player(&provider, || false).unwrap();
+        eprintln!(
+            "public_player_bytes={}; timestamp={}",
+            player.source.len(),
+            player.timestamp
+        );
+        let result = decode(
+            &player,
+            Some("synthetic-throttle"),
+            Some("synthetic-signature"),
+            || false,
+        );
+        assert!(result.is_ok(), "Public decoder failed: {:?}", result.err());
+        let signature = format!("{}==", "synthetic".repeat(12));
+        let result = decode(&player, Some("0123456789ABCDEF"), Some(&signature), || {
+            false
+        });
+        assert!(
+            result.is_ok(),
+            "Padded decoder input failed: {:?}",
+            result.err()
+        );
+    }
+    #[test]
+    #[ignore = "Explicit unsigned player/cipher request and media prefix check; no account or audio"]
+    fn live_public_cipher_stream() {
+        let provider = Provider::new().unwrap();
+        let player = player(&provider, || false).unwrap();
+        let id = octave_core::TrackId("dQw4w9WgXcQ".into());
+        let version = "1.20260707.12.00";
+        let response = provider.post("https://music.youtube.com/youtubei/v1/player?prettyPrint=false",json!({"context":{"client":{"clientName":"WEB_REMIX","clientVersion":version,"hl":"en"}},"videoId":id.0,"playbackContext":{"contentPlaybackContext":{"signatureTimestamp":player.timestamp}}}),"67",version,crate::WEB_UA).unwrap();
+        let stream = resolve_response(&id, response, |n, s| {
+            eprintln!(
+                "public_transform_required=true; n={}; signature={}",
+                n.is_some(),
+                s.is_some()
+            );
+            decode(&player, n, s, || false)
+        })
+        .unwrap();
+        use std::io::Read;
+        let mut reader = crate::range::RangeReader::new(
+            provider,
+            stream,
+            Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            1,
+        );
+        let mut prefix = [0; 4096];
+        assert!(
+            reader.read_exact(&mut prefix).is_ok(),
+            "Public decoded stream read failed: {:?}",
+            reader.fault().lock().unwrap()
+        );
+    }
     #[test]
     fn public_asset_identity_and_timestamp_are_bounded() {
         assert_eq!(

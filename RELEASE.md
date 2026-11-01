@@ -46,6 +46,13 @@ worker/cancellation qualification passed; historical public vectors match two
 throttling outputs and one signature exactly. No player scripts or live session
 data are committed as fixtures.
 
+The first contained-decoder account retry passed the full account/storage
+lifecycle and cleanup again, but stopped at a decoder failure before audio.
+Fixed, value-free failure categories now distinguish script, engine, transform
+and protocol errors. A freshly built helper passes a real unsigned ciphered AAC
+request (both signature and n transformed) and a media-prefix read, plus padded
+base64 inputs. Authenticated Premium acceptance remains pending.
+
 ## Discord Rich Presence — 1 November 2026
 
 Discord was reopened by the user after its earlier exclusion. The Rust adapter
