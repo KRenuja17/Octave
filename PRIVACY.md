@@ -21,10 +21,15 @@ choices to that endpoint, with the supplied API key if any. Choose a service
 whose privacy policy you accept. Keys and translated lyrics are memory-only.
 
 Optional Discord Rich Presence is off by default. If explicitly configured and
-enabled, it sends playing metadata through the local Discord client, which may
-publish it to Discord according to [Discord's privacy policy](https://discord.com/privacy).
-Discord is excluded from the current release acceptance scope. Automatic update
-hosting is not configured and automatic updating remains disabled.
+enabled, it sends the current song's title/artist, timestamps, public artwork URL
+and song link through the local Discord client, which may publish it according
+to [Discord's privacy policy](https://discord.com/privacy). Octave uses its public
+application ID or an optional override; no Discord token or account linking is
+required. Only the opt-in preference and custom public ID are saved locally.
+Pause/buffering/stop/disable clear the activity; normal quit attempts a bounded
+clear. Discord's READY account fields are discarded without logging/storage.
+See [Discord setup and verification](DISCORD.md). Automatic update hosting is
+not configured and automatic updating remains disabled.
 
 ## Local data and account connection
 

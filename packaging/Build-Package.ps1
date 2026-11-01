@@ -49,7 +49,7 @@ try {
     }
     foreach ($name in @('Install.ps1','Uninstall.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $package }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $package
-    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md','PRIVACY.md','CODE_SIGNING_POLICY.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
+    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md','PRIVACY.md','CODE_SIGNING_POLICY.md','DISCORD.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
     $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor')) + [IO.Path]::DirectorySeparatorChar

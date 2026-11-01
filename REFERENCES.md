@@ -22,7 +22,8 @@ palette. Reference priority does not change the accepted audio-first scope.
 
 These references inform behavior and architecture. No third-party source or
 assets were imported. Future code reuse requires a separate license review.
-Discord remains excluded, paid translation remains optional, and native video
+Discord was reopened by the user on 1 November 2026; see [the integration guide](DISCORD.md).
+Paid translation remains optional, and native video
 and production Adaptive mixing remain deferred. Other reference features are
 comparison material, not new release requirements.
 

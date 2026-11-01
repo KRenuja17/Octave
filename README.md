@@ -171,11 +171,13 @@ Common choices are labeled until checked; custom codes remain available in Setti
 Requests batch at most 2,000 characters and preserve line order. Keys and translated
 lyrics are memory-only. No default public translation service is contacted.
 
-Discord Rich Presence is off by default. Supply your public Discord application
-ID and explicitly enable it in Settings. It publishes actual playing metadata
-through local Discord IPC, clears on pause/stop and reconnects in the background.
-A bot token is neither needed nor accepted. Real Discord publishing has not yet
-been verified with an Octave application ID.
+Discord Rich Presence is off by default. Enable it in **Settings → Optional
+integrations**; Octave's public application ID is built in, so leave the custom
+ID empty. It shares the actual song as a Listening activity with artwork, timing
+and a song link, clears on pause/stop/disable, and reconnects in the background.
+No token or YouTube sign-in is needed. Live local Discord acknowledgements pass
+with muted unsigned playback; profile visibility depends on Discord's settings.
+See [Discord setup, privacy and verification](DISCORD.md).
 
 ## Local Windows package
 
@@ -719,14 +721,13 @@ in-flight work. Changing the endpoint clears the previous service key and cached
 translations. **Clear translation service and key** removes the configuration;
 keys remain memory-only. Language checks never submit lyrics or keys.
 
-Discord Rich Presence is off by default and needs Octave's public application ID
-and a running Discord desktop client. No bot token is used. Enabling shares current
-track/artist/public artwork and elapsed time over local IPC; pause/stop clears it.
-IPC work is separate from playback, bounded by time/packet limits, coalesced and
-retried after disconnect. Configuration without an application ID never opens IPC.
-Only fixture transport acceptance has run; real Discord/endpoint acceptance remains
-pending configuration. Idle UI repainting is reduced; artwork/lyrics/motion do not
-force continuous idle animation.
+Discord Rich Presence uses a running Discord desktop client and Octave's built-in
+public application ID, with an optional custom override. It remains off until
+explicitly enabled. IPC is separate from playback, bounded by time/packet limits,
+coalesced and retried after disconnect. Protocol fixtures and an actual muted
+unsigned-playback lifecycle pass; Discord audience/visibility controls still
+apply. See [the integration guide](DISCORD.md). Idle UI repainting is reduced;
+artwork/lyrics/motion do not force continuous idle animation.
 
 ### Adaptive analysis experiment
 

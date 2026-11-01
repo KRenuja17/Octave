@@ -1,5 +1,36 @@
 # Release candidate evaluation
 
+## Discord Rich Presence — 1 November 2026
+
+Discord was reopened by the user after its earlier exclusion. The Rust adapter
+now uses Octave's public application ID by default, with explicit opt-in and an
+optional custom override. Listening activity includes the actual title/artist,
+public artwork, stable playback timestamps and a YouTube Music link. Seek,
+repeat/sequence and pause/resume re-anchor timing; ordinary frames do not jitter
+the clock. Metadata clipping preserves whole graphemes.
+
+Native IPC now handles idle ping/close/EOF, fragmented frames, strict command and
+nonce matching, bounded replies/reconnects, immediate clears and bounded exit
+cleanup. It runs outside the UI/audio threads. Windows named pipes and Unix
+sockets share the protocol worker. Changing the custom ID turns sharing off;
+Reset disables sharing and removes that override. The Settings edit has a native
+accessible label, and its compact layout was inspected with the original palette.
+
+Local checks: 164 workspace tests pass, 36 opt-in tests ignored, strict Clippy and
+format checks pass. Ten Discord fixtures include actual Windows named-pipe
+reconnection, disable, ID changes and shutdown. The explicit live test passed
+with default-device audio at zero volume and no YouTube sign-in: Rick Astley,
+pause/resume, seek to 90 seconds, stop, Oasis, disable/re-enable and quit.
+Discord returned the correct Listening type, application ID, title/artist,
+artwork and timestamps. Peer account fields were neither logged nor retained.
+
+**Visual profile-card acceptance is still open.** The user could not see the card,
+including during a longer Online/activity-sharing check. A temporary Playing
+comparison was also accepted but invisible; production remains Listening. Local
+acknowledgement does not prove public visibility or establish its cause. Octave
+does not change Discord's account/privacy settings. See [the guide](DISCORD.md).
+Prior `rc.1` draft/assets remain unchanged. Signing and publication remain pending.
+
 ## Windows metadata and native editing — 1 November 2026
 
 Candidate version: `0.2.0-rc.1`. Windows executable resources now identify Octave,
