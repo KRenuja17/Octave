@@ -73,10 +73,13 @@ fn response_id(value: &Value) -> Option<&str> {
         .and_then(normalized_id)
 }
 pub(super) fn parse(value: &Value) -> Result<Identity, Error> {
+    parse_with_id(value, None)
+}
+fn parse_with_id(value: &Value, fallback: Option<&str>) -> Result<Identity, Error> {
     let header = find(value, "activeAccountHeaderRenderer").ok_or(Error::Expired)?;
     let name = display(&header["accountName"]);
     if name.is_empty() {
-        return Err(Error::Unexpected);
+        return Err(Error::AccountNameMissing);
     }
     let channel_id = header
         .pointer("/navigationEndpoint/browseEndpoint/browseId")
@@ -84,9 +87,9 @@ pub(super) fn parse(value: &Value) -> Result<Identity, Error> {
         .filter(|id| id.starts_with("UC") && selector(id))
         .map(str::to_owned);
     let id = response_id(value)
+        .or(fallback.filter(|id| selector(id)))
         .map(str::to_owned)
-        .or_else(|| channel_id.clone())
-        .ok_or(Error::Unexpected)?;
+        .ok_or(Error::IdentityMissing)?;
     let handle = display(&header["channelHandle"]);
     Ok(Identity {
         id,
@@ -97,6 +100,20 @@ pub(super) fn parse(value: &Value) -> Result<Identity, Error> {
             .or_else(|| find(value, "isPremium"))
             .and_then(Value::as_bool),
     })
+}
+fn selected_list_id(value: &Value) -> Result<String, Error> {
+    if let Some(id) = response_id(value) {
+        return Ok(id.to_owned());
+    }
+    let items = channels(value);
+    let selected: Vec<_> = items.iter().filter(|c| c.selected).collect();
+    if selected.len() == 1 {
+        return Ok(selected[0].id.clone());
+    }
+    if selected.is_empty() && items.len() == 1 {
+        return Ok(items[0].id.clone());
+    }
+    Err(Error::IdentityMissing)
 }
 pub(super) fn channels(value: &Value) -> Vec<Channel> {
     let mut output = Vec::new();
@@ -290,7 +307,15 @@ impl Account {
     }
     pub fn verify(&self) -> Result<Identity, Error> {
         let response = self.request("account/account_menu", json!({}))?;
-        let identity = parse(&response).inspect_err(|error| {
+        let parsed = match parse(&response) {
+            Err(Error::IdentityMissing) => {
+                let list = self.request("account/accounts_list", json!({}))?;
+                let selected = selected_list_id(&list)?;
+                parse_with_id(&response, Some(&selected))
+            }
+            result => result,
+        };
+        let identity = parsed.inspect_err(|error| {
             if *error == Error::Expired {
                 self.disconnect();
             }
@@ -364,6 +389,38 @@ mod tests {
         assert_eq!(i.premium, None);
         assert!(!format!("{i:?}").contains("Synthetic"));
         assert!(parse(&menu("bad\nidentifier")).is_err());
+    }
+    #[test]
+    fn missing_menu_identity_only_uses_an_unambiguous_server_list_selector() {
+        let header = json!({"activeAccountHeaderRenderer":{"accountName":{"simpleText":"Synthetic"},"navigationEndpoint":{"browseEndpoint":{"browseId":"UCnot-a-selector"}}}});
+        assert_eq!(parse(&header), Err(Error::IdentityMissing));
+        let row = |id: &str, selected| json!({"accountItem":{"accountName":"Fixture", "isSelected":selected,"serviceEndpoint":{"selectActiveIdentityEndpoint":{"supportedTokens":[{"pageIdToken":{"pageId":id}}]}}}});
+        let list = json!([row("fixture-one", false), row("fixture-two", true)]);
+        let selected = selected_list_id(&list).unwrap();
+        assert_eq!(selected, "fixture-two");
+        assert_eq!(
+            parse_with_id(&header, Some(&selected)).unwrap().id,
+            "fixture-two"
+        );
+        assert_eq!(
+            selected_list_id(&json!([
+                row("fixture-one", false),
+                row("fixture-two", false)
+            ])),
+            Err(Error::IdentityMissing)
+        );
+        assert_eq!(
+            selected_list_id(&json!([row("fixture-one", true), row("fixture-two", true)])),
+            Err(Error::IdentityMissing)
+        );
+        assert_eq!(
+            account_json(b")]}'\n{\"responseContext\":{}}").unwrap(),
+            json!({"responseContext":{}})
+        );
+        assert_eq!(
+            account_json(b"<html>{\"responseContext\":{}}</html>"),
+            Err(Error::MalformedResponse)
+        );
     }
     #[test]
     fn server_selector_variants_and_plain_names_preserve_identity() {

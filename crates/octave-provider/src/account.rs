@@ -19,6 +19,9 @@ pub enum Error {
     Expired,
     Network,
     Unexpected,
+    MalformedResponse,
+    AccountNameMissing,
+    IdentityMissing,
     Rejected,
     Cancelled,
 }
@@ -29,6 +32,9 @@ impl fmt::Display for Error {
         Self::Expired => "The account session was rejected or expired. Disconnect and connect a fresh browser session.",
         Self::Network => "Account request failed. Check your connection and retry.",
         Self::Unexpected => "The account response format was not recognized. No changes were applied locally.",
+        Self::MalformedResponse => "The account endpoint did not return a valid JSON object.",
+        Self::AccountNameMissing => "The authenticated account header did not contain a supported account name.",
+        Self::IdentityMissing => "YouTube did not provide an unambiguous server-issued account identity.",
         Self::Rejected => "YouTube did not confirm that change. Your local like state has been left unchanged.",
         Self::Cancelled => "Account request cancelled.",
     })
@@ -164,12 +170,18 @@ impl Account {
             .header("User-Agent", WEB_UA)
             .header("X-YouTube-Client-Name", "67")
             .header("X-YouTube-Client-Version", version)
+            .header("Accept", "application/json")
+            .header("X-Goog-Api-Format-Version", "1")
+            .header("Referer", "https://music.youtube.com/")
             .header("X-Goog-AuthUser", self.credentials.index.to_string())
             .header("Authorization", authorization)
             .header("Cookie", cookie)
             .json(&body);
         if let Some(delegated) = &session.delegated {
             builder = builder.header("X-Goog-PageId", delegated);
+        }
+        if let Some(visitor) = &session.visitor {
+            builder = builder.header("X-Goog-Visitor-Id", visitor);
         }
         let request = builder.build().map_err(|_| Error::Network)?;
         let reply = provider
@@ -192,7 +204,7 @@ impl Account {
             })?;
         self.active()?;
         let bytes = Zeroizing::new(reply.bytes);
-        let value: Value = serde_json::from_slice(&bytes).map_err(|_| Error::Unexpected)?;
+        let value = account_json(&bytes)?;
         if value
             .pointer("/responseContext/mainAppWebResponseContext/loggedOut")
             .and_then(Value::as_bool)
@@ -256,6 +268,18 @@ impl Account {
             Err(Error::Rejected)
         }
     }
+}
+fn account_json(bytes: &[u8]) -> Result<Value, Error> {
+    let bytes = bytes.trim_ascii_start();
+    let bytes = bytes
+        .strip_prefix(b")]}'")
+        .unwrap_or(bytes)
+        .trim_ascii_start();
+    let value: Value = serde_json::from_slice(bytes).map_err(|_| Error::MalformedResponse)?;
+    if !value.is_object() {
+        return Err(Error::MalformedResponse);
+    }
+    Ok(value)
 }
 fn text(value: &Value) -> String {
     value
