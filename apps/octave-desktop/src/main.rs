@@ -3,6 +3,7 @@
     windows_subsystem = "windows"
 )]
 
+mod account_auth;
 mod account_ui;
 mod alpha;
 mod artwork;

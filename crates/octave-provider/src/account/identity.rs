@@ -196,12 +196,32 @@ pub(super) fn rotate(session: &mut Session, updates: &[Zeroizing<String>]) -> Re
         .find_map(|name| jar.get(*name))
         .cloned()
         .ok_or(Error::Expired)?;
+    if session.cookie.as_str() != cookie.as_str() {
+        session.revision = session.revision.saturating_add(1);
+    }
     session.cookie = cookie;
     session.sapisid = sapisid;
     Ok(())
 }
 
 impl Account {
+    pub fn session_revision(&self) -> u64 {
+        self.credentials.session.lock().unwrap().revision
+    }
+    pub fn is_active(&self) -> bool {
+        self.active().is_ok()
+    }
+    pub fn same_session(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.credentials, &other.credentials)
+    }
+    pub fn restore_selection(cookie: String, index: u8, expected: &str) -> Result<Self, Error> {
+        if !selector(expected) {
+            return Err(Error::InvalidSession);
+        }
+        let account = Self::new(cookie, index)?;
+        account.credentials.session.lock().unwrap().delegated = Some(expected.into());
+        Ok(account)
+    }
     /// Called only by native account/vault work; never return this to a web page.
     pub fn session_cookie(&self) -> Result<Zeroizing<String>, Error> {
         self.active()?;

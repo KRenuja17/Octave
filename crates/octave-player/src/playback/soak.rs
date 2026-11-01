@@ -40,6 +40,7 @@ fn live_aac_network_pipeline() {
     *shared.equalizer.lock().unwrap() = equalizer;
     let id = TrackId("dQw4w9WgXcQ".into());
     let request = Request {
+        account: None,
         id: id.clone(),
         offset: Duration::ZERO,
         generation: 0,

@@ -36,3 +36,7 @@ client_secret*.json
 /private/
 /profiles/
 /captures/
+*.sealed
+*.sealed.pending
+DevToolsActivePort
+OCTAVE_OWNED_PROFILE

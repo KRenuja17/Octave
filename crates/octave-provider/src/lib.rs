@@ -1,4 +1,4 @@
-//! Experimental unsigned YouTube Music access. No cookies or account state are read.
+//! Public requests are unsigned; account access is explicit and isolated.
 pub mod account;
 #[cfg(test)]
 mod anonymous_tests;
@@ -49,7 +49,7 @@ impl fmt::Display for Error {
    Self::Http(403) => f.write_str("YouTube rejected the stream (403). Retry to resolve a fresh URL."),
    Self::Http(code) => write!(f, "YouTube returned HTTP {code}."),
    Self::InvalidResponse => f.write_str("YouTube returned an unexpected response."),
-   Self::SignInRequired => f.write_str("YouTube requires sign-in for this request. Account playback is not available yet."),
+   Self::SignInRequired => f.write_str("YouTube requires a valid account session for this request. Reconnect the account or choose signed-out playback."),
    Self::BotCheckRequired => f.write_str("YouTube blocked this unsigned request with a bot-verification check. Try another recording or retry later."),
    Self::Unavailable => f.write_str("This track is unavailable to this unsigned client."),
    Self::UnsupportedStream => f.write_str("No supported direct AAC stream was offered. Ciphered streams and manifest-only playback are not supported."),

@@ -96,6 +96,7 @@ pub struct Snapshot {
 }
 #[derive(Clone)]
 struct Request {
+    account: Option<octave_provider::account::Account>,
     equalizer: Equalizer,
     id: TrackId,
     offset: Duration,
@@ -104,6 +105,7 @@ struct Request {
 }
 #[derive(Default)]
 struct Shared {
+    account: Mutex<Option<octave_provider::account::Account>>,
     timeline: Mutex<Option<playback::Timeline>>,
     mix: Mutex<Option<Mix>>,
     preparation: Mutex<transition::Preparation>,
@@ -128,6 +130,12 @@ impl Default for Player {
     }
 }
 impl Player {
+    /// Account changes cancel the entire old output/preparation generation.
+    /// Resuming is explicit; account credentials never enter CDN range headers.
+    pub fn set_account(&self, account: Option<octave_provider::account::Account>) {
+        *self.shared.account.lock().unwrap() = account;
+        self.stop();
+    }
     pub fn new() -> Self {
         let shared = Arc::new(Shared::default());
         shared.volume.store(0.7_f32.to_bits(), Ordering::Release);
@@ -301,6 +309,7 @@ impl Player {
             duration,
         };
         *pending = Some(Request {
+            account: self.shared.account.lock().unwrap().clone(),
             equalizer: *self.shared.equalizer.lock().unwrap(),
             id,
             offset,
@@ -450,6 +459,38 @@ impl Source for Gated {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn account_changes_cancel_old_audio_and_capture_the_explicit_session() {
+        let player = Player {
+            shared: Arc::new(Shared::default()),
+        };
+        let id = TrackId("abcdefghijk".into());
+        player.play(id.clone());
+        let before = player.shared.generation.load(Ordering::Acquire);
+        let account =
+            octave_provider::account::Account::new("SAPISID=synthetic-player-session".into(), 0)
+                .unwrap();
+        player.set_account(Some(account.clone()));
+        assert!(player.shared.generation.load(Ordering::Acquire) > before);
+        assert_eq!(player.snapshot().state, PlaybackState::Idle);
+        player.play(id);
+        assert!(
+            player
+                .shared
+                .pending
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .account
+                .as_ref()
+                .unwrap()
+                .same_session(&account)
+        );
+        player.set_account(None);
+        assert!(player.shared.pending.lock().unwrap().is_none());
+        assert!(player.shared.account.lock().unwrap().is_none());
+    }
     #[test]
     fn queue_edits_retract_committed_audio_and_stop_cancels_preparation() {
         let player = Player {

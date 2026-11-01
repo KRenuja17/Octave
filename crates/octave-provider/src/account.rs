@@ -42,6 +42,7 @@ struct Credentials {
 }
 #[derive(Clone)]
 struct Session {
+    revision: u64,
     cookie: Zeroizing<String>,
     sapisid: Zeroizing<String>,
     delegated: Option<String>,
@@ -95,6 +96,7 @@ impl Account {
         Ok(Self {
             credentials: Arc::new(Credentials {
                 session: Mutex::new(Session {
+                    revision: 0,
                     cookie,
                     sapisid,
                     delegated: None,
@@ -180,7 +182,10 @@ impl Account {
                 || self.active().is_err() || cancelled(),
             )
             .map_err(|error| match error {
-                crate::Error::Http(401 | 403) => Error::Expired,
+                crate::Error::Http(401 | 403) => {
+                    self.disconnect();
+                    Error::Expired
+                }
                 crate::Error::Cancelled => Error::Cancelled,
                 crate::Error::InvalidResponse => Error::Unexpected,
                 _ => Error::Network,
@@ -193,6 +198,7 @@ impl Account {
             .and_then(Value::as_bool)
             == Some(true)
         {
+            self.disconnect();
             return Err(Error::Expired);
         }
         if value.get("error").is_some() {

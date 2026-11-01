@@ -330,6 +330,7 @@ mod tests {
     fn blocked_decoder_keeps_live_consumed_clock_and_paused_retry_position() {
         let shared = Arc::new(Shared::default());
         let request = Request {
+            account: None,
             id: TrackId("stalled".into()),
             offset: Duration::ZERO,
             generation: 0,
@@ -448,6 +449,7 @@ mod tests {
         let shared = Arc::new(Shared::default());
         shared.crossfade.store(12, Ordering::Release);
         let request = Request {
+            account: None,
             id: TrackId("synthetic".into()),
             offset: Duration::ZERO,
             generation: 0,
@@ -514,6 +516,7 @@ mod tests {
         for scenario in 0..3 {
             let shared = Shared::default();
             let request = Request {
+                account: None,
                 id: TrackId("first".into()),
                 offset: Duration::ZERO,
                 generation: 0,
@@ -590,6 +593,7 @@ mod tests {
         let shared = Arc::new(Shared::default());
         shared.crossfade.store(fade, Ordering::Release);
         let request = Request {
+            account: None,
             id: TrackId("first".into()),
             offset: Duration::ZERO,
             generation: 0,
@@ -686,6 +690,7 @@ mod tests {
         let shared = Arc::new(Shared::default());
         shared.crossfade.store(12, Ordering::Release);
         let request = Request {
+            account: None,
             id: TrackId("first".into()),
             offset: Duration::ZERO,
             generation: 0,

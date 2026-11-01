@@ -54,9 +54,12 @@ pub(crate) struct Prepared {
 impl Prepared {
     pub fn open(shared: &Shared, request: &Request) -> Result<Self, Failure> {
         let provider = Provider::new().map_err(Failure::Provider)?;
-        let stream = provider
-            .resolve_cancellable(&request.id, || !current(shared, request))
-            .map_err(Failure::Provider)?;
+        let stream = if let Some(account) = &request.account {
+            account.resolve_cancellable(&request.id, || !current(shared, request))
+        } else {
+            provider.resolve_cancellable(&request.id, || !current(shared, request))
+        }
+        .map_err(Failure::Provider)?;
         let duration = stream.duration;
         let bitrate_bps = stream.bitrate_bps;
         let length = stream.content_length;
@@ -145,6 +148,7 @@ pub(crate) fn work(shared: Arc<Shared>) {
         };
         if let Some((revision, plan)) = job {
             let request = Request {
+                account: shared.account.lock().unwrap().clone(),
                 id: plan.next,
                 offset: Duration::ZERO,
                 generation: plan.generation,

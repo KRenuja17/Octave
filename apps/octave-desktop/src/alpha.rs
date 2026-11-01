@@ -146,7 +146,11 @@ impl Alpha {
             playlists_path: path.with_extension("playlists.sqlite3"),
             output_ui: crate::output_ui::OutputUi::default(),
             lyrics: crate::lyrics_ui::LyricsUi::default(),
-            account: crate::account_ui::AccountUi::default(),
+            account: crate::account_ui::AccountUi::at(
+                path.parent()
+                    .unwrap_or(std::path::Path::new("."))
+                    .to_path_buf(),
+            ),
             related: crate::related_ui::RelatedUi::default(),
             account_page: false,
             desktop: None,
@@ -256,6 +260,12 @@ impl Alpha {
     }
     fn poll(&mut self) {
         self.account.poll();
+        if let Some(account) = self.account.take_playback_change() {
+            self.halt_at_current_position();
+            self.player.set_account(account);
+            self.message =
+                "Account changed. Press Resume to continue with the selected session.".into();
+        }
         while let Ok(event) = self.store.events.try_recv() {
             match event {
                 storage::Event::Loaded(session) => {

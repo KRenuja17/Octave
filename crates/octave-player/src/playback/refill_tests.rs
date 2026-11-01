@@ -168,6 +168,7 @@ fn delayed_range_refills_do_not_starve_the_consumed_clock() {
         decoded: 0,
     };
     let request = Request {
+        account: None,
         equalizer: Equalizer::default(),
         id: audio.id.clone(),
         offset: Duration::ZERO,
@@ -253,6 +254,7 @@ fn output_budget_covers_normal_refills_and_bounds_extreme_pcm() {
 fn stop_cancels_the_larger_output_queue_without_consuming_stale_pcm() {
     let shared = Arc::new(Shared::default());
     let request = Request {
+        account: None,
         id: TrackId("fixture0001".into()),
         offset: Duration::ZERO,
         generation: 0,
