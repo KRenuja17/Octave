@@ -88,15 +88,19 @@ impl Store<NativeKeys> {
     }
 }
 impl<K: Keys> Store<K> {
+    #[cfg(test)]
+    pub fn is_fully_forgotten(&self) -> Result<bool, Error> {
+        Ok(!self.exists()
+            && !self.root.join("session.sealed.pending").exists()
+            && self.keys.read()?.is_none())
+    }
     pub fn exists(&self) -> bool {
         self.root.join("session.sealed").is_file()
     }
     fn prepare(&self) -> Result<(), Error> {
         // Auth data must never be created in a source checkout, even when a
         // caller explicitly supplies --data-dir inside one.
-        if self.root.ancestors().any(|p| p.join(".git").exists()) {
-            return Err(Error::UnsafeProfile);
-        }
+        super::outside_checkout(&self.root)?;
         fs::create_dir_all(&self.root).map_err(|_| Error::Storage)?;
         if self
             .root
@@ -313,6 +317,7 @@ mod tests {
         let (restored, expected) = store.restore().unwrap();
         assert_eq!(expected, "fixture-id");
         assert_eq!(restored.account_index(), 2);
+        assert_eq!(restored.delegated_id(), None);
         assert_eq!(
             restored.session_cookie().unwrap().as_str(),
             "SAPISID=synthetic-vault-secret"
@@ -345,6 +350,42 @@ mod tests {
         assert!(!store.exists());
         assert_eq!(store.forget(), Err(Error::Vault));
         fs::remove_dir(&store.root).unwrap();
+    }
+    #[test]
+    fn remembered_channel_update_retains_exact_selector_and_reuses_protected_key() {
+        let store = Store {
+            root: root(),
+            keys: FakeKeys::default(),
+        };
+        let mut identity = Identity {
+            id: "fixture-first".into(),
+            name: "Fixture".into(),
+            channel_id: None,
+            handle: None,
+            premium: None,
+        };
+        let first = Account::new("SAPISID=synthetic".into(), 0).unwrap();
+        store.save(&first, &identity).unwrap();
+        let key = store.keys.read().unwrap().unwrap();
+        identity.id = "fixture-channel".into();
+        let selected = Account::restore_selection(
+            "SAPISID=synthetic".into(),
+            0,
+            &identity.id,
+            Some(&identity.id),
+        )
+        .unwrap();
+        store.save(&selected, &identity).unwrap();
+        let (restored, expected) = store.restore().unwrap();
+        assert_eq!(expected, identity.id);
+        assert_eq!(restored.delegated_id().as_deref(), Some("fixture-channel"));
+        assert_eq!(
+            key.as_slice(),
+            store.keys.read().unwrap().unwrap().as_slice()
+        );
+        store.forget().unwrap();
+        assert!(store.is_fully_forgotten().unwrap());
+        fs::remove_dir(store.root).unwrap();
     }
     #[test]
     #[cfg(any(target_os = "windows", target_os = "macos"))]
@@ -384,6 +425,24 @@ mod tests {
         assert_eq!(store.prepare(), Err(Error::UnsafeProfile));
         assert!(!store.root.exists());
         fs::remove_dir(root.join(".git")).unwrap();
+        fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn external_parent_segments_are_not_mistaken_for_a_checkout() {
+        let root = root();
+        fs::create_dir_all(root.join("checkout/.git")).unwrap();
+        let store = Store {
+            root: root.join("checkout/../external"),
+            keys: FakeKeys::default(),
+        };
+        store.prepare().unwrap();
+        assert_eq!(
+            store.root.canonicalize().unwrap(),
+            root.join("external").canonicalize().unwrap()
+        );
+        fs::remove_dir(root.join("external")).unwrap();
+        fs::remove_dir(root.join("checkout/.git")).unwrap();
+        fs::remove_dir(root.join("checkout")).unwrap();
         fs::remove_dir(root).unwrap();
     }
 }

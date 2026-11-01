@@ -13,6 +13,21 @@ use std::{
     time::Duration,
 };
 
+fn outside_checkout(path: &std::path::Path) -> Result<(), Error> {
+    // Resolve an existing ancestor before checking Git. Lexical ancestors of
+    // checkout/../external otherwise include checkout and falsely reject CI's
+    // external test directory. Recheck the created canonical root before use.
+    let mut existing = path;
+    while !existing.exists() {
+        existing = existing.parent().ok_or(Error::UnsafeProfile)?;
+    }
+    let existing = existing.canonicalize().map_err(|_| Error::Storage)?;
+    if existing.ancestors().any(|p| p.join(".git").exists()) {
+        return Err(Error::UnsafeProfile);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Error {
     BrowserMissing,
@@ -26,6 +41,9 @@ pub enum Error {
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     VaultUnavailable,
     CaptureIncomplete,
+    CaptureEndpointMissing,
+    CapturePageMissing,
+    CaptureCookieMissing,
     Account(octave_provider::account::Error),
     ChannelDiscovery(octave_provider::account::Error),
     IdentityChanged,
@@ -50,6 +68,9 @@ impl std::fmt::Display for Error {
         #[cfg(not(any(target_os="windows",target_os="macos")))]
         Self::VaultUnavailable=>"Protected account persistence is unavailable on this platform.",
         Self::CaptureIncomplete=>"The browser did not provide a completed YouTube session. Finish sign-in and wait for Music to load before closing the window.",
+        Self::CaptureEndpointMissing=>"The isolated browser did not open its native capture endpoint.",
+        Self::CapturePageMissing=>"The isolated capture browser did not expose a YouTube Music page with a supported account index.",
+        Self::CaptureCookieMissing=>"The isolated profile did not provide a YouTube login cookie after reopening. No account was connected.",
         Self::Account(_) | Self::ChannelDiscovery(_)=>unreachable!(),
         Self::IdentityChanged=>"The account or channel changed. The refresh was rejected; sign in again.",
     })
@@ -505,6 +526,12 @@ mod tests {
             "Live browser cleanup failed; close the isolated browser and retry cleanup"
         );
         assert!(!store.exists());
+        if remember {
+            assert!(
+                store.is_fully_forgotten().unwrap(),
+                "Saved session or OS-vault key remains"
+            );
+        }
         eprintln!("live_credentials_and_browser_cleanup=passed; audio=stopped");
         if let Err(message) = result {
             panic!("{message}");

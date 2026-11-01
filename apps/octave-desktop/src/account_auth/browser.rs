@@ -239,7 +239,8 @@ impl Rpc {
         if !matches!(
             method,
             "Target.getTargets" | "Target.attachToTarget" | "Network.getCookies" | "Browser.close"
-        ) {
+        ) && !(cfg!(test) && method == "Network.setCookie")
+        {
             return Err(Error::BrowserProtocol);
         }
         self.sequence += 1;
@@ -286,7 +287,20 @@ struct OwnedBrowser {
 }
 fn browser_command(executable: &Path, profile: &Path, capture: bool) -> Command {
     let mut command = Command::new(executable);
-    command.arg(format!("--user-data-dir={}", profile.display()));
+    // Rust canonicalization uses the extended Windows prefix. Chromium's
+    // profile/SQLite code needs a normal DOS/UNC path for persistent storage.
+    let display = profile.to_string_lossy();
+    #[cfg(target_os = "windows")]
+    let display = if let Some(local) = display.strip_prefix(r"\\?\") {
+        if let Some(unc) = local.strip_prefix(r"UNC\") {
+            format!(r"\\{unc}")
+        } else {
+            local.to_owned()
+        }
+    } else {
+        display.into_owned()
+    };
+    command.arg(format!("--user-data-dir={display}"));
     // Authentication is a human-only browser phase. Debugging is enabled only
     // after the user closes that window, for capture in the same owned profile.
     if capture {
@@ -311,9 +325,7 @@ fn browser_command(executable: &Path, profile: &Path, capture: bool) -> Command 
 }
 impl OwnedBrowser {
     fn launch(root: &Path, browser: Browser) -> Result<Self, Error> {
-        if root.ancestors().any(|p| p.join(".git").exists()) {
-            return Err(Error::UnsafeProfile);
-        }
+        super::outside_checkout(root)?;
         let executable = browser.executable().ok_or(Error::BrowserMissing)?;
         fs::create_dir_all(root).map_err(|_| Error::Storage)?;
         let root = root.canonicalize().map_err(|_| Error::Storage)?;
@@ -444,12 +456,22 @@ pub(super) fn sign_in(
         }
         browser.start_capture()?;
         let capture_start = Instant::now();
+        let mut saw_music = false;
+        let mut saw_login_cookie = false;
         loop {
             if cancelled.load(Ordering::Acquire) {
                 return Err(Error::Cancelled);
             }
             if capture_start.elapsed() > Duration::from_secs(20) {
-                return Err(Error::CaptureIncomplete);
+                return Err(if browser.rpc.is_none() {
+                    Error::CaptureEndpointMissing
+                } else if !saw_music {
+                    Error::CapturePageMissing
+                } else if !saw_login_cookie {
+                    Error::CaptureCookieMissing
+                } else {
+                    Error::CaptureIncomplete
+                });
             }
             if browser
                 .child
@@ -488,6 +510,7 @@ pub(super) fn sign_in(
                 .as_str()
                 .and_then(music_url)
                 .ok_or(Error::BrowserProtocol)?;
+            saw_music = true;
             let id = target["targetId"]
                 .as_str()
                 .filter(|s| s.len() < 128)
@@ -522,6 +545,7 @@ pub(super) fn sign_in(
                 }
             }
             if let Some(fingerprint) = login_fingerprint(&header) {
+                saw_login_cookie = true;
                 if stable
                     .as_ref()
                     .is_some_and(|(prior, old_index)| *prior == fingerprint && *old_index == index)
@@ -626,6 +650,19 @@ mod tests {
                 .get_args()
                 .any(|s| s == "--remote-debugging-address=127.0.0.1")
         );
+        #[cfg(target_os = "windows")]
+        {
+            let extended = browser_command(
+                Path::new("browser"),
+                Path::new(r"\\?\D:\owned-profile"),
+                false,
+            );
+            assert!(
+                extended
+                    .get_args()
+                    .any(|s| s == r"--user-data-dir=D:\owned-profile")
+            );
+        }
     }
     #[test]
     fn capture_rejects_foreign_origins_and_cookie_injection() {
@@ -677,6 +714,101 @@ mod tests {
             .call("Target.getTargets", json!({}), None)
             .unwrap();
         assert!(targets["targetInfos"].as_array().is_some());
+        let page = targets["targetInfos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "page" && v["url"].as_str().and_then(music_url).is_some())
+            .expect("Owned browser must expose the requested Music page");
+        let attached = browser
+            .rpc
+            .as_mut()
+            .unwrap()
+            .call(
+                "Target.attachToTarget",
+                json!({"targetId":page["targetId"],"flatten":true}),
+                None,
+            )
+            .unwrap();
+        let session = attached["sessionId"].as_str().unwrap();
+        let expires = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 600;
+        let seeded = browser.rpc.as_mut().unwrap().call("Network.setCookie", json!({"name":"OCTAVE_SYNTHETIC_TEST","value":"synthetic-only","domain":".youtube.com","path":"/","secure":true,"expires":expires}), Some(session)).unwrap();
+        assert_eq!(seeded["success"], true);
+        let visible = browser
+            .rpc
+            .as_mut()
+            .unwrap()
+            .call(
+                "Network.getCookies",
+                json!({"urls":["https://music.youtube.com/"]}),
+                Some(session),
+            )
+            .unwrap();
+        assert!(
+            visible["cookies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["name"] == "OCTAVE_SYNTHETIC_TEST" && c["value"] == "synthetic-only"),
+            "Synthetic cookie must be visible immediately after setCookie"
+        );
+        let mut rpc = browser.rpc.take().unwrap();
+        let _ = rpc.call("Browser.close", json!({}), None);
+        drop(rpc);
+        let stop = Instant::now();
+        while browser.child.try_wait().unwrap().is_none() {
+            assert!(stop.elapsed() < Duration::from_secs(5));
+            thread::sleep(Duration::from_millis(50));
+        }
+        eprintln!(
+            "synthetic_cookie_before_restart=visible; profile_cookie_database_exists={}",
+            browser.profile.join("Default/Network/Cookies").is_file()
+        );
+        browser.start_capture().unwrap();
+        let start = Instant::now();
+        loop {
+            if let Ok(rpc) = Rpc::open(&browser.profile) {
+                browser.rpc = Some(rpc);
+                break;
+            }
+            assert!(start.elapsed() < Duration::from_secs(15));
+            thread::sleep(Duration::from_millis(100));
+        }
+        let rpc = browser.rpc.as_mut().unwrap();
+        let targets = rpc.call("Target.getTargets", json!({}), None).unwrap();
+        let page = targets["targetInfos"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["type"] == "page" && v["url"].as_str().and_then(music_url).is_some())
+            .unwrap();
+        let attached = rpc
+            .call(
+                "Target.attachToTarget",
+                json!({"targetId":page["targetId"],"flatten":true}),
+                None,
+            )
+            .unwrap();
+        let session = attached["sessionId"].as_str().unwrap();
+        let persisted = rpc
+            .call(
+                "Network.getCookies",
+                json!({"urls":["https://music.youtube.com/"]}),
+                Some(session),
+            )
+            .unwrap();
+        assert!(
+            persisted["cookies"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["name"] == "OCTAVE_SYNTHETIC_TEST" && c["value"] == "synthetic-only"),
+            "The synthetic cookie must survive an owned-browser restart and be visible to the capture method"
+        );
         browser.cleanup().unwrap();
         assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
         fs::remove_dir(&root).unwrap();
