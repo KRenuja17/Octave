@@ -46,9 +46,29 @@ workspace/all-target Clippy and formatting passed. Native protected-vault and
 owned-browser fixtures pass. Public vectors match two throttling outputs and one
 signature exactly; a real unsigned ciphered AAC request transforms both n and
 signature and reads media successfully. Native helper limits/cancellation pass.
-Source CI through `65ce46e` passes Windows/Linux/macOS; later checks are tracked
-separately. Packaging includes the helper, MIT preprocessor attribution and pinned
+Source CI at `b1905e3` passes Windows/Linux/macOS. Packaging includes the helper, MIT preprocessor attribution and pinned
 supplemental dependency notices. See ACCOUNT.md, SECURITY.md and PRIVACY.md.
+
+## Account evaluation package — 1 November 2026
+
+Clean unsigned `0.2.0-rc.3` package built from `b1905e3`, with both executables and
+18 checksum-verified manifest entries. ZIP SHA-256:
+`4846110C96EB9418FDD9F1C49DB0CEE0D178AE53F3BE29AE0B3073EA458E7022`.
+Native version metadata, a restricted-PATH desktop launch, exact packaged-helper
+cipher/media reads and installer integrity/upgrade/rollback/preservation checks
+pass. Signing-policy fixtures pass, including actual rejection of unsigned files;
+no trusted signing operation was performed.
+
+[Source CI](https://github.com/KRenuja17/Octave/actions/runs/41303837089) and
+[evaluation distribution](https://github.com/KRenuja17/Octave/actions/runs/41303980838)
+passed. The latter independently builds the same source and verifies install,
+shortcut/uninstall registration, restricted-PATH launch, unregistration and
+profile/unrelated-file preservation on a separate Windows Server runner. Its
+graphics use CI-only Mesa llvmpipe; the receipt explicitly records
+`freshMachine: false`. This is not a consumer Windows hardware/SmartScreen check.
+The local ZIP and CI package are separate artifacts with their own manifests.
+Signing and production publication remain pending; previous rc.1 draft/rc.2
+artifacts are preserved and automatic updates remain disabled.
 
 ## Discord Rich Presence — 1 November 2026
 

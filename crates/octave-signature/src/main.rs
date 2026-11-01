@@ -101,7 +101,8 @@ fn argument<'a>(request: &'a Value, key: &str) -> Result<Option<&'a str>, ()> {
 
 fn context() -> Result<Context, ()> {
     // Boa's default SimpleModuleLoader can read files. It must never be used.
-    // No fetch/require/process/console/FFI callbacks or job runner are installed.
+    // No fetch/require/process/console/FFI callbacks are registered. Production
+    // evaluation never drives the context's queued promise jobs.
     let mut context = Context::builder()
         .module_loader(Rc::new(boa_engine::module::IdleModuleLoader))
         .build()
