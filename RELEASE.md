@@ -24,11 +24,13 @@ pause/resume, seek to 90 seconds, stop, Oasis, disable/re-enable and quit.
 Discord returned the correct Listening type, application ID, title/artist,
 artwork and timestamps. Peer account fields were neither logged nor retained.
 
-**Visual profile-card acceptance is still open.** The user could not see the card,
-including during a longer Online/activity-sharing check. A temporary Playing
-comparison was also accepted but invisible; production remains Listening. Local
-acknowledgement does not prove public visibility or establish its cause. Octave
-does not change Discord's account/privacy settings. See [the guide](DISCORD.md).
+**Visual profile-card acceptance passed.** Earlier accepted Listening and Playing
+updates were invisible. Read-only Activity Privacy inspection showed the warning
+“Server settings ignored when not sharing”; the user confirmed the top-level
+**Share my activity** switch was off and enabled it themselves. During the repeat,
+the user confirmed the Listening card's song, artist, artwork and timing all
+looked correct. Production remains Listening. Octave changed no Discord privacy
+settings and read no account credentials. See [the guide](DISCORD.md).
 Prior `rc.1` draft/assets remain unchanged. Signing and publication remain pending.
 
 ## Windows metadata and native editing — 1 November 2026

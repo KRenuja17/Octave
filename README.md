@@ -175,8 +175,9 @@ Discord Rich Presence is off by default. Enable it in **Settings → Optional
 integrations**; Octave's public application ID is built in, so leave the custom
 ID empty. It shares the actual song as a Listening activity with artwork, timing
 and a song link, clears on pause/stop/disable, and reconnects in the background.
-No token or YouTube sign-in is needed. Live local Discord acknowledgements pass
-with muted unsigned playback; profile visibility depends on Discord's settings.
+No token or YouTube sign-in is needed. Live lifecycle checks pass with muted
+unsigned playback; the user confirmed the visible card after enabling Discord's
+own activity-sharing switch. Profile visibility depends on Discord's settings.
 See [Discord setup, privacy and verification](DISCORD.md).
 
 ## Local Windows package

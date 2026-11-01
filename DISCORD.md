@@ -91,6 +91,13 @@ playback, disable/re-enable and bounded quit. It stores no application profile,
 does not change Windows volume, and is excluded from ordinary CI. A successful
 run proves local RPC acceptance, not universal catalog or public visibility.
 
+On 1 November 2026, the live lifecycle passed against the running Windows Discord
+desktop. Discord returned matching application/type/title/artist fields and
+artwork/timing data. An initial invisible-card report was traced to Discord's
+top-level **Share my activity** switch being off. The user enabled it themselves
+and confirmed the Listening card's song, artist, artwork and timing were correct.
+This attended visual result is separate from the automated acknowledgements.
+
 Protocol references checked 1 November 2026:
 [Discord RPC](https://docs.discord.com/developers/topics/rpc),
 [Rich Presence without authentication](https://docs.discord.com/developers/discord-social-sdk/development-guides/setting-rich-presence#rich-presence-without-authentication),
