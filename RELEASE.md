@@ -52,18 +52,25 @@ also passed packaging/policy qualification and separate-runner registration.
 The signing job was intentionally skipped (`sign=false`); this supplies no
 trusted-signature or consumer-machine evidence.
 
-An [unpublished rc.4 evaluation draft](https://github.com/KRenuja17/Octave/releases/tag/untagged-0f4b86f2cc484daae392)
-contains the reviewed local unsigned ZIP, checksum and explicit open-gate notes.
-Its uploaded asset digest matches the local hash. The previous draft is retained.
-Preparing this draft does not authorize public evaluation/production publication.
+After separate owner review/approval, the [public unsigned rc.4 evaluation
+prerelease](https://github.com/KRenuja17/Octave/releases/tag/v0.2.0-rc.4) contains
+the reviewed local ZIP, checksum and explicit open-gate notes. Its uploaded
+asset digest and a real anonymous/cookieless public download match the local
+SHA256. No extra downloaded ZIP was retained. It is a prerelease, not the latest
+production release; the earlier evaluation draft is retained. This addresses
+the public-download prerequisite for a SignPath application, not provider
+acceptance or production approval.
 
 Still required: an installed real composition IME, actual different-scale
 displays, broader attended native editing, the separate consumer Windows test,
 owner application/contact/MFA and provider acceptance, trusted signing and
 retests on final signed bytes, and review/approval of the resulting production
 artifact/notes/checksums. SignPath's released-project/reputation requirements
-remain external eligibility questions; an unpublished draft is not a public
-release. No unsigned evaluation approval is implied by production preparation.
+remain external eligibility questions despite the public unsigned preview.
+Only public project details were prefilled in the application; owner contact,
+consent/account/MFA steps and the provider's decision remain outside automated
+acceptance. No owner contact information, private account session or service
+credential was entered by the agent.
 Automatic updates remain disabled.
 
 ## Isolated Account/Premium acceptance — 1 November 2026
