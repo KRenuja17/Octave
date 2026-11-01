@@ -7,6 +7,10 @@ env:
 jobs:
   foundation:
     runs-on: windows-latest
+    env:
+      # Headless font/layout work must not starve the asynchronous SQLite
+      # fixture workers on a hosted VM. Keep the existing five-second limit.
+      RUST_TEST_THREADS: '2'
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
