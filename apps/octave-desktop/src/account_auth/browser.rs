@@ -37,10 +37,10 @@ pub(super) fn music_url(url: &str) -> Option<u8> {
     (index < 100).then_some(index)
 }
 fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
-    let mut jar = BTreeMap::new();
-    let cookies = value["cookies"].as_array().ok_or(Error::BrowserProtocol)?;
+    let mut jar = BTreeMap::<String, (u8, Zeroizing<String>)>::new();
+    let cookies = value["cookies"].as_array().ok_or(Error::CookieFormat)?;
     if cookies.len() > 256 {
-        return Err(Error::BrowserProtocol);
+        return Err(Error::CookieFormat);
     }
     for cookie in cookies {
         let domain = cookie["domain"].as_str().unwrap_or_default();
@@ -50,8 +50,14 @@ fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
         ) {
             continue;
         }
-        let name = cookie["name"].as_str().ok_or(Error::BrowserProtocol)?;
-        let value = cookie["value"].as_str().ok_or(Error::BrowserProtocol)?;
+        // A third-party partition is not the top-level Music API session.
+        if cookie.get("partitionKey").is_some_and(|key| !key.is_null())
+            || cookie["partitionKeyOpaque"] == true
+        {
+            continue;
+        }
+        let name = cookie["name"].as_str().ok_or(Error::CookieFormat)?;
+        let value = cookie["value"].as_str().ok_or(Error::CookieFormat)?;
         if name.is_empty()
             || name.len() > 256
             || value.len() > 8192
@@ -62,16 +68,21 @@ fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
                 .bytes()
                 .any(|b| !(0x21..=0x7e).contains(&b) || b == b';')
         {
-            return Err(Error::BrowserProtocol);
+            return Err(Error::CookieFormat);
         }
-        if let Some(previous) = jar.insert(name.to_owned(), Zeroizing::new(value.to_owned()))
-            && previous.as_str() != value
-        {
-            return Err(Error::BrowserProtocol);
+        let scope = u8::from(domain.trim_start_matches('.') == "music.youtube.com");
+        if let Some((previous_scope, previous)) = jar.get(name) {
+            if *previous_scope > scope {
+                continue;
+            }
+            if *previous_scope == scope && previous.as_str() != value {
+                return Err(Error::CookieAmbiguous);
+            }
         }
+        jar.insert(name.to_owned(), (scope, Zeroizing::new(value.to_owned())));
     }
     let mut result = Zeroizing::new(String::new());
-    for (name, value) in jar {
+    for (name, (_, value)) in jar {
         if !result.is_empty() {
             result.push_str("; ");
         }
@@ -80,7 +91,7 @@ fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
         result.push_str(&value);
     }
     if result.len() > 16384 {
-        return Err(Error::BrowserProtocol);
+        return Err(Error::CookieFormat);
     }
     Ok(result)
 }
@@ -497,7 +508,9 @@ pub(super) fn sign_in(
                 }
             }
             let rpc = browser.rpc.as_mut().unwrap();
-            let targets = rpc.call("Target.getTargets", json!({}), None)?;
+            let targets = rpc
+                .call("Target.getTargets", json!({}), None)
+                .map_err(|_| Error::CapturePages)?;
             let Some(target) = targets["targetInfos"].as_array().and_then(|a| {
                 a.iter().find(|v| {
                     v["type"] == "page" && v["url"].as_str().and_then(music_url).is_some()
@@ -516,11 +529,13 @@ pub(super) fn sign_in(
                 .filter(|s| s.len() < 128)
                 .ok_or(Error::BrowserProtocol)?;
             if attached.as_ref().is_none_or(|(previous, _)| previous != id) {
-                let response = rpc.call(
-                    "Target.attachToTarget",
-                    json!({"targetId":id,"flatten":true}),
-                    None,
-                )?;
+                let response = rpc
+                    .call(
+                        "Target.attachToTarget",
+                        json!({"targetId":id,"flatten":true}),
+                        None,
+                    )
+                    .map_err(|_| Error::CaptureAttach)?;
                 attached = Some((
                     id.to_owned(),
                     response["sessionId"]
@@ -530,12 +545,14 @@ pub(super) fn sign_in(
                         .to_owned(),
                 ));
             }
-            let mut response = rpc.call(
-                "Network.getCookies",
-                json!({"urls":["https://music.youtube.com/"]}),
-                attached.as_ref().map(|(_, session)| session.as_str()),
-            )?;
-            let header = cookies(&response)?;
+            let mut response = rpc
+                .call(
+                    "Network.getCookies",
+                    json!({"urls":["https://music.youtube.com/"]}),
+                    attached.as_ref().map(|(_, session)| session.as_str()),
+                )
+                .map_err(|_| Error::CaptureCookies)?;
+            let header = cookies(&response);
             // Zeroize owned cookie strings in the parsed protocol tree.
             if let Some(items) = response["cookies"].as_array_mut() {
                 for item in items {
@@ -544,6 +561,7 @@ pub(super) fn sign_in(
                     }
                 }
             }
+            let header = header?;
             if let Some(fingerprint) = login_fingerprint(&header) {
                 saw_login_cookie = true;
                 if stable
@@ -617,6 +635,26 @@ pub(super) fn cleanup_pending(root: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn overlapping_youtube_cookie_scopes_do_not_reject_a_valid_music_session() {
+        let parent = json!({"domain":".youtube.com", "name":"PREF", "value":"parent"});
+        let music = json!({"domain":"music.youtube.com", "name":"PREF", "value":"music"});
+        let login = json!({"domain":".youtube.com", "name":"SAPISID", "value":"synthetic"});
+        for items in [
+            json!([parent.clone(), music.clone(), login.clone()]),
+            json!([music, parent, login]),
+        ] {
+            let header = cookies(&json!({"cookies":items})).unwrap();
+            assert!(header.contains("PREF=music"));
+            assert!(header.contains("SAPISID=synthetic"));
+        }
+        assert_eq!(cookies(&json!({"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic-a"},{"domain":"youtube.com","name":"SAPISID","value":"synthetic-b"}]})).unwrap_err(), Error::CookieAmbiguous);
+        let partitioned = json!({"cookies":[{"domain":".youtube.com","name":"SAPISID","value":"synthetic-unpartitioned"},{"domain":".youtube.com","name":"SAPISID","value":"synthetic-other-partition","partitionKey":{"topLevelSite":"https://example.invalid"}}]});
+        assert_eq!(
+            cookies(&partitioned).unwrap().as_str(),
+            "SAPISID=synthetic-unpartitioned"
+        );
+    }
     #[test]
     fn rotating_request_cookies_do_not_hide_a_stable_login() {
         let a = login_fingerprint("SAPISID=synthetic; SID=fixed; __Secure-1PSIDTS=old");
@@ -738,6 +776,8 @@ mod tests {
             + 600;
         let seeded = browser.rpc.as_mut().unwrap().call("Network.setCookie", json!({"name":"OCTAVE_SYNTHETIC_TEST","value":"synthetic-only","domain":".youtube.com","path":"/","secure":true,"expires":expires}), Some(session)).unwrap();
         assert_eq!(seeded["success"], true);
+        let host_seeded = browser.rpc.as_mut().unwrap().call("Network.setCookie", json!({"name":"OCTAVE_SYNTHETIC_TEST","value":"synthetic-host","domain":"music.youtube.com","path":"/","secure":true,"expires":expires}), Some(session)).unwrap();
+        assert_eq!(host_seeded["success"], true);
         let visible = browser
             .rpc
             .as_mut()
@@ -801,6 +841,11 @@ mod tests {
                 Some(session),
             )
             .unwrap();
+        assert!(
+            cookies(&persisted)
+                .unwrap()
+                .contains("OCTAVE_SYNTHETIC_TEST=synthetic-host")
+        );
         assert!(
             persisted["cookies"]
                 .as_array()

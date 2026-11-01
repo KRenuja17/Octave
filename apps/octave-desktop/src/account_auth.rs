@@ -32,6 +32,11 @@ fn outside_checkout(path: &std::path::Path) -> Result<(), Error> {
 pub enum Error {
     BrowserMissing,
     BrowserProtocol,
+    CapturePages,
+    CaptureAttach,
+    CaptureCookies,
+    CookieFormat,
+    CookieAmbiguous,
     SignInTimeout,
     Cancelled,
     Cleanup,
@@ -59,6 +64,11 @@ impl std::fmt::Display for Error {
         f.write_str(match self{
         Self::BrowserMissing=>"The selected Brave/Edge/Chrome browser was not found. Choose an installed browser.",
         Self::BrowserProtocol=>"The isolated sign-in browser connection failed. Close it and retry.",
+        Self::CapturePages=>"The isolated browser could not list its capture pages.",
+        Self::CaptureAttach=>"The YouTube Music capture page changed before it could be attached. Retry sign-in.",
+        Self::CaptureCookies=>"The isolated browser refused the native YouTube cookie read.",
+        Self::CookieFormat=>"The YouTube cookie response was malformed or exceeded the native limit.",
+        Self::CookieAmbiguous=>"The isolated profile returned conflicting login cookies at the same scope. No account was connected.",
         Self::SignInTimeout=>"Sign-in timed out. The temporary browser was closed.",
         Self::Cancelled=>"Account operation cancelled.",
         Self::Cleanup=>"Temporary browser cleanup is incomplete. Close the Octave sign-in browser, then retry cleanup.",
