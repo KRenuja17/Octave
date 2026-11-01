@@ -17,6 +17,7 @@ pub enum Action {
 }
 pub struct AccountUi {
     auth: crate::account_auth::Auth,
+    browser: crate::account_auth::Browser,
     identity: Option<octave_provider::account::Identity>,
     channels: Vec<octave_provider::account::Channel>,
     remember: bool,
@@ -40,6 +41,7 @@ impl Default for AccountUi {
     fn default() -> Self {
         Self {
             auth: Default::default(),
+            browser: Default::default(),
             identity: None,
             channels: Vec::new(),
             remember: false,
@@ -306,8 +308,19 @@ impl AccountUi {
                 ui.add_enabled_ui(!self.auth.pending,|ui|{
                     ui.add_enabled(cfg!(any(target_os="windows",target_os="macos")),egui::Checkbox::new(&mut self.remember,"Remember account on this device"));
                     ui.weak("Off by default. Remembered credentials are encrypted with a key held by the OS credential store.");
-                    if ui.add_enabled(self.auth.available(),egui::Button::new("Sign in with Google")).clicked(){
-                        self.auth.sign_in();self.message="Complete Google sign-in in the separate Octave browser window. Never paste credentials into chat.".into();
+                    ui.label("Sign-in browser");
+                    egui::ComboBox::from_id_salt("account_signin_browser")
+                        .selected_text(self.browser.label())
+                        .show_ui(ui, |ui| {
+                            for browser in crate::account_auth::Browser::ALL {
+                                ui.add_enabled_ui(browser.installed(), |ui| {
+                                    ui.selectable_value(&mut self.browser, browser, browser.label());
+                                });
+                            }
+                        });
+                    ui.small("Uses a separate Octave profile. Your personal browser sign-in is not imported.");
+                    if ui.add_enabled(self.auth.available() && self.browser.installed(),egui::Button::new("Sign in with Google")).clicked(){
+                        self.auth.sign_in(self.browser);self.message="Sign in in the separate browser, wait for YouTube Music to load, then CLOSE that window to connect Octave. Never paste credentials into chat.".into();
                     }
                     if self.auth.saved()&&ui.button("Restore remembered account").clicked(){self.remember=true;self.auth.restore();self.message="Verifying the remembered account…".into();}
                 });

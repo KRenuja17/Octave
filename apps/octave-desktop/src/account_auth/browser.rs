@@ -84,28 +84,66 @@ fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
     }
     Ok(result)
 }
-fn executable() -> Option<PathBuf> {
-    #[cfg(target_os = "windows")]
-    let candidates = [
-        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
-        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
-    ];
-    #[cfg(target_os = "macos")]
-    let candidates = [
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    ];
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let candidates = [
-        "/usr/bin/microsoft-edge",
-        "/usr/bin/google-chrome",
-        "/usr/bin/chromium",
-        "/usr/bin/chromium-browser",
-    ];
-    candidates
-        .into_iter()
-        .map(PathBuf::from)
-        .find(|p| p.is_file())
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Browser {
+    Brave,
+    Edge,
+    Chrome,
+}
+impl Browser {
+    pub const ALL: [Self; 3] = [Self::Brave, Self::Edge, Self::Chrome];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Brave => "Brave",
+            Self::Edge => "Microsoft Edge",
+            Self::Chrome => "Google Chrome",
+        }
+    }
+    pub fn installed(self) -> bool {
+        self.executable().is_some()
+    }
+    fn executable(self) -> Option<PathBuf> {
+        #[cfg(target_os = "windows")]
+        let candidates: &[&str] = match self {
+            Self::Edge => &[
+                r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+                r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+            ],
+            Self::Brave => &[
+                r"C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe",
+                r"C:\Program Files (x86)\BraveSoftware\Brave-Browser\Application\brave.exe",
+            ],
+            Self::Chrome => &[
+                r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+                r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            ],
+        };
+        #[cfg(target_os = "macos")]
+        let candidates: &[&str] = match self {
+            Self::Brave => &["/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"],
+            Self::Edge => &["/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"],
+            Self::Chrome => &["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"],
+        };
+        #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+        let candidates: &[&str] = match self {
+            Self::Brave => &["/usr/bin/brave-browser", "/usr/bin/brave"],
+            Self::Edge => &["/usr/bin/microsoft-edge"],
+            Self::Chrome => &[
+                "/usr/bin/google-chrome",
+                "/usr/bin/chromium",
+                "/usr/bin/chromium-browser",
+            ],
+        };
+        candidates.iter().map(PathBuf::from).find(|p| p.is_file())
+    }
+}
+impl Default for Browser {
+    fn default() -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|b| b.installed())
+            .unwrap_or(Self::Edge)
+    }
 }
 struct Rpc {
     socket: WebSocket<TcpStream>,
@@ -203,18 +241,44 @@ impl Rpc {
 }
 struct OwnedBrowser {
     child: Child,
+    executable: PathBuf,
     profile: PathBuf,
     root: PathBuf,
     rpc: Option<Rpc>,
     nonce: String,
     cleaned: bool,
 }
+fn browser_command(executable: &Path, profile: &Path, capture: bool) -> Command {
+    let mut command = Command::new(executable);
+    command.arg(format!("--user-data-dir={}", profile.display()));
+    // Authentication is a human-only browser phase. Debugging is enabled only
+    // after the user closes that window, for capture in the same owned profile.
+    if capture {
+        command.args([
+            "--remote-debugging-address=127.0.0.1",
+            "--remote-debugging-port=0",
+        ]);
+    }
+    command.args([
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-sync",
+        "--disable-background-mode",
+        "--new-window",
+        "https://music.youtube.com/",
+    ]);
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    command
+}
 impl OwnedBrowser {
-    fn launch(root: &Path) -> Result<Self, Error> {
+    fn launch(root: &Path, browser: Browser) -> Result<Self, Error> {
         if root.ancestors().any(|p| p.join(".git").exists()) {
             return Err(Error::UnsafeProfile);
         }
-        let executable = executable().ok_or(Error::BrowserMissing)?;
+        let executable = browser.executable().ok_or(Error::BrowserMissing)?;
         fs::create_dir_all(root).map_err(|_| Error::Storage)?;
         let root = root.canonicalize().map_err(|_| Error::Storage)?;
         if root.ancestors().any(|p| p.join(".git").exists()) {
@@ -228,30 +292,43 @@ impl OwnedBrowser {
         let profile = root.join(format!("signin-{nonce}"));
         fs::create_dir(&profile).map_err(|_| Error::Storage)?;
         fs::write(profile.join("OCTAVE_OWNED_PROFILE"), &nonce).map_err(|_| Error::Storage)?;
-        let child = Command::new(executable)
-            .arg(format!("--user-data-dir={}", profile.display()))
-            .args([
-                "--remote-debugging-address=127.0.0.1",
-                "--remote-debugging-port=0",
-                "--no-first-run",
-                "--no-default-browser-check",
-                "--disable-sync",
-                "--new-window",
-                "https://music.youtube.com/",
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
+        let child = browser_command(&executable, &profile, false)
             .spawn()
             .map_err(|_| Error::BrowserMissing)?;
         Ok(Self {
             child,
+            executable,
             profile,
             root,
             rpc: None,
             nonce,
             cleaned: false,
         })
+    }
+    fn start_capture(&mut self) -> Result<(), Error> {
+        if self
+            .child
+            .try_wait()
+            .map_err(|_| Error::BrowserProtocol)?
+            .is_none()
+        {
+            return Err(Error::BrowserProtocol);
+        }
+        let resolved = self
+            .profile
+            .canonicalize()
+            .map_err(|_| Error::UnsafeProfile)?;
+        if resolved.parent() != Some(self.root.as_path())
+            || fs::read_to_string(resolved.join("OCTAVE_OWNED_PROFILE"))
+                .map_err(|_| Error::UnsafeProfile)?
+                != self.nonce
+        {
+            return Err(Error::UnsafeProfile);
+        }
+        self.child = browser_command(&self.executable, &resolved, true)
+            .spawn()
+            .map_err(|_| Error::BrowserMissing)?;
+        Ok(())
     }
     fn cleanup(&mut self) -> Result<(), Error> {
         if self.cleaned {
@@ -299,19 +376,44 @@ impl Drop for OwnedBrowser {
         }
     }
 }
-pub(super) fn sign_in(root: &Path, cancelled: Arc<AtomicBool>) -> Result<Session, Error> {
+pub(super) fn sign_in(
+    root: &Path,
+    cancelled: Arc<AtomicBool>,
+    browser: Browser,
+) -> Result<Session, Error> {
     cleanup_pending(root)?;
-    let mut browser = OwnedBrowser::launch(root)?;
+    let mut browser = OwnedBrowser::launch(root, browser)?;
     let start = Instant::now();
-    let mut attached = None::<String>;
+    let mut attached = None::<(String, String)>;
     let mut stable = None::<(Zeroizing<String>, u8)>;
     let result = (|| {
-        loop {
+        // No CDP endpoint, cookie reads or browser automation during sign-in.
+        // The user completes Google authentication and closes the owned window.
+        while browser
+            .child
+            .try_wait()
+            .map_err(|_| Error::BrowserProtocol)?
+            .is_none()
+        {
             if cancelled.load(Ordering::Acquire) {
                 return Err(Error::Cancelled);
             }
             if start.elapsed() > Duration::from_secs(900) {
                 return Err(Error::SignInTimeout);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        if cancelled.load(Ordering::Acquire) {
+            return Err(Error::Cancelled);
+        }
+        browser.start_capture()?;
+        let capture_start = Instant::now();
+        loop {
+            if cancelled.load(Ordering::Acquire) {
+                return Err(Error::Cancelled);
+            }
+            if capture_start.elapsed() > Duration::from_secs(20) {
+                return Err(Error::Account);
             }
             if browser
                 .child
@@ -325,7 +427,7 @@ pub(super) fn sign_in(root: &Path, cancelled: Arc<AtomicBool>) -> Result<Session
                 if browser.profile.join("DevToolsActivePort").is_file() {
                     match Rpc::open(&browser.profile) {
                         Ok(rpc) => browser.rpc = Some(rpc),
-                        Err(_) if start.elapsed() < Duration::from_secs(15) => {
+                        Err(_) if capture_start.elapsed() < Duration::from_secs(15) => {
                             thread::sleep(Duration::from_millis(100));
                             continue;
                         }
@@ -350,28 +452,29 @@ pub(super) fn sign_in(root: &Path, cancelled: Arc<AtomicBool>) -> Result<Session
                 .as_str()
                 .and_then(music_url)
                 .ok_or(Error::BrowserProtocol)?;
-            if attached.is_none() {
-                let id = target["targetId"]
-                    .as_str()
-                    .filter(|s| s.len() < 128)
-                    .ok_or(Error::BrowserProtocol)?;
+            let id = target["targetId"]
+                .as_str()
+                .filter(|s| s.len() < 128)
+                .ok_or(Error::BrowserProtocol)?;
+            if attached.as_ref().is_none_or(|(previous, _)| previous != id) {
                 let response = rpc.call(
                     "Target.attachToTarget",
                     json!({"targetId":id,"flatten":true}),
                     None,
                 )?;
-                attached = Some(
+                attached = Some((
+                    id.to_owned(),
                     response["sessionId"]
                         .as_str()
                         .filter(|s| s.len() < 128)
                         .ok_or(Error::BrowserProtocol)?
                         .to_owned(),
-                );
+                ));
             }
             let mut response = rpc.call(
                 "Network.getCookies",
                 json!({"urls":["https://music.youtube.com/"]}),
-                attached.as_deref(),
+                attached.as_ref().map(|(_, session)| session.as_str()),
             )?;
             let header = cookies(&response)?;
             // Zeroize owned cookie strings in the parsed protocol tree.
@@ -461,6 +564,26 @@ pub(super) fn cleanup_pending(root: &Path) -> Result<(), Error> {
 mod tests {
     use super::*;
     #[test]
+    fn human_signin_has_no_debugging_or_security_override_arguments() {
+        let profile = Path::new("synthetic-owned-profile");
+        let signin = browser_command(Path::new("browser"), profile, false);
+        let args: Vec<_> = signin.get_args().map(|s| s.to_string_lossy()).collect();
+        assert!(
+            args.iter()
+                .any(|s| s == "--user-data-dir=synthetic-owned-profile")
+        );
+        assert!(!args.iter().any(|s| s.contains("debugging")
+            || s.contains("automation")
+            || s.contains("disable-web-security")
+            || s.contains("user-agent")));
+        let capture = browser_command(Path::new("browser"), profile, true);
+        assert!(
+            capture
+                .get_args()
+                .any(|s| s == "--remote-debugging-address=127.0.0.1")
+        );
+    }
+    #[test]
     fn capture_rejects_foreign_origins_and_cookie_injection() {
         assert_eq!(music_url("https://music.youtube.com/?authuser=2"), Some(2));
         for url in [
@@ -484,7 +607,16 @@ mod tests {
             std::env::var_os("OCTAVE_TEST_DIR").expect("Set external OCTAVE_TEST_DIR"),
         )
         .join("browser-smoke");
-        let mut browser = OwnedBrowser::launch(&root).unwrap();
+        let mut browser = OwnedBrowser::launch(&root, Browser::default()).unwrap();
+        assert!(
+            browser.start_capture().is_err(),
+            "Capture must wait for the human window to exit"
+        );
+        // Only the disposable unsigned smoke process is stopped here. Production
+        // waits for the user to close the normal sign-in window themselves.
+        browser.child.kill().unwrap();
+        browser.child.wait().unwrap();
+        browser.start_capture().unwrap();
         let start = Instant::now();
         loop {
             if let Ok(rpc) = Rpc::open(&browser.profile) {

@@ -1,6 +1,7 @@
 //! Serialized native account lifecycle. Secrets never enter settings/SQLite/logs.
 mod browser;
 mod vault;
+pub use browser::Browser;
 use octave_provider::account::{Account, Channel, Identity};
 use std::{
     path::PathBuf,
@@ -30,7 +31,7 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self{
-        Self::BrowserMissing=>"An installed Edge/Chrome browser is required. No browser was installed.",
+        Self::BrowserMissing=>"The selected Brave/Edge/Chrome browser was not found. Choose an installed browser.",
         Self::BrowserProtocol=>"The isolated sign-in browser connection failed. Close it and retry.",
         Self::SignInTimeout=>"Sign-in timed out. The temporary browser was closed.",
         Self::Cancelled=>"Account operation cancelled.",
@@ -53,7 +54,7 @@ pub enum Event {
     Failed(Error),
 }
 enum Job {
-    SignIn,
+    SignIn(Browser),
     Restore,
     Verify(Account),
     Select(Account, Channel),
@@ -173,8 +174,8 @@ impl Auth {
             self.pending = true;
         }
     }
-    pub fn sign_in(&mut self) {
-        self.submit(Job::SignIn);
+    pub fn sign_in(&mut self, browser: Browser) {
+        self.submit(Job::SignIn(browser));
     }
     pub fn restore(&mut self) {
         self.submit(Job::Restore);
@@ -253,8 +254,8 @@ fn execute(
         Ok(Event::Ready(account, identity, channels))
     };
     match job {
-        Job::SignIn => {
-            let session = browser::sign_in(&root.join("browser"), cancelled.clone())?;
+        Job::SignIn(browser) => {
+            let session = browser::sign_in(&root.join("browser"), cancelled.clone(), browser)?;
             let account = Account::with_cancellation(
                 session.cookie.to_string(),
                 session.index,
@@ -369,9 +370,9 @@ mod tests {
         ));
         let remember = std::env::var("OCTAVE_LIVE_REMEMBER").as_deref() == Ok("1");
         let mut auth = Auth::at(root.clone());
-        auth.sign_in();
+        auth.sign_in(Browser::default());
         eprintln!(
-            "attended_sign_in=waiting; use only the isolated browser window; no credentials are printed"
+            "attended_sign_in=waiting; sign in in the isolated browser, wait for Music, then CLOSE that window; no credentials are printed"
         );
         let start = std::time::Instant::now();
         let (account, identity, channels) = loop {
