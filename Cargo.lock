@@ -2659,6 +2659,7 @@ dependencies = [
  "souvlaki",
  "tokio",
  "tray-icon",
+ "unicode-segmentation",
  "winresource",
  "zeroize",
 ]

@@ -1501,6 +1501,7 @@ impl Alpha {
 impl Drop for Alpha {
     fn drop(&mut self) {
         self.player.stop();
+        self.presence.update(false, "", None, &Snapshot::default());
         self.store.finish(self.loaded.then(|| self.session.clone()));
     }
 }
