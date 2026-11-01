@@ -10,7 +10,9 @@ if ($env:CARGO_BUILD_TARGET) { throw 'Use the native x64 GNU host without a CARG
 $compiler = rustc -vV
 if ($LASTEXITCODE -ne 0 -or -not ($compiler -contains 'host: x86_64-pc-windows-gnu')) { throw 'The package requires the Windows x64 GNU Rust host toolchain.' }
 Push-Location $repo
+$previousBuildVersion = $env:OCTAVE_BUILD_VERSION
 try {
+    $env:OCTAVE_BUILD_VERSION = $Version
     $commit = git rev-parse HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Cannot identify source commit.' }
     $dirty = [bool](git status --porcelain)
@@ -29,6 +31,7 @@ try {
     if (Test-Path -LiteralPath $package) { throw 'Package directory already exists.' }
     New-Item -ItemType Directory -Path $package -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$Profile\octave-desktop.exe") -Destination $package
+    & (Join-Path $PSScriptRoot 'Test-ExecutableMetadata.ps1') -Executable (Join-Path $package 'octave-desktop.exe') -Version $Version -AllowDebug:($Profile -eq 'debug') | Out-Host
     if (-not $GccBin) { $GccBin = Split-Path (Get-Command gcc -ErrorAction Stop).Source -Parent }
     $objdump = Join-Path $GccBin 'objdump.exe'
     $imports = (& $objdump -p (Join-Path $package 'octave-desktop.exe') | Out-String)
@@ -46,7 +49,7 @@ try {
     }
     foreach ($name in @('Install.ps1','Uninstall.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $package }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $package
-    foreach ($name in @('LICENSE','RELEASE.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
+    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
     $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor')) + [IO.Path]::DirectorySeparatorChar
@@ -136,4 +139,7 @@ try {
     @{product='Octave'; version=$version; files=$files} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $package 'manifest.json') -Encoding utf8
     Compress-Archive -LiteralPath $package -DestinationPath ($package + '.zip')
     Write-Output $package
-} finally { Pop-Location }
+} finally {
+    $env:OCTAVE_BUILD_VERSION = $previousBuildVersion
+    Pop-Location
+}

@@ -46,6 +46,9 @@ jobs:
       - name: Installer security fixtures
         shell: pwsh
         run: ./packaging/Test-Installer.ps1 -WorkDir "$env:RUNNER_TEMP/installer-qa"
+      - name: Executable product and version metadata
+        shell: pwsh
+        run: ./packaging/Test-ExecutableMetadata.ps1 -Executable "$env:PACKAGE_DIR/octave-desktop.exe" -Version $env:RELEASE_VERSION
       - name: Signature policy fixtures
         shell: pwsh
         run: ./packaging/Test-SigningPolicy.ps1 -WorkDir "$env:RUNNER_TEMP/signing-qa"

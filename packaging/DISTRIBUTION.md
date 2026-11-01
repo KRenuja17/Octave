@@ -19,6 +19,21 @@ For a local build use `Build-Package.ps1` with an external `OutputDir` and
 and debug information can be disabled with `CARGO_INCREMENTAL=0`,
 `CARGO_PROFILE_DEV_DEBUG=0`, `CARGO_PROFILE_TEST_DEBUG=0` for smaller QA caches.
 
+Windows builds embed product, description, contributor, original-filename and
+version resources. `Build-Package.ps1 -Version <version>` sets
+`OCTAVE_BUILD_VERSION` for Cargo and restores the previous environment value on
+exit. Ordinary Cargo builds use the workspace version unless explicitly
+overridden. Numeric Windows versions use major/minor/patch/0 (16 bits each);
+the string version preserves the prerelease suffix and sets its Windows flag.
+The build uses `winresource` with the existing GNU `windres` toolchain locally;
+no Visual Studio installation is needed. MSVC CI uses its installed SDK tools.
+
+`Test-ExecutableMetadata.ps1 -Executable <exe> -Version <version>` verifies the
+actual PE resource, including prerelease/debug flags and both numeric/string
+versions. Packaging and CI reject an executable with missing or mismatched
+metadata, including stale `-SkipBuild` input. Repeat this check on the final
+provider-signed executable as well as the signature and package-integrity checks.
+
 Run `Test-RegisteredPackage.ps1 -PackageDir <extracted-package> -WorkDir <external-dir>`
 to check the real Start-menu shortcut, uninstall registry entry, restricted-PATH
 launch, unregister/uninstall and test-data preservation. It refuses an existing

@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+[build-dependencies]
+semver = "=1.0.28"
+winresource = "=0.1.30"
 [dependencies]
 epaint = { version = "=0.36.2", features = ["color_fonts"] }
 octave-core.workspace = true
