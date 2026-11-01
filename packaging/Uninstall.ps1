@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $target = [IO.Path]::GetFullPath($InstallDir)
 if ((Split-Path $target -Leaf) -ne 'Octave') { throw 'Expected the Octave installation directory.' }
 if ($target -ne [IO.Path]::GetFullPath($PSScriptRoot)) { throw 'Run the uninstaller inside the installation being removed.' }
+if (Test-Path -LiteralPath (Join-Path $target 'unins000.dat')) { throw 'Use Windows Settings or unins000.exe to remove this Setup-managed installation.' }
 if (Get-Process -Name octave-desktop -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq (Join-Path $target 'octave-desktop.exe') }) { throw 'Quit Octave before uninstalling.' }
 $manifest = Get-Content -LiteralPath (Join-Path $target 'manifest.json') -Raw | ConvertFrom-Json
 if ($manifest.product -ne 'Octave') { throw 'Not an Octave installation.' }

@@ -53,6 +53,19 @@ jobs:
       - name: Installer security fixtures
         shell: pwsh
         run: ./packaging/Test-Installer.ps1 -WorkDir "$env:RUNNER_TEMP/installer-qa"
+      - name: Build native Windows Setup
+        shell: pwsh
+        run: |
+          $compiler = ./packaging/Get-SetupCompiler.ps1 -ToolDir "$env:RUNNER_TEMP/inno-setup-7.1.1"
+          ./packaging/Test-SetupGuards.ps1 -WorkDir "$env:RUNNER_TEMP/setup-guards"
+          ./packaging/Test-SetupInput.ps1 -PackageDir $env:PACKAGE_DIR -WorkDir "$env:RUNNER_TEMP/setup-input-qa"
+          ./packaging/Build-Setup.ps1 -PackageDir $env:PACKAGE_DIR -OutputDir "$env:RUNNER_TEMP/setup" -Compiler $compiler
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-setup-evaluation
+          path: ${{ runner.temp }}/setup/*
+          retention-days: 7
+          if-no-files-found: error
       - name: Executable product and version metadata
         shell: pwsh
         run: |
@@ -93,9 +106,38 @@ jobs:
             ${{ runner.temp }}/registration-qa/**/launch-*.log
           retention-days: 7
           if-no-files-found: warn
+  independent-setup:
+    needs: package
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-evaluation-package
+          path: ${{ runner.temp }}/octave-package
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-setup-evaluation
+          path: ${{ runner.temp }}/octave-setup
+      - name: Native install, repair, legacy upgrade, shortcuts and uninstall
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem "$env:RUNNER_TEMP/octave-setup" -Filter '*-Setup.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one Setup executable.' }
+          $graphics = ./packaging/Set-UpCiGraphics.ps1 -WorkDir "$env:RUNNER_TEMP/setup-ci-graphics"
+          ./packaging/Test-Setup.ps1 -Setup $setup[0].FullName -PackageDir "$env:RUNNER_TEMP/octave-package" -WorkDir "$env:RUNNER_TEMP/setup-qa" -SoftwareOpenGlDir $graphics
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-setup-evidence
+          path: |
+            ${{ runner.temp }}/setup-qa/**/result.json
+            ${{ runner.temp }}/setup-qa/**/*.log
+          retention-days: 7
+          if-no-files-found: warn
   sign:
     if: ${{ inputs.sign }}
-    needs: [package, independent-registration]
+    needs: [package, independent-registration, independent-setup]
     runs-on: windows-2022
     environment: release-signing
     permissions:

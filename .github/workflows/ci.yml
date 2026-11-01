@@ -22,6 +22,9 @@ jobs:
       - name: Installer integrity and rollback fixtures
         shell: pwsh
         run: ./packaging/Test-Installer.ps1 -WorkDir "${{ runner.temp }}/octave-installer-tests"
+      - name: Native Setup target guards
+        shell: pwsh
+        run: ./packaging/Test-SetupGuards.ps1 -WorkDir "${{ runner.temp }}/octave-setup-guards"
   portability:
     strategy:
       fail-fast: false

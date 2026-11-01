@@ -8,6 +8,7 @@ if ((Split-Path $target -Leaf) -ne 'Octave') { throw 'The installation directory
 if ($target -eq [IO.Path]::GetPathRoot($target)) { throw 'Cannot install into a drive root.' }
 $source = [IO.Path]::GetFullPath($PSScriptRoot)
 if ($source -eq $target) { throw 'Extract this package outside the installation directory first.' }
+if (Test-Path -LiteralPath (Join-Path $target 'unins000.dat')) { throw 'This installation is managed by Octave Setup. Use Setup.exe to upgrade it.' }
 $manifest = Get-Content -LiteralPath (Join-Path $source 'manifest.json') -Raw | ConvertFrom-Json
 if ($manifest.product -ne 'Octave') { throw 'Not an Octave package.' }
 if ((Test-Path -LiteralPath $target) -and (Get-ChildItem -LiteralPath $target -Force)) {

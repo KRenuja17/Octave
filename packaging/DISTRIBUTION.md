@@ -7,10 +7,50 @@ listening, fresh-machine or accessibility acceptance.
 
 ## Build and independent runtime checks
 
+`Build-Setup.ps1` creates `Octave-<version>-Setup.exe` from a clean optimized
+package after verifying every manifest entry, required notice/source bundle and
+both executable version resources. Extra files, links, duplicate/unsafe names,
+tampering and dirty/debug payloads are rejected. Output stays outside source and
+the immutable portable package. The SHA256 sidecar and build receipt bind the
+payload manifest, payload commit, installer commit and compiler hash.
+
+`Get-SetupCompiler.ps1` downloads the pinned official Inno Setup 7.1.1 release,
+verifies its published SHA256 and trusted Pyrsys B.V. Authenticode signature, then
+extracts it in the vendor's portable/current-user mode without IDE registration.
+The app remains Rust and needs neither this compiler nor Visual Studio to run.
+Sources: [official release](https://github.com/jrsoftware/issrc/releases/tag/is-7_1_1),
+[portable mode](https://github.com/jrsoftware/issrc/blob/is-7_1_1/isportable.iss),
+[compiler license](https://github.com/jrsoftware/issrc/blob/is-7_1_1/license.txt).
+
+Setup installs for the current user under `%LOCALAPPDATA%\Programs\Octave`,
+creates a Start menu shortcut and native Windows uninstall registration, and
+offers an optional desktop shortcut. The installed program is independent of the
+checkout/build directories. Its guard refuses source checkouts, data folders,
+unowned nonempty destinations and reparse points. It asks the user to quit an
+existing installed Octave rather than closing it. Only explicitly installed files
+are removed, leaving profile/account data and unrelated files. A matching old
+PowerShell uninstall registration is migrated only after successful installation.
+Use native Setup/Windows uninstall for a Setup-managed installation; don't mix
+the portable PowerShell installer with it.
+
+`Test-SetupGuards.ps1` exercises refusal cases without personal data or registry
+changes. `Test-SetupInput.ps1` checks payload policy with synthetic damaged copies.
+`Test-Setup.ps1` verifies actual native install/repair, legacy upgrade, Start menu,
+Installed apps, restricted-PATH launch, uninstall and profile preservation. It
+refuses existing Octave registrations and uses an explicit isolated profile.
+
+The native Setup container and generated uninstaller are **not** covered by the
+existing four-file portable SignPath configuration. They remain unsigned; before
+production the approved provider must sign/timestamp the contained executables,
+scripts, native uninstaller and final Setup, with corresponding same-byte checks.
+Do not publish an unsigned Setup as a signed release or treat the compiler's own
+signature as an Octave publisher signature.
+
 The manually triggered **Windows evaluation package** workflow builds from source
 with Rust GNU, executes workspace/renderer/demuxer and packaging-policy checks,
-and uploads an evaluation artifact with seven-day retention. A separate Windows
-runner tests current-user registration and launch. It has no publication or
+and uploads portable and native Setup evaluation artifacts with seven-day retention.
+Separate Windows runners test portable registration and native Setup lifecycle.
+They have no publication or
 signing credentials and cannot create a GitHub release. Configure/dispatch it
 only after the committed workflow is available on GitHub.
 

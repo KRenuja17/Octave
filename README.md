@@ -193,6 +193,19 @@ See the [privacy policy](PRIVACY.md#network-services) for the shared metadata.
 
 ## Local Windows package
 
+`D:\Octave` contains the Rust source, tests and installer build scripts tracked by
+Git. `D:\Octave-Research` is a local workspace for tools, build caches, packages
+and test evidence. Generated executables and personal profiles are kept out of
+the repository. A normal installation runs from `%LOCALAPPDATA%\Programs\Octave`;
+it does not need the source or research folders.
+
+**For normal use, run `Octave-<version>-Setup.exe`.** The wizard installs for your
+Windows account, adds Octave to Start and Windows Installed apps, and offers an
+optional desktop shortcut. No administrator permission is needed. Open Octave
+from Start afterward. Setup upgrades preserve your listening/account profile;
+uninstall through Windows Settings also preserves it. Use Account → Forget first
+if you want Octave to remove remembered credentials. Quit Octave before upgrading.
+
 Using the configured GNU environment, build outside the repo:
 
 ```powershell
@@ -200,7 +213,21 @@ Using the configured GNU environment, build outside the repo:
 .\packaging\Build-Package.ps1 -OutputDir D:\Octave-Research\packages
 ```
 
-The ZIP contains a portable executable, any required GNU runtime DLLs, dependency inventory,
+Build the standalone installer from that verified package:
+
+```powershell
+$compiler = .\packaging\Get-SetupCompiler.ps1 -ToolDir D:\Octave-Research\tools\inno-setup-7.1.1
+.\packaging\Build-Setup.ps1 -PackageDir <package-directory> `
+  -OutputDir D:\Octave-Research\installers -Compiler $compiler
+```
+
+The pinned [Inno Setup compiler](https://github.com/jrsoftware/issrc/releases/tag/is-7_1_1)
+is a portable build tool, separate from the Rust application. Setup comes with a
+SHA256 sidecar and build receipt binding the installer source and payload. The
+current Setup and its native uninstaller remain unsigned evaluation artifacts;
+the pending signing-provider integration must also cover these before production.
+
+The alternative ZIP contains a portable executable, any required GNU runtime DLLs, dependency inventory,
 checksums, and per-user `Install.ps1`/`Uninstall.ps1` scripts. Extract it, then run
 the executable directly or run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1` from
 that directory. Installation targets `%LOCALAPPDATA%\Programs\Octave`, adds a
