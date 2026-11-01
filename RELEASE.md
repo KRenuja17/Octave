@@ -1,57 +1,54 @@
 # Release candidate evaluation
 
-## Isolated account lifecycle — 1 November 2026
+## Isolated Account/Premium acceptance — 1 November 2026
 
-The native Account flow now supports user-controlled sign-in in a selected,
-installed Brave/Edge/Chrome browser with a fresh app-owned profile and no debugging
-during human authentication. The user closes it after Music loads, then a separate
-capture phase briefly reopens only that owned profile. Rust captures
-only YouTube-domain cookies through a bounded loopback connection, validates the
-identity, then closes/removes that browser profile. Personal browser profiles
-are not imported. This follows Limusic's session/account lifecycle with its own
-implementation, without adopting Tauri or storing cookies in SQLite.
+**Attended Windows acceptance passed.** The final isolated Brave probe verified
+identity, four read-only library views, same-account refresh and protected
+Remember/restore/Forget. It consumed a service-reported **257,502 bps AAC** stream
+at **44.1 kHz stereo** on the default output at zero volume. After two seconds it
+played another fifteen seconds without interruption. Cleanup stopped audio,
+revoked live handles, removed the owned browser profile/sealed file and verified
+native vault-key absence. One channel was available: alternate live switching
+is not applicable; default/delegated selection fixtures pass. No account/library
+mutations were performed. This is one recording's evidence, not a guarantee of
+every recording's quality, future provider compatibility or account enforcement.
 
-Remember defaults off. Windows/macOS use an AES-256-GCM sealed session and a
-separate native credential-vault key, with no plaintext fallback. Restore
-revalidates the expected identity; refresh processes scoped cookie rotation;
-account/channel changes cancel obsolete audio and retain the position for an
-explicit Resume. Disconnect revokes live handles; Forget additionally removes
-the saved file/key and remaining owned browser profiles, reporting failures.
-Verified accounts can request native authenticated AAC; CDN/artwork requests
-carry no account credentials. See [account setup and limits](ACCOUNT.md).
+The native Account flow uses an installed Brave/Edge/Chrome browser in a new
+app-owned profile. Human Google authentication has no debugging/automation. After
+Music loads and the user closes that window, bounded native loopback capture
+briefly reopens only the owned profile, validates the identity and removes it.
+Personal browser profiles are never imported. Remember defaults off and uses
+AES-256-GCM plus a separate native Windows/macOS vault key, with no plaintext
+fallback. Linux protected persistence remains unavailable. Account changes stop
+at the retained position; Resume is explicit. Disconnect revokes live handles;
+Forget also removes the saved file/key and owned profiles, reporting failures.
 
-Attended Windows/Brave acceptance passed for browser capture/profile cleanup,
-verified identity, four read-only library views, same-account refresh and actual
-Remember/restore/Forget. The test checked sealed-file and native vault-key absence
-after cleanup. One channel was available, so alternate-channel live switching is
-not applicable; synthetic default/delegated selection tests pass. All ended
-attempts' owned profiles were removed. No account/library mutations were made.
-Windows canonical-path persistence, cookie scope conflicts and missing inline
-identity were reproduced and fixed before acceptance. Source CI through `4e895b3`
-passes on Windows, Linux and macOS.
+Authenticated ciphered AAC on Windows uses the separate packaged Boa/SWC helper.
+Only public script text and bounded transform strings enter it; cookies, private
+library responses and whole media URLs do not. No host APIs/imports are installed.
+Explicit inherited handles, a cleared environment, one-process/512 MiB Windows
+commit limits, kill-on-close, deadline/cancellation and a worker watchdog bound
+execution. This is not an OS AppContainer sandbox. Other platforms fail closed
+for cipher decoding until equivalent containment is qualified. Public Google
+scripts are fetched without account headers, cached only in memory and are not
+redistributed. DRM and manifest-only streams remain unsupported.
 
-The account probe initially failed native playback because it offered no direct
-AAC URL. Windows now has a separate Boa/SWC decoder for ciphered AAC. It receives
-only public script text and transform values, with no cookies or complete URLs,
-no host APIs/imports, a 512 MiB commit limit, deadline and cancellation cleanup.
-Known public vectors and the current public player pass in the optimized helper;
-these results do not establish Premium stream acceptance. Cipher decoding on
-other platforms is not yet qualified. The corrected attended native Premium
-check remains pending. See ACCOUNT.md for limits and SECURITY.md for boundaries.
+Earlier attempts exposed and fixed Windows canonical-path cookie persistence,
+overlapping cookie scopes, missing inline account identity and a CI external-path
+false positive. All ended test profiles and saved test credentials were removed.
+The first contained-decoder retry failed before audio; a fresh helper with fixed
+failure categories and padded-value coverage passed the final retry. The exact
+cause of that first helper failure was not established from its generic error.
+Retained external logs preserve those failures rather than relabelling them.
 
-Offline qualification: 190 workspace tests passed, 40 opt-in tests ignored;
-strict workspace/all-target Clippy and formatting pass. A subsequent account
-queue-full cleanup regression is qualified separately. Native public-player
-worker/cancellation qualification passed; historical public vectors match two
-throttling outputs and one signature exactly. No player scripts or live session
-data are committed as fixtures.
-
-The first contained-decoder account retry passed the full account/storage
-lifecycle and cleanup again, but stopped at a decoder failure before audio.
-Fixed, value-free failure categories now distinguish script, engine, transform
-and protocol errors. A freshly built helper passes a real unsigned ciphered AAC
-request (both signature and n transformed) and a media-prefix read, plus padded
-base64 inputs. Authenticated Premium acceptance remains pending.
+Final offline qualification: **192 tests passed /42 opt-in ignored**, strict
+workspace/all-target Clippy and formatting passed. Native protected-vault and
+owned-browser fixtures pass. Public vectors match two throttling outputs and one
+signature exactly; a real unsigned ciphered AAC request transforms both n and
+signature and reads media successfully. Native helper limits/cancellation pass.
+Source CI through `65ce46e` passes Windows/Linux/macOS; later checks are tracked
+separately. Packaging includes the helper, MIT preprocessor attribution and pinned
+supplemental dependency notices. See ACCOUNT.md, SECURITY.md and PRIVACY.md.
 
 ## Discord Rich Presence — 1 November 2026
 

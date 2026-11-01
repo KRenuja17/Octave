@@ -388,5 +388,383 @@
         "sha256": "C76F740D1521B9BED9CA7A04AD526C310493C62621B1341D623B431736533B30"
       }
     ]
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "7.0.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "9170cd59ebf735925c00cf0fbe615d1feb181431",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "ast_node"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "1.0.1",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "832d537695a07e539660096883fab52bb7f10ecf",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "better_scoped_tls"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_ast"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_engine"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_gc"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_interner"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_macros"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_parser"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/337a3668a0dc86dd401ea20906e782249a64a228/LICENSE-MIT",
+        "file": "boa-dev-boa-337a3668-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.22.0",
+    "licenseRevision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "revision": "337a3668a0dc86dd401ea20906e782249a64a228",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "boa_string"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/dudykr/ddbase/19f6487518dbebbc198346bfb979313ef457199e/LICENSE",
+        "file": "dudykr-ddbase-19f64875-LICENSE",
+        "sha256": "58D1E17FFE5109A7AE296CAAFCADFDBE6A7D176F0BC4AB01E12A689B0499D8BD"
+      }
+    ],
+    "version": "0.2.9",
+    "licenseRevision": "19f6487518dbebbc198346bfb979313ef457199e",
+    "revision": "19f6487518dbebbc198346bfb979313ef457199e",
+    "provenance": "Exact published crate source revision.",
+    "name": "bytes-str"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "3.0.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "00ec64fe9a4da0973f14721d7b6dc1f13cd75413",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "from_variant"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/dudykr/ddbase/d46ef439d30d2b64eb87d4e197929548b51b21be/LICENSE",
+        "file": "dudykr-ddbase-d46ef439-LICENSE",
+        "sha256": "58D1E17FFE5109A7AE296CAAFCADFDBE6A7D176F0BC4AB01E12A689B0499D8BD"
+      }
+    ],
+    "version": "2.0.0",
+    "licenseRevision": "d46ef439d30d2b64eb87d4e197929548b51b21be",
+    "revision": "d46ef439d30d2b64eb87d4e197929548b51b21be",
+    "provenance": "Exact published crate source revision.",
+    "name": "par-core"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/ad8739f5e0b51d20faf7a2cce98afa5c40121438/LICENSE-MIT",
+        "file": "boa-dev-boa-ad8739f5-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.1.0",
+    "licenseRevision": "ad8739f5e0b51d20faf7a2cce98afa5c40121438",
+    "revision": "ad8739f5e0b51d20faf7a2cce98afa5c40121438",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "small_btree"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "1.0.2",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "0ce4fd737e260c0cbfffcfdb19f269a9cc221ef4",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "string_enum"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "5.0.1",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "c5baa0c4f074885aac617593ab70c3859f541e24",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_allocator"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "10.0.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "e71dcb9bb768797cb9d13bdaf1560651ed3ffbc3",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_atoms"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "26.0.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "9170cd59ebf735925c00cf0fbe615d1feb181431",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_common"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "29.0.2",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "40a63cf37e34509ea1cea386149fb919cc30287f",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_ast"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "32.0.5",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "f468fb619805d28a02641e181cf9dcb6b4191f9c",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_codegen"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "2.0.2",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "0ce4fd737e260c0cbfffcfdb19f269a9cc221ef4",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_codegen_macros"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "46.1.2",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "f468fb619805d28a02641e181cf9dcb6b4191f9c",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_parser"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "35.1.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "d8bb6cb4e05f09876c6c6adc443940ef9856193e",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_utils"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "29.0.0",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "9170cd59ebf735925c00cf0fbe615d1feb181431",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_ecma_visit"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "1.0.1",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "832d537695a07e539660096883fab52bb7f10ecf",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_eq_ignore_macros"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "1.0.1",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "832d537695a07e539660096883fab52bb7f10ecf",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_macros_common"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/swc-project/swc/566c595329590294a963886ef56bcb5a1ec61d0d/LICENSE",
+        "file": "swc-project-swc-566c5953-LICENSE",
+        "sha256": "D96EBA1F1881334D50FFC144276DFA98E147A415E7C591ECDFCB81680361DC91"
+      }
+    ],
+    "version": "2.0.2",
+    "licenseRevision": "566c595329590294a963886ef56bcb5a1ec61d0d",
+    "revision": "59a9a43a8d6c826de58766a111c459af68828ab1",
+    "provenance": "Published crate VCS commit URLs returned 404. Apache-2.0 text is from immutable release v1.16.20; its parser manifest confirms 46.1.2. The separate crate VCS fingerprint remains checked.",
+    "name": "swc_visit"
+  },
+  {
+    "files": [
+      {
+        "url": "https://raw.githubusercontent.com/boa-dev/boa/ad8739f5e0b51d20faf7a2cce98afa5c40121438/LICENSE-MIT",
+        "file": "boa-dev-boa-ad8739f5-LICENSE-MIT",
+        "sha256": "60D7CF4B66CEF6BAB24701E25F87829C4CE01FB734DEF53C41E5ED79AB434CB3"
+      }
+    ],
+    "version": "0.1.0",
+    "licenseRevision": "ad8739f5e0b51d20faf7a2cce98afa5c40121438",
+    "revision": "ad8739f5e0b51d20faf7a2cce98afa5c40121438",
+    "provenance": "MIT alternative selected for distribution.",
+    "name": "tag_ptr"
   }
 ]

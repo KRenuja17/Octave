@@ -157,7 +157,8 @@ readable. Reduced motion and high contrast are saved locally.
 without signing in. Collections expose loaded counts and explicit paging. Pin up
 to 50 collections; History retains the 200 most recent recordings actually heard
 on this computer and can be cleared. These are local conveniences. Private
-library and Premium playback acceptance remain separate account work.
+library access and verified Windows Premium playback use the optional Account
+connection described in ACCOUNT.md.
 
 A complete finite public playlist can be imported with cancellation and a
 10,000-entry bound. Whole-playlist **True random** uses OS randomness across every
@@ -398,8 +399,9 @@ formats. The unsigned path accepts direct URLs. Verified accounts on Windows can
 also use ciphered URLs through the packaged, contained Rust/Boa signature helper.
 See [account setup and limits](ACCOUNT.md). Unexpected codecs are unsupported.
 
-Only supported AAC/MP4 streams are playable. Account lifecycle acceptance passed;
-live full-quality Premium audio qualification remains separate and pending.
+Only supported AAC/MP4 streams are playable. Account lifecycle and an attended
+Windows Premium playback check passed; see RELEASE.md for measured quality and
+the scope of that check. This does not guarantee every recording's quality.
 DRM, manifest-only/live-stream playback and automatic device-switch recovery
 remain unsupported. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure

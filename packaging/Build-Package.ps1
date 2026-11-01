@@ -89,6 +89,9 @@ try {
             else {
                 $vcs = Get-Content -LiteralPath (Join-Path $root '.cargo_vcs_info.json') -Raw | ConvertFrom-Json
                 if ($vcs.git.sha1 -ne $supplement[0].revision) { throw 'Supplemental notice revision does not match the locked crate.' }
+                if ($supplement[0].PSObject.Properties['provenance']) {
+                    [void]$notices.AppendLine("Supplemental license provenance: $($supplement[0].provenance)")
+                }
                 foreach ($notice in $supplement[0].files) {
                     if ($notice.file -ne [IO.Path]::GetFileName($notice.file) -or $notice.file -match '[\\/:]') { throw 'Invalid supplemental notice path.' }
                     $noticePath = Join-Path $licenseRoot $notice.file

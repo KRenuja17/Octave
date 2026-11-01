@@ -13,7 +13,8 @@ automates credential entry. The advanced manual adapter remains available for
 library access. Neither method is Google OAuth with narrowly granted scopes. Treat the cookie
 as a login credential: do not paste it into chat, issue reports, source files,
 terminal commands, HTTP recordings or screenshots. Verified sessions can request
-native authenticated AAC playback; full-quality acceptance needs live evidence.
+native authenticated AAC playback; the measured live acceptance scope is recorded
+in RELEASE.md.
 
 The account adapter sends credentials only to its fixed HTTPS YouTube Music
 origin. Account redirects are disabled, request headers are marked sensitive,
