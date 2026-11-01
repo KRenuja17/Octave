@@ -10,6 +10,7 @@ use crate::{Color32, FontId, Mesh, Stroke, text::FontsView};
 use emath::{Align, GuiRounding as _, NumExt as _, OrderedFloat, Pos2, Rect, Vec2, pos2, vec2};
 pub use font_types::Tag;
 use smallvec::SmallVec;
+use unicode_segmentation::UnicodeSegmentation as _;
 
 /// Describes the task of laying out text.
 ///
@@ -1363,21 +1364,31 @@ impl Galley {
 
 /// ## Cursor positions
 impl Galley {
-    #[expect(clippy::unused_self)]
     pub fn cursor_left_one_character(&self, cursor: &CCursor) -> CCursor {
-        if cursor.index == CharIndex::ZERO {
-            Default::default()
-        } else {
-            CCursor {
-                index: cursor.index - 1,
-                prefer_next_row: true, // default to this when navigating. It is more often useful to put cursor at the beginning of a row than at the end.
+        let mut boundary = CharIndex::ZERO;
+        for grapheme in self.text().graphemes(true) {
+            let next = boundary + grapheme.chars().count();
+            if next >= cursor.index {
+                break;
             }
+            boundary = next;
+        }
+        CCursor {
+            index: boundary,
+            prefer_next_row: true,
         }
     }
 
     pub fn cursor_right_one_character(&self, cursor: &CCursor) -> CCursor {
+        let mut boundary = CharIndex::ZERO;
+        for grapheme in self.text().graphemes(true) {
+            boundary += grapheme.chars().count();
+            if boundary > cursor.index {
+                break;
+            }
+        }
         CCursor {
-            index: (cursor.index + 1).min(self.end().index),
+            index: boundary,
             prefer_next_row: true, // default to this when navigating. It is more often useful to put cursor at the beginning of a row than at the end.
         }
     }

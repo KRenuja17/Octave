@@ -1434,7 +1434,7 @@ fn check_for_mutating_key_press(
                     // alt on mac, ctrl on windows
                     text.delete_previous_word(cursor)
                 } else {
-                    text.delete_previous_char(cursor)
+                    text.delete_previous_grapheme(cursor)
                 }
             } else {
                 text.delete_selected(cursor_range)
@@ -1450,7 +1450,7 @@ fn check_for_mutating_key_press(
                     // alt on mac, ctrl on windows
                     text.delete_next_word(cursor)
                 } else {
-                    text.delete_next_char(cursor)
+                    text.delete_next_grapheme(cursor)
                 }
             } else {
                 text.delete_selected(cursor_range)
@@ -1463,7 +1463,7 @@ fn check_for_mutating_key_press(
         }
 
         Key::H if modifiers.ctrl => {
-            let ccursor = text.delete_previous_char(cursor_range.primary);
+            let ccursor = text.delete_previous_grapheme(cursor_range.primary);
             Some(CCursorRange::one(ccursor))
         }
 

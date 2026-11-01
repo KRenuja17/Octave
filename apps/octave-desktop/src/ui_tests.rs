@@ -35,6 +35,65 @@ fn key(key: Key, modifiers: Modifiers) -> Event {
 }
 
 #[test]
+fn keyboard_grapheme_deletion_keeps_combining_marks_flags_and_zwj_intact() {
+    for grapheme in ["e\u{301}", "👩🏽‍💻", "🇱🇰", "שָׁ", "مُ", "क्‍ष"] {
+        for (position, deletion) in [(Key::End, Key::Backspace), (Key::Home, Key::Delete)] {
+            let ctx = egui::Context::default();
+            crate::theme::install(&ctx);
+            let id = egui::Id::unique("grapheme-deletion");
+            let mut text = grapheme.to_owned();
+            let render = |text: &mut String, events| {
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        events,
+                        ..Default::default()
+                    },
+                    |ui| {
+                        egui::TextEdit::singleline(text).id(id).show(ui);
+                    },
+                );
+                output.textures_delta.clear();
+            };
+            render(&mut text, vec![]);
+            ctx.memory_mut(|memory| memory.request_focus(id));
+            render(&mut text, vec![key(position, Modifiers::NONE)]);
+            render(&mut text, vec![key(deletion, Modifiers::NONE)]);
+            assert!(text.is_empty(), "{deletion:?} split {grapheme:?}: {text:?}");
+        }
+    }
+}
+
+#[test]
+fn keyboard_grapheme_arrows_skip_whole_clusters_in_logical_text() {
+    let ctx = egui::Context::default();
+    crate::theme::install(&ctx);
+    let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+    output.textures_delta.clear();
+    let chunks = ["A", "👩🏽‍💻", "🇱🇰", "e\u{301}", "שָׁ", "مُ", "B"];
+    let text = chunks.concat();
+    let galley = ctx.fonts_mut(|fonts| {
+        fonts.layout_no_wrap(
+            text.clone(),
+            egui::FontId::proportional(20.0),
+            egui::Color32::WHITE,
+        )
+    });
+    let mut cursor = egui::text::CCursor::default();
+    let mut expected = 0;
+    for chunk in chunks {
+        expected += chunk.chars().count();
+        cursor = galley.cursor_right_one_character(&cursor);
+        assert_eq!(cursor.index.0, expected, "right arrow split {chunk:?}");
+    }
+    for chunk in chunks.into_iter().rev() {
+        expected -= chunk.chars().count();
+        cursor = galley.cursor_left_one_character(&cursor);
+        assert_eq!(cursor.index.0, expected, "left arrow split {chunk:?}");
+    }
+    assert_eq!(galley.text(), text);
+}
+
+#[test]
 fn ime_output_tracks_focused_field_and_clears_after_blur() {
     let ctx = egui::Context::default();
     crate::theme::install(&ctx);

@@ -1,5 +1,6 @@
 use core::ops::Range;
 use std::borrow::Cow;
+use unicode_segmentation::UnicodeSegmentation as _;
 
 use epaint::{
     Galley,
@@ -145,6 +146,20 @@ pub trait TextBuffer {
         self.delete_selected_ccursor_range([ccursor, ccursor + 1])
     }
 
+    /// Delete a whole grapheme before the cursor, including when the cursor is
+    /// inside a cluster. Character-indexed APIs used by IMEs remain unchanged.
+    fn delete_previous_grapheme(&mut self, ccursor: CCursor) -> CCursor {
+        let range = deletion_grapheme(self.as_str(), ccursor, true);
+        self.delete_selected_ccursor_range(range)
+    }
+
+    /// Delete a whole grapheme at the cursor without splitting flags, combining
+    /// marks or emoji joiner sequences.
+    fn delete_next_grapheme(&mut self, ccursor: CCursor) -> CCursor {
+        let range = deletion_grapheme(self.as_str(), ccursor, false);
+        self.delete_selected_ccursor_range(range)
+    }
+
     fn delete_previous_word(&mut self, max_ccursor: CCursor) -> CCursor {
         let min_ccursor = ccursor_previous_word(self.as_str(), max_ccursor);
         self.delete_selected_ccursor_range([min_ccursor, max_ccursor])
@@ -239,6 +254,23 @@ pub trait TextBuffer {
     /// }
     /// ```
     fn type_id(&self) -> core::any::TypeId;
+}
+
+fn deletion_grapheme(text: &str, cursor: CCursor, previous: bool) -> [CCursor; 2] {
+    let mut start = CharIndex::ZERO;
+    for grapheme in text.graphemes(true) {
+        let end = start + grapheme.chars().count();
+        let contains = if previous {
+            start < cursor.index && cursor.index <= end
+        } else {
+            start <= cursor.index && cursor.index < end
+        };
+        if contains {
+            return [CCursor::new(start), CCursor::new(end)];
+        }
+        start = end;
+    }
+    [cursor, cursor]
 }
 
 impl TextBuffer for String {

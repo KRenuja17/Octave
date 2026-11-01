@@ -1,0 +1,139 @@
+diff --git a/vendor/egui/egui/src/widgets/text_edit/builder.rs b/vendor/egui/egui/src/widgets/text_edit/builder.rs
+index e32ed5e..654d0f0 100644
+--- a/vendor/egui/egui/src/widgets/text_edit/builder.rs
++++ b/vendor/egui/egui/src/widgets/text_edit/builder.rs
+@@ -1434,7 +1434,7 @@ fn check_for_mutating_key_press(
+                     // alt on mac, ctrl on windows
+                     text.delete_previous_word(cursor)
+                 } else {
+-                    text.delete_previous_char(cursor)
++                    text.delete_previous_grapheme(cursor)
+                 }
+             } else {
+                 text.delete_selected(cursor_range)
+@@ -1450,7 +1450,7 @@ fn check_for_mutating_key_press(
+                     // alt on mac, ctrl on windows
+                     text.delete_next_word(cursor)
+                 } else {
+-                    text.delete_next_char(cursor)
++                    text.delete_next_grapheme(cursor)
+                 }
+             } else {
+                 text.delete_selected(cursor_range)
+@@ -1463,7 +1463,7 @@ fn check_for_mutating_key_press(
+         }
+
+         Key::H if modifiers.ctrl => {
+-            let ccursor = text.delete_previous_char(cursor_range.primary);
++            let ccursor = text.delete_previous_grapheme(cursor_range.primary);
+             Some(CCursorRange::one(ccursor))
+         }
+
+diff --git a/vendor/egui/egui/src/widgets/text_edit/text_buffer.rs b/vendor/egui/egui/src/widgets/text_edit/text_buffer.rs
+index f09843e..90c9590 100644
+--- a/vendor/egui/egui/src/widgets/text_edit/text_buffer.rs
++++ b/vendor/egui/egui/src/widgets/text_edit/text_buffer.rs
+@@ -1,5 +1,6 @@
+ use core::ops::Range;
+ use std::borrow::Cow;
++use unicode_segmentation::UnicodeSegmentation as _;
+
+ use epaint::{
+     Galley,
+@@ -145,6 +146,20 @@ pub trait TextBuffer {
+         self.delete_selected_ccursor_range([ccursor, ccursor + 1])
+     }
+
++    /// Delete a whole grapheme before the cursor, including when the cursor is
++    /// inside a cluster. Character-indexed APIs used by IMEs remain unchanged.
++    fn delete_previous_grapheme(&mut self, ccursor: CCursor) -> CCursor {
++        let range = deletion_grapheme(self.as_str(), ccursor, true);
++        self.delete_selected_ccursor_range(range)
++    }
++
++    /// Delete a whole grapheme at the cursor without splitting flags, combining
++    /// marks or emoji joiner sequences.
++    fn delete_next_grapheme(&mut self, ccursor: CCursor) -> CCursor {
++        let range = deletion_grapheme(self.as_str(), ccursor, false);
++        self.delete_selected_ccursor_range(range)
++    }
++
+     fn delete_previous_word(&mut self, max_ccursor: CCursor) -> CCursor {
+         let min_ccursor = ccursor_previous_word(self.as_str(), max_ccursor);
+         self.delete_selected_ccursor_range([min_ccursor, max_ccursor])
+@@ -241,6 +256,23 @@ pub trait TextBuffer {
+     fn type_id(&self) -> core::any::TypeId;
+ }
+
++fn deletion_grapheme(text: &str, cursor: CCursor, previous: bool) -> [CCursor; 2] {
++    let mut start = CharIndex::ZERO;
++    for grapheme in text.graphemes(true) {
++        let end = start + grapheme.chars().count();
++        let contains = if previous {
++            start < cursor.index && cursor.index <= end
++        } else {
++            start <= cursor.index && cursor.index < end
++        };
++        if contains {
++            return [CCursor::new(start), CCursor::new(end)];
++        }
++        start = end;
++    }
++    [cursor, cursor]
++}
++
+ impl TextBuffer for String {
+     fn is_mutable(&self) -> bool {
+         true
+diff --git a/vendor/egui/epaint/src/text/text_layout_types.rs b/vendor/egui/epaint/src/text/text_layout_types.rs
+index e377b1d..7ed4a77 100644
+--- a/vendor/egui/epaint/src/text/text_layout_types.rs
++++ b/vendor/egui/epaint/src/text/text_layout_types.rs
+@@ -10,6 +10,7 @@ use crate::{Color32, FontId, Mesh, Stroke, text::FontsView};
+ use emath::{Align, GuiRounding as _, NumExt as _, OrderedFloat, Pos2, Rect, Vec2, pos2, vec2};
+ pub use font_types::Tag;
+ use smallvec::SmallVec;
++use unicode_segmentation::UnicodeSegmentation as _;
+
+ /// Describes the task of laying out text.
+ ///
+@@ -1363,21 +1364,31 @@ impl Galley {
+
+ /// ## Cursor positions
+ impl Galley {
+-    #[expect(clippy::unused_self)]
+     pub fn cursor_left_one_character(&self, cursor: &CCursor) -> CCursor {
+-        if cursor.index == CharIndex::ZERO {
+-            Default::default()
+-        } else {
+-            CCursor {
+-                index: cursor.index - 1,
+-                prefer_next_row: true, // default to this when navigating. It is more often useful to put cursor at the beginning of a row than at the end.
++        let mut boundary = CharIndex::ZERO;
++        for grapheme in self.text().graphemes(true) {
++            let next = boundary + grapheme.chars().count();
++            if next >= cursor.index {
++                break;
+             }
++            boundary = next;
++        }
++        CCursor {
++            index: boundary,
++            prefer_next_row: true,
+         }
+     }
+
+     pub fn cursor_right_one_character(&self, cursor: &CCursor) -> CCursor {
++        let mut boundary = CharIndex::ZERO;
++        for grapheme in self.text().graphemes(true) {
++            boundary += grapheme.chars().count();
++            if boundary > cursor.index {
++                break;
++            }
++        }
+         CCursor {
+-            index: (cursor.index + 1).min(self.end().index),
++            index: boundary,
+             prefer_next_row: true, // default to this when navigating. It is more often useful to put cursor at the beginning of a row than at the end.
+         }
+     }

@@ -28,3 +28,12 @@ all visual glyph positions rather than the first logical glyph. Two application
 regressions cover scaled multilingual bounds and cross-direction selection and
 deletion; the pre-patch geometry regression fails as expected. This does not
 change keyboard navigation or OS IME composition behavior.
+
+1 November native editing follow-up: `octave-grapheme-editing.patch` applies
+from the project root on the 8c0d3b2 snapshot. Backspace/Delete and Ctrl+H delete
+whole extended graphemes; left/right arrows and their selection variants move
+between logical grapheme boundaries. Existing character-indexed buffer and IME
+surrounding-text APIs are unchanged. Native .28 reproduced a split flag and
+combining accent; application regressions cover combining marks, Hebrew/Arabic
+marks, Indic conjuncts, skin tones, ZWJ emoji and flags. This does not implement
+visual-order bidi keyboard navigation or establish OS composition acceptance.
