@@ -41,6 +41,17 @@ Octave registration. It uses an explicit isolated profile and does not delete
 normal user data. Its result records `freshMachine=false`: running it on a
 developer machine does not prove consumer-machine compatibility.
 
+The Windows Server CI image's system OpenGL implementation cannot initialize
+egui_glow (the captured error requires OpenGL 2.0+). Independent registration
+therefore uses checksum-pinned Mesa 26.2.5 llvmpipe in the isolated test
+installation only. The setup refuses non-GitHub environments, extracts two x64
+DLLs, changes no system driver and leaves the uploaded package unchanged.
+The result records the graphics environment and DLL hashes. Normal host checks
+omit `-SoftwareOpenGlDir` and use the installed graphics driver. This CI pass
+is not hardware-GPU, unmodified-Windows or fresh consumer-machine acceptance.
+Upstream [release](https://github.com/pal1000/mesa-dist-win/releases/tag/26.2.5)
+and [per-application deployment documentation](https://github.com/pal1000/mesa-dist-win/blob/26.2.5/readme.md).
+
 Before production distribution, run the same package in a fresh Windows VM or
 another clean physical machine, recording OS version, GPU/driver, launch result,
 registration, uninstall, hashes and any required runtimes. A separate hosted CI

@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$PackageDir,
-    [Parameter(Mandatory)][string]$WorkDir
+    [Parameter(Mandatory)][string]$WorkDir,
+    [string]$SoftwareOpenGlDir
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
@@ -22,10 +23,28 @@ New-Item -ItemType Directory -Path $root -Force | Out-Null
 $target = Join-Path $root 'Octave'
 $profile = Join-Path $root 'profile'
 $savedPath = $env:PATH
+$savedDriver = $env:GALLIUM_DRIVER
+$savedSoftware = $env:LIBGL_ALWAYS_SOFTWARE
+$graphics = @()
+if ($SoftwareOpenGlDir) {
+    foreach ($name in @('opengl32.dll','libgallium_wgl.dll')) {
+        $file = Get-Item -LiteralPath (Join-Path $SoftwareOpenGlDir $name)
+        if ($file.PSIsContainer -or ($file.Attributes -band [IO.FileAttributes]::ReparsePoint) -or $name -in $manifest.files.name) { throw 'Invalid or colliding CI graphics runtime.' }
+        $graphics += @{name=$name;source=$file.FullName;sha256=(Get-FileHash -LiteralPath $file.FullName).Hash}
+    }
+}
 $installed = $false
 try {
     & (Join-Path $package 'Install.ps1') -InstallDir $target
     $installed = $true
+    if ($graphics.Count) {
+        # Only this isolated installation receives the test driver. The immutable
+        # input package and system DLLs remain untouched, and no driver is shipped.
+        foreach ($file in $graphics) { Copy-Item -LiteralPath $file.source -Destination (Join-Path $target $file.name) }
+        [IO.File]::WriteAllText((Join-Path $target 'octave-desktop.exe.local'), 'CI-only per-application OpenGL redirection')
+        $env:GALLIUM_DRIVER = 'llvmpipe'
+        $env:LIBGL_ALWAYS_SOFTWARE = 'true'
+    }
     $registered = Get-ItemProperty -LiteralPath $key
     if ($registered.DisplayName -ne 'Octave' -or $registered.DisplayVersion -ne $manifest.version -or $registered.InstallLocation -ne $target) { throw 'Uninstall registration mismatch.' }
     $expectedUninstall = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $target 'Uninstall.ps1') + '" -InstallDir "' + $target + '"'
@@ -51,10 +70,12 @@ try {
     if (Test-Path -LiteralPath (Join-Path $target 'octave-desktop.exe')) { throw 'Uninstall retained the executable.' }
     if ((Get-FileHash -LiteralPath $database).Hash -ne $before -or (Get-Content -LiteralPath (Join-Path $target 'user-note.txt') -Raw).Trim() -ne 'preserve') { throw 'Uninstall changed preserved data.' }
     $installed = $false
-    @{version=$manifest.version; registration=$true; shortcut=$true; restrictedPathLaunch=$true; unregistration=$true; profilePreserved=$true; unrelatedFilePreserved=$true; freshMachine=$false; computer=[Environment]::OSVersion.VersionString; packageManifestSha256=(Get-FileHash -LiteralPath (Join-Path $package 'manifest.json')).Hash} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
+    @{version=$manifest.version; registration=$true; shortcut=$true; restrictedPathLaunch=$true; unregistration=$true; profilePreserved=$true; unrelatedFilePreserved=$true; freshMachine=$false; graphicsEnvironment=$(if($graphics.Count){'CI-only Mesa llvmpipe'}else{'host driver'}); graphicsFiles=@($graphics | ForEach-Object { @{name=$_.name;sha256=$_.sha256} }); computer=[Environment]::OSVersion.VersionString; packageManifestSha256=(Get-FileHash -LiteralPath (Join-Path $package 'manifest.json')).Hash} | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
     Write-Output "registration_acceptance=passed evidence=$root"
 } finally {
     $env:PATH = $savedPath
+    $env:GALLIUM_DRIVER = $savedDriver
+    $env:LIBGL_ALWAYS_SOFTWARE = $savedSoftware
     # Only our newly created registration can reach this cleanup branch.
     if ($installed -and (Test-Path -LiteralPath (Join-Path $target 'Uninstall.ps1'))) {
         & (Join-Path $target 'Uninstall.ps1') -InstallDir $target

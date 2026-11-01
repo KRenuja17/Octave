@@ -69,7 +69,9 @@ jobs:
           path: ${{ runner.temp }}/octave-package
       - name: Registration and restricted-PATH launch on a separate runner
         shell: pwsh
-        run: ./packaging/Test-RegisteredPackage.ps1 -PackageDir "$env:RUNNER_TEMP/octave-package" -WorkDir "$env:RUNNER_TEMP/registration-qa"
+        run: |
+          $graphics = ./packaging/Set-UpCiGraphics.ps1 -WorkDir "$env:RUNNER_TEMP/octave-ci-graphics"
+          ./packaging/Test-RegisteredPackage.ps1 -PackageDir "$env:RUNNER_TEMP/octave-package" -WorkDir "$env:RUNNER_TEMP/registration-qa" -SoftwareOpenGlDir $graphics
       - uses: actions/upload-artifact@v4
         if: always()
         with:
