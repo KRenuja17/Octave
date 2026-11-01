@@ -49,11 +49,28 @@ fn selector(id: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
 }
 fn display(value: &Value) -> String {
-    text(value)
+    value
+        .as_str()
+        .map(str::to_owned)
+        .unwrap_or_else(|| text(value))
         .chars()
         .filter(|c| !c.is_control())
         .take(256)
         .collect()
+}
+fn normalized_id(raw: &str) -> Option<&str> {
+    raw.split("||")
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .filter(|s| selector(s))
+}
+fn response_id(value: &Value) -> Option<&str> {
+    let context = value.pointer("/responseContext/mainAppWebResponseContext")?;
+    context
+        .get("datasyncId")
+        .or_else(|| context.get("dataSyncId"))?
+        .as_str()
+        .and_then(normalized_id)
 }
 pub(super) fn parse(value: &Value) -> Result<Identity, Error> {
     let header = find(value, "activeAccountHeaderRenderer").ok_or(Error::Expired)?;
@@ -66,11 +83,7 @@ pub(super) fn parse(value: &Value) -> Result<Identity, Error> {
         .and_then(Value::as_str)
         .filter(|id| id.starts_with("UC") && selector(id))
         .map(str::to_owned);
-    let id = value
-        .pointer("/responseContext/mainAppWebResponseContext/datasyncId")
-        .and_then(Value::as_str)
-        .and_then(|s| s.split("||").next())
-        .filter(|id| selector(id))
+    let id = response_id(value)
         .map(str::to_owned)
         .or_else(|| channel_id.clone())
         .ok_or(Error::Unexpected)?;
@@ -93,13 +106,41 @@ pub(super) fn channels(value: &Value) -> Vec<Channel> {
             break;
         };
         if let Some(item) = next.get("accountItem") {
-            let token = find(item, "datasyncIdToken")
-                .and_then(|v| v.get("datasyncIdToken"))
-                .and_then(Value::as_str)
+            if item["isDisabled"] == true || item["hasChannel"] == false {
+                continue;
+            }
+            let tokens = item
+                .pointer("/serviceEndpoint/selectActiveIdentityEndpoint/supportedTokens")
+                .and_then(Value::as_array);
+            let token = tokens
+                .and_then(|tokens| {
+                    tokens.iter().take(32).find_map(|token| {
+                        let data = token
+                            .get("datasyncIdToken")
+                            .or_else(|| token.get("dataSyncIdToken"))?;
+                        ["datasyncIdToken", "datasyncId", "dataSyncId"]
+                            .iter()
+                            .find_map(|key| {
+                                data.get(*key)
+                                    .and_then(Value::as_str)
+                                    .and_then(normalized_id)
+                            })
+                    })
+                })
                 .or_else(|| {
-                    find(item, "pageIdToken")
-                        .and_then(|v| v.get("pageId"))
-                        .and_then(Value::as_str)
+                    tokens.and_then(|tokens| {
+                        tokens.iter().take(32).find_map(|token| {
+                            token
+                                .pointer("/pageIdToken/pageId")
+                                .and_then(Value::as_str)
+                                .filter(|s| selector(s))
+                        })
+                    })
+                })
+                .or_else(|| {
+                    (item["isSelected"] == true)
+                        .then(|| response_id(value))
+                        .flatten()
                 });
             let name = display(&item["accountName"]);
             if let Some(id) = token.filter(|id| selector(id))
@@ -214,13 +255,21 @@ impl Account {
     pub fn same_session(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.credentials, &other.credentials)
     }
-    pub fn restore_selection(cookie: String, index: u8, expected: &str) -> Result<Self, Error> {
-        if !selector(expected) {
+    pub fn restore_selection(
+        cookie: String,
+        index: u8,
+        expected: &str,
+        delegated: Option<&str>,
+    ) -> Result<Self, Error> {
+        if !selector(expected) || delegated.is_some_and(|id| !selector(id)) {
             return Err(Error::InvalidSession);
         }
         let account = Self::new(cookie, index)?;
-        account.credentials.session.lock().unwrap().delegated = Some(expected.into());
+        account.credentials.session.lock().unwrap().delegated = delegated.map(str::to_owned);
         Ok(account)
+    }
+    pub fn delegated_id(&self) -> Option<String> {
+        self.credentials.session.lock().unwrap().delegated.clone()
     }
     /// Called only by native account/vault work; never return this to a web page.
     pub fn session_cookie(&self) -> Result<Zeroizing<String>, Error> {
@@ -241,7 +290,11 @@ impl Account {
     }
     pub fn verify(&self) -> Result<Identity, Error> {
         let response = self.request("account/account_menu", json!({}))?;
-        let identity = parse(&response)?;
+        let identity = parse(&response).inspect_err(|error| {
+            if *error == Error::Expired {
+                self.disconnect();
+            }
+        })?;
         self.accept_identity(identity)
     }
     fn accept_identity(&self, identity: Identity) -> Result<Identity, Error> {
@@ -311,6 +364,43 @@ mod tests {
         assert_eq!(i.premium, None);
         assert!(!format!("{i:?}").contains("Synthetic"));
         assert!(parse(&menu("bad\nidentifier")).is_err());
+    }
+    #[test]
+    fn server_selector_variants_and_plain_names_preserve_identity() {
+        let response = json!({"responseContext":{"mainAppWebResponseContext":{"dataSyncId":"||fixture-selected"}}, "activeAccountHeaderRenderer":{"accountName":"Synthetic"}});
+        assert_eq!(parse(&response).unwrap().id, "fixture-selected");
+        let selected = json!({"responseContext":{"mainAppWebResponseContext":{"datasyncId":"fixture-current||device"}},"items":[
+            {"accountItem":{"accountName":"Current", "isSelected":true}},
+            {"accountItem":{"accountName":"Alternate", "serviceEndpoint":{"selectActiveIdentityEndpoint":{"supportedTokens":[{"dataSyncIdToken":{"dataSyncId":"fixture-other||device"}}]}}}},
+            {"accountItem":{"accountName":"Disabled", "isDisabled":true,"serviceEndpoint":{"selectActiveIdentityEndpoint":{"supportedTokens":[{"pageIdToken":{"pageId":"disabled"}}]}}}}
+        ]});
+        let items = channels(&selected);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|c| c.id == "fixture-other"));
+        assert!(items.iter().any(|c| c.id == "fixture-current"));
+    }
+    #[test]
+    fn restore_does_not_invent_a_delegated_selector_for_a_default_account() {
+        let default =
+            Account::restore_selection("SAPISID=synthetic".into(), 0, "UCfixture", None).unwrap();
+        assert_eq!(default.delegated_id(), None);
+        let selected = Account::restore_selection(
+            "SAPISID=synthetic".into(),
+            0,
+            "fixture-other",
+            Some("fixture-other"),
+        )
+        .unwrap();
+        assert_eq!(selected.delegated_id().as_deref(), Some("fixture-other"));
+        assert!(
+            Account::restore_selection(
+                "SAPISID=synthetic".into(),
+                0,
+                "fixture",
+                Some("bad\nselector")
+            )
+            .is_err()
+        );
     }
     #[test]
     fn channel_picker_only_uses_bounded_server_tokens() {

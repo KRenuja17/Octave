@@ -69,7 +69,9 @@ impl Keys for NativeKeys {
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
         {
-            Err(Error::VaultUnavailable)
+            // This build cannot create a native key. Forget must still clean
+            // browser/session files for a memory-only account.
+            Ok(())
         }
     }
 }
@@ -120,12 +122,15 @@ impl<K: Keys> Store<K> {
         let escaped =
             Zeroizing::new(serde_json::to_string(cookie.as_str()).map_err(|_| Error::Storage)?);
         let identity_json = serde_json::to_string(&identity.id).map_err(|_| Error::Storage)?;
+        let delegated_json =
+            serde_json::to_string(&account.delegated_id()).map_err(|_| Error::Storage)?;
         let text = Zeroizing::new(
             format!(
-                "{{\"v\":1,\"cookie\":{},\"index\":{},\"identity\":{}}}",
+                "{{\"v\":2,\"cookie\":{},\"index\":{},\"identity\":{},\"delegated\":{}}}",
                 escaped.as_str(),
                 account.account_index(),
-                identity_json
+                identity_json,
+                delegated_json
             )
             .into_bytes(),
         );
@@ -174,7 +179,7 @@ impl<K: Keys> Store<K> {
             fs::rename(&temp, self.root.join("session.sealed")).map_err(|_| Error::Storage)
         })();
         if result.is_err() && fresh {
-            let _ = self.keys.remove();
+            self.keys.remove()?;
         }
         result
     }
@@ -203,7 +208,7 @@ impl<K: Keys> Store<K> {
             .map_err(|_| Error::Vault)?;
         let mut value: serde_json::Value =
             serde_json::from_slice(opened).map_err(|_| Error::Storage)?;
-        if value["v"] != 1 {
+        if value["v"] != 2 {
             return Err(Error::Storage);
         }
         let cookie = match value["cookie"].take() {
@@ -220,7 +225,12 @@ impl<K: Keys> Store<K> {
             .ok_or(Error::Storage)?
             .to_owned();
         value["cookie"] = serde_json::Value::Null;
-        let account = Account::restore_selection(cookie.to_string(), index, &expected)
+        let delegated = match &value["delegated"] {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(id) => Some(id.as_str()),
+            _ => return Err(Error::Storage),
+        };
+        let account = Account::restore_selection(cookie.to_string(), index, &expected, delegated)
             .map_err(|_| Error::Storage)?;
         Ok((account, expected))
     }

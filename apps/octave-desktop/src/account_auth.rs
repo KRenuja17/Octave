@@ -25,11 +25,19 @@ pub enum Error {
     Vault,
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     VaultUnavailable,
-    Account,
+    CaptureIncomplete,
+    Account(octave_provider::account::Error),
+    ChannelDiscovery(octave_provider::account::Error),
     IdentityChanged,
 }
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Self::Account(reason) = self {
+            return write!(f, "Account validation failed: {reason}");
+        }
+        if let Self::ChannelDiscovery(reason) = self {
+            return write!(f, "Channel discovery failed: {reason}");
+        }
         f.write_str(match self{
         Self::BrowserMissing=>"The selected Brave/Edge/Chrome browser was not found. Choose an installed browser.",
         Self::BrowserProtocol=>"The isolated sign-in browser connection failed. Close it and retry.",
@@ -41,7 +49,8 @@ impl std::fmt::Display for Error {
         Self::Vault=>"The OS credential store operation failed. Remember/Forget did not complete.",
         #[cfg(not(any(target_os="windows",target_os="macos")))]
         Self::VaultUnavailable=>"Protected account persistence is unavailable on this platform.",
-        Self::Account=>"YouTube did not validate this session. Sign in again or retry verification.",
+        Self::CaptureIncomplete=>"The browser did not provide a completed YouTube session. Finish sign-in and wait for Music to load before closing the window.",
+        Self::Account(_) | Self::ChannelDiscovery(_)=>unreachable!(),
         Self::IdentityChanged=>"The account or channel changed. The refresh was rejected; sign in again.",
     })
     }
@@ -234,7 +243,9 @@ fn execute(
     cancelled: Arc<AtomicBool>,
 ) -> Result<Event, Error> {
     let ready = |account: Account, expected: Option<String>| -> Result<Event, Error> {
-        let identity = account.verify().map_err(|_| Error::Account)?;
+        let identity = account.verify().map_err(Error::Account)?;
+        #[cfg(test)]
+        eprintln!("account_identity_validation=passed");
         if expected.is_some_and(|id| id != identity.id) {
             account.disconnect();
             return Err(Error::IdentityChanged);
@@ -243,7 +254,7 @@ fn execute(
             account.disconnect();
             return Err(Error::Cancelled);
         }
-        let mut channels = account.channels().map_err(|_| Error::Account)?;
+        let mut channels = account.channels().map_err(Error::ChannelDiscovery)?;
         if channels.is_empty() {
             channels.push(Channel {
                 id: identity.id.clone(),
@@ -256,12 +267,14 @@ fn execute(
     match job {
         Job::SignIn(browser) => {
             let session = browser::sign_in(&root.join("browser"), cancelled.clone(), browser)?;
+            #[cfg(test)]
+            eprintln!("browser_session_capture_and_profile_cleanup=passed");
             let account = Account::with_cancellation(
                 session.cookie.to_string(),
                 session.index,
                 cancelled.clone(),
             )
-            .map_err(|_| Error::Account)?;
+            .map_err(Error::Account)?;
             ready(account, None)
         }
         Job::Restore => {
@@ -279,9 +292,7 @@ fn execute(
             Ok(event)
         }
         Job::Select(account, channel) => {
-            let (next, _) = account
-                .select_channel(&channel)
-                .map_err(|_| Error::Account)?;
+            let (next, _) = account.select_channel(&channel).map_err(Error::Account)?;
             let event = ready(next.clone(), Some(channel.id))?;
             if store.exists()
                 && let Event::Ready(_, identity, _) = &event

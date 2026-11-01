@@ -84,6 +84,42 @@ fn cookies(value: &Value) -> Result<Zeroizing<String>, Error> {
     }
     Ok(result)
 }
+fn login_fingerprint(header: &str) -> Option<[u8; 32]> {
+    let mut authenticating = Zeroizing::new(String::new());
+    let mut sapisid = false;
+    for (name, value) in header.split(';').filter_map(|p| p.trim().split_once('=')) {
+        if matches!(name, "SAPISID" | "__Secure-1PAPISID" | "__Secure-3PAPISID")
+            && !value.is_empty()
+        {
+            sapisid = true;
+        }
+        // SIDTS and other rotating request cookies must not prevent a stable
+        // login from completing. Identity is verified at the API before use.
+        if matches!(
+            name,
+            "SAPISID"
+                | "SID"
+                | "HSID"
+                | "SSID"
+                | "APISID"
+                | "__Secure-1PSID"
+                | "__Secure-3PSID"
+                | "__Secure-1PAPISID"
+                | "__Secure-3PAPISID"
+        ) {
+            authenticating.push_str(name);
+            authenticating.push('=');
+            authenticating.push_str(value);
+            authenticating.push(';');
+        }
+    }
+    sapisid.then(|| {
+        ring::digest::digest(&ring::digest::SHA256, authenticating.as_bytes())
+            .as_ref()
+            .try_into()
+            .unwrap()
+    })
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Browser {
     Brave,
@@ -385,7 +421,7 @@ pub(super) fn sign_in(
     let mut browser = OwnedBrowser::launch(root, browser)?;
     let start = Instant::now();
     let mut attached = None::<(String, String)>;
-    let mut stable = None::<(Zeroizing<String>, u8)>;
+    let mut stable = None::<([u8; 32], u8)>;
     let result = (|| {
         // No CDP endpoint, cookie reads or browser automation during sign-in.
         // The user completes Google authentication and closes the owned window.
@@ -413,7 +449,7 @@ pub(super) fn sign_in(
                 return Err(Error::Cancelled);
             }
             if capture_start.elapsed() > Duration::from_secs(20) {
-                return Err(Error::Account);
+                return Err(Error::CaptureIncomplete);
             }
             if browser
                 .child
@@ -485,23 +521,17 @@ pub(super) fn sign_in(
                     }
                 }
             }
-            if header
-                .split(';')
-                .filter_map(|p| p.trim().split_once('='))
-                .any(|(name, value)| {
-                    matches!(name, "SAPISID" | "__Secure-1PAPISID" | "__Secure-3PAPISID")
-                        && !value.is_empty()
-                })
-            {
-                if stable.as_ref().is_some_and(|(prior, old_index)| {
-                    prior.as_str() == header.as_str() && *old_index == index
-                }) {
+            if let Some(fingerprint) = login_fingerprint(&header) {
+                if stable
+                    .as_ref()
+                    .is_some_and(|(prior, old_index)| *prior == fingerprint && *old_index == index)
+                {
                     return Ok(Session {
                         cookie: header,
                         index,
                     });
                 }
-                stable = Some((header, index));
+                stable = Some((fingerprint, index));
             } else {
                 stable = None;
             }
@@ -563,6 +593,20 @@ pub(super) fn cleanup_pending(root: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn rotating_request_cookies_do_not_hide_a_stable_login() {
+        let a = login_fingerprint("SAPISID=synthetic; SID=fixed; __Secure-1PSIDTS=old");
+        assert!(a.is_some());
+        assert_eq!(
+            a,
+            login_fingerprint("SAPISID=synthetic; SID=fixed; __Secure-1PSIDTS=new")
+        );
+        assert_ne!(
+            a,
+            login_fingerprint("SAPISID=different; SID=fixed; __Secure-1PSIDTS=new")
+        );
+        assert_eq!(None, login_fingerprint("VISITOR_INFO1_LIVE=guest"));
+    }
     #[test]
     fn human_signin_has_no_debugging_or_security_override_arguments() {
         let profile = Path::new("synthetic-owned-profile");

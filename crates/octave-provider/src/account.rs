@@ -25,7 +25,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-        Self::InvalidSession => "Paste a valid YouTube Music Cookie header value containing SAPISID or __Secure-3PAPISID.",
+        Self::InvalidSession => "The YouTube Music session or selected identity is invalid. Disconnect and sign in again.",
         Self::Expired => "The account session was rejected or expired. Disconnect and connect a fresh browser session.",
         Self::Network => "Account request failed. Check your connection and retry.",
         Self::Unexpected => "The account response format was not recognized. No changes were applied locally.",
