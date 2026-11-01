@@ -1,0 +1,16 @@
+[package]
+name = "octave-ejs"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+repository = "https://github.com/ahaoboy/ytdlp-ejs"
+
+[dependencies]
+swc_ecma_parser = { version = "=46.1.2", default-features = false }
+swc_ecma_ast = "=29.0.2"
+swc_ecma_codegen = "=32.0.5"
+swc_common = "=26.0.0"
+
+[lints.rust]
+unsafe_code = "forbid"

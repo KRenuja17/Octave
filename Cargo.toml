@@ -1,5 +1,6 @@
 [workspace]
-members = ["apps/octave-desktop", "crates/octave-core", "crates/octave-provider", "crates/octave-player", "crates/octave-update"]
+members = ["apps/octave-desktop", "crates/octave-core", "crates/octave-provider", "crates/octave-player", "crates/octave-update", "crates/octave-signature"]
+exclude = ["vendor/octave-ejs"]
 resolver = "3"
 [workspace.package]
 version = "0.1.0"
@@ -12,7 +13,7 @@ octave-core = { path = "crates/octave-core" }
 octave-provider = { path = "crates/octave-provider" }
 octave-player = { path = "crates/octave-player" }
 reqwest = { version = "=0.12.28", default-features = false, features = ["blocking", "json", "rustls-tls"] }
-serde_json = "=1.0.149"
+serde_json = "=1.0.154"
 rodio = { version = "=0.22.2", default-features = false, features = ["playback", "symphonia-aac", "symphonia-isomp4", "symphonia-wav", "symphonia-pcm"] }
 eframe = { version = "=0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "wayland", "x11"] }
 [workspace.lints.rust]

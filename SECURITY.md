@@ -2,23 +2,52 @@
 
 Octave is an unofficial, experimental client. It cannot guarantee that use of
 unofficial service endpoints will never trigger an account restriction. No
-signed-in acceptance result or assurance of Google approval is claimed.
+assurance of Google approval is claimed. Live test results are separate evidence
+in [release notes](RELEASE.md), not a promise of future provider acceptance.
 
-The existing advanced Account connection imports a YouTube Music browser Cookie
-header. It is not Google OAuth with narrowly granted scopes. Treat the cookie
+The native Account flow opens an installed browser in an app-owned temporary
+profile without debugging/automation during authentication. After the user closes
+it, Octave briefly reopens its owned profile, captures only YouTube-domain cookies over bounded loopback CDP and
+validates the account in Rust. It never reads personal browser profiles or
+automates credential entry. The advanced manual adapter remains available for
+library access. Neither method is Google OAuth with narrowly granted scopes. Treat the cookie
 as a login credential: do not paste it into chat, issue reports, source files,
-terminal commands, HTTP recordings or screenshots. The current account feature
-does not enable authenticated or Premium playback.
+terminal commands, HTTP recordings or screenshots. Verified sessions can request
+native authenticated AAC playback; full-quality acceptance needs live evidence.
 
 The account adapter sends credentials only to its fixed HTTPS YouTube Music
 origin. Account redirects are disabled, request headers are marked sensitive,
 and application diagnostics record fixed categories/numbers rather than request
-headers, URLs or response bodies. Account credentials are memory-only and are
-zeroized when their owning buffers are released. Disconnect revokes Octave's
+headers, URLs or response bodies. Credentials are never attached to media or
+artwork requests. Secret-owning buffers are zeroized on release; library JSON
+and browser/HTTP internals are not a guarantee of complete process-memory erasure.
+Disconnect revokes Octave's
 shared handles; an in-flight request can retain a copy until cancellation or its
 bounded timeout. It does not revoke the browser session at Google. Memory-only
 handling cannot prevent exposure through clipboard history, OS memory/paging,
 crash dumps, malware or a compromised process.
+
+Remember account defaults off. Windows/macOS use AES-256-GCM sealed storage and
+a separate random key held by the native OS credential store; Linux persistence
+is unavailable. No plaintext or mock-backend fallback is enabled. Temporary
+browser profiles are closed/deleted after capture and on cancellation. Forget
+removes the sealed file, pending write, vault key and remaining owned profiles,
+reporting failures. A crash can leave browser data until the next cleanup. These
+paths are refused inside Git checkouts. Local debugging is restricted to loopback,
+but another process under the same user can still compromise a live session.
+See [setup and cleanup](ACCOUNT.md); uninstall preserves profiles and vault data.
+
+Ciphered AAC uses a separate Boa/SWC helper on Windows. The parent supplies only
+public player JavaScript and bounded signature/throttling strings over private
+pipes, never cookies or complete media URLs. The worker has an explicitly idle
+module loader and no registered filesystem, network, process or FFI APIs. It
+receives an explicit handle allowlist and a cleared environment. A Windows job
+applies one-process and 512 MiB commit limits before execution, with kill-on-close;
+the parent enforces a deadline/cancellation and the worker has a second watchdog.
+Results are bounded and CDN URLs are revalidated. This is not an OS sandbox:
+resource limits and missing host capabilities do not guarantee protection from
+an engine vulnerability. Cipher evaluation fails closed on unqualified platforms.
+Public assets are fetched without account headers and cached only in memory.
 
 Private library pages are held in memory. If a user deliberately queues, plays
 or saves library songs, song IDs/titles/artists can enter the local listening,
@@ -32,10 +61,10 @@ tracked. Check staged changes before every commit. Current tests use authored
 synthetic credentials; no live account is needed in CI. Never use real account
 data as a regression fixture.
 
-For the current no-account-risk requirement, remain signed out. The desktop
-reference review below identifies a practical browser-session design for future
-work; it does not establish zero account risk or authorize personal-account
-testing. Official Google desktop OAuth is a separate option for supported
+Users who require zero unofficial-client account risk should remain signed out.
+The desktop reference review below informed this implementation; it does not
+establish zero account risk. Attended account tests require explicit user consent.
+Official Google desktop OAuth is a separate option for supported
 YouTube Data API operations with least-access scopes. It does not replace a
 Music web session or establish native Premium playback. User consent, provider
 policy and implementation review remain necessary for either path.
@@ -64,11 +93,11 @@ insecure fallback disabled, and transfers helper credentials through a dedicated
 local socket rather than command arguments or stdout. OS-vault storage does not
 eliminate the separate browser-profile copy or protect a compromised process.
 
-The proposed Octave direction combines Limusic's account lifecycle with
-OS-protected, opt-in persistence and explicit browser-profile cleanup. This is
-documented design work; the existing memory-only manual adapter is unchanged.
-No account credentials, browser profiles or private library data were accessed
-in this public-source review. Community adoption is useful experience, but is
+Octave combines Limusic's account lifecycle with OS-protected, opt-in persistence
+and explicit browser-profile cleanup. It uses an installed browser rather than
+adopting Tauri/WebView2 or storing cookies in SQLite. No account credentials,
+browser profiles or private library data were accessed in the public-source
+review itself. Community adoption is useful experience, but is
 not evidence of an audited ban rate or a guarantee of provider approval.
 
 ## uYouPlus comparison

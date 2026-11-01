@@ -23,7 +23,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'MP4 startup qualification failed.' }
         cargo test -p octave-desktop --locked rtl_renderer_ -- --ignored
         if ($LASTEXITCODE -ne 0) { throw 'Shipping renderer qualification failed.' }
-        if ($Profile -eq 'release') { cargo build -p octave-desktop --release --locked } else { cargo build -p octave-desktop --locked }
+        if ($Profile -eq 'release') { cargo build -p octave-desktop -p octave-signature --release --locked } else { cargo build -p octave-desktop -p octave-signature --locked }
         if ($LASTEXITCODE -ne 0) { throw 'Build failed.' }
     }
     $version = $Version
@@ -31,11 +31,14 @@ try {
     if (Test-Path -LiteralPath $package) { throw 'Package directory already exists.' }
     New-Item -ItemType Directory -Path $package -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$Profile\octave-desktop.exe") -Destination $package
+    Copy-Item -LiteralPath (Join-Path $env:CARGO_TARGET_DIR "$Profile\octave-signature.exe") -Destination $package
     & (Join-Path $PSScriptRoot 'Test-ExecutableMetadata.ps1') -Executable (Join-Path $package 'octave-desktop.exe') -Version $Version -AllowDebug:($Profile -eq 'debug') | Out-Host
     if (-not $GccBin) { $GccBin = Split-Path (Get-Command gcc -ErrorAction Stop).Source -Parent }
     $objdump = Join-Path $GccBin 'objdump.exe'
     $imports = (& $objdump -p (Join-Path $package 'octave-desktop.exe') | Out-String)
     if ($LASTEXITCODE -ne 0) { throw 'Executable import inspection failed.' }
+    $imports += (& $objdump -p (Join-Path $package 'octave-signature.exe') | Out-String)
+    if ($LASTEXITCODE -ne 0) { throw 'Signature helper import inspection failed.' }
     # Resolve the small GNU runtime dependency closure; Windows supplies system DLLs.
     for ($pass = 0; $pass -lt 3; $pass++) {
         foreach ($dll in @('libgcc_s_seh-1.dll','libstdc++-6.dll','libwinpthread-1.dll')) {
@@ -49,7 +52,7 @@ try {
     }
     foreach ($name in @('Install.ps1','Uninstall.ps1')) { Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination $package }
     Copy-Item -LiteralPath (Join-Path $repo 'README.md') -Destination $package
-    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md','PRIVACY.md','CODE_SIGNING_POLICY.md','DISCORD.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
+    foreach ($name in @('LICENSE','RELEASE.md','REFERENCES.md','SECURITY.md','PRIVACY.md','CODE_SIGNING_POLICY.md','DISCORD.md','ACCOUNT.md')) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination $package }
     $metadata = cargo metadata --locked --format-version 1 --filter-platform x86_64-pc-windows-gnu | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Dependency inventory failed.' }
     $vendorRoot = [IO.Path]::GetFullPath((Join-Path $repo 'vendor')) + [IO.Path]::DirectorySeparatorChar
@@ -61,7 +64,7 @@ try {
     $notices = [Text.StringBuilder]::new()
     [void]$notices.AppendLine('Octave third-party notices. Target-filtered workspace dependency superset, including test/build tools. SPDX alternatives are retained; this inventory is not a license clearance opinion.')
     [void]$notices.AppendLine('Octave fixture artwork is original project artwork under MIT. Windows system fonts are loaded from the OS and are not redistributed.')
-    foreach ($provenance in @('egui/README-Octave.md','symphonia-format-isomp4/README-Octave.md')) {
+    foreach ($provenance in @('egui/README-Octave.md','symphonia-format-isomp4/README-Octave.md','octave-ejs/README-Octave.md')) {
         [void]$notices.AppendLine([IO.File]::ReadAllText((Join-Path $vendorRoot $provenance)))
     }
     foreach ($fontNotice in @('NOTICE-NotoEmoji.txt', 'OFL-NotoEmoji.txt')) {

@@ -20,8 +20,10 @@ palette. Reference priority does not change the accepted audio-first scope.
    supplementary reference for queue, lyrics, player interactions and automated
    browser-session capture. Earlier project references remain background research.
 
-These references inform behavior and architecture. No third-party source or
-assets were imported. Future code reuse requires a separate license review.
+These application references inform behavior and architecture; none of their
+code or assets were imported. Separately, the MIT-licensed ytdlp-ejs preprocessor
+subset is pinned in `vendor/octave-ejs`, with attribution and a restricted native
+worker; see its `README-Octave.md`. Google player scripts are not redistributed.
 Discord was reopened by the user on 1 November 2026; see [the integration guide](DISCORD.md).
 Paid translation remains optional, and native video
 and production Adaptive mixing remain deferred. Other reference features are
@@ -52,31 +54,40 @@ Orchard [session/keychain lifecycle](https://github.com/SFG5453/Orchard/blob/54a
 [local IPC](https://github.com/SFG5453/Orchard/blob/54a49f3c1ca58ea8251868b89730f2f9f9d52f49/app/src/auth/auth_session_channel.cpp);
 sndell [capture, validation and logout](https://github.com/sndell/yt-music-app/blob/ab0be0bd9d979a4db46e5b011044a79c3cc83389/app/features/music_api.py).
 
-## Proposed Octave account direction
+## Implemented Octave account direction — 1 November 2026
 
 Follow Limusic's user-facing Google login and account lifecycle, with
 Orchard-style OS-protected persistence. Prefer this to asking users to copy
-cookies manually. The next implementation pass should:
+cookies manually. The native implementation now:
 
-- Keep the native Rust UI. Evaluate an isolated, app-owned Windows WebView2
-  sign-in host with a visible Google origin and no general application bridge.
-  This host runs Google's web JavaScript; it is a runtime addition to evaluate,
-  not a Tauri/Svelte migration already adopted by Octave.
-- Keep session capture, requests and identity selection in Rust. Capture only
+- Keeps the native Rust UI. Uses a selected installed Brave/Edge/Chrome browser with a separate,
+  temporary app-owned profile on Windows, with no application page bridge or
+  script injection. Human authentication runs without debugging. After the user
+  closes that window, a separate bounded native loopback CDP phase captures only
+  YouTube cookies. No WebView2 SDK, Tauri migration or new browser install.
+- Keeps session capture, requests and identity selection in Rust. Captures only
   the necessary YouTube-domain cookies; never read personal browser profiles or
   collect passwords through an Octave form, clipboard or chat.
-- Default to a temporary session, including a temporary browser profile.
+- Defaults to a temporary session, including a temporary browser profile.
   Optional Remember account must use the OS credential vault with no plaintext
   fallback. Keep secrets out of SQLite, renderer messages, diagnostics and Git.
-- Validate the selected account/channel before activation. Serialize auth
+- Validates the selected account/channel before activation. Serializes auth
   transitions and reject stale refresh results after disconnect or account
   changes. Expiry and cancelled sign-in must leave a coherent signed-out state.
-- Distinguish Disconnect from Forget account. Forget must clear saved secrets
+- Distinguishes Disconnect from Forget account. Forget clears saved secrets
   and the app-owned browser session and report cleanup failures. Test retries,
   crashes, persistence and refresh races with synthetic credentials first.
-- Treat a later read-only live account check and Premium playback qualification
-  as separate acceptance steps. This research accessed no account or credentials
-  and does not implement or claim either result.
+- Treats read-only live account checks and Premium playback qualification as
+  separate acceptance steps. Synthetic tests and native browser/vault checks pass;
+  attended live results are tracked in [release notes](RELEASE.md). The original
+  public-source review itself accessed no account or credentials.
+
+The installed-browser choice also accounts for Google's restrictions on embedded
+sign-in. See Microsoft's [WebView2 Google-authentication notes](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/browser-features#google-authentication)
+and Chromium's [separate-profile debugging guidance](https://developer.chrome.com/blog/remote-debugging-port).
+It does not guarantee that Google will accept every browser or native API request.
+Google's [supported-browser guidance](https://support.google.com/accounts/answer/7675428?hl=en)
+explicitly identifies embedded/software-automated sign-in as potentially blocked.
 
 See [account and credential safety](SECURITY.md) for the current implementation
 and limits. Detailed source notes, hashes and the updated working plans stay in

@@ -2,7 +2,7 @@
 
 Limusic is the primary application reference for future refinements. See
 [reference direction](REFERENCES.md) for priorities, sign-in findings and the
-proposed account design. Octave retains its native Rust UI and charcoal/sage palette.
+account design. Octave retains its native Rust UI and charcoal/sage palette.
 
 Windows package qualification and signing preparation are documented in
 [distribution setup](packaging/DISTRIBUTION.md). The latest evaluation remains
@@ -13,9 +13,9 @@ fresh-machine acceptance.
 
 A native desktop music client in Rust. The default app is the **desktop beta
 preview**: live search, supported unsigned AAC playback, a persistent queue,
-Windows media/tray integration and an experimental account library connection.
+Windows media/tray integration and experimental isolated account sign-in.
 The earlier silent native experience prototype is available with `--prototype`.
-Broader playback feasibility and authenticated playback remain deferred.
+Account/Premium live qualification is tracked separately from unsigned playback.
 
 The listening UI follows YouTube Music's sidebar, search and persistent-player
 layout while keeping Octave's original charcoal and sage palette. Narrow windows
@@ -111,25 +111,27 @@ enumeration, not stable saved device identifiers.
 
 ## Account and desktop beta preview
 
-Open **Account → Connection options** to connect a YouTube Music browser session.
-The signed-out overview links to Search and local playlists; opening Account
-does not start a connection. Settings groups desktop behavior, output and sound
-preferences into expandable cards, with appearance controls first. The on-screen
-instructions use an explicitly pasted Cookie header value and account index;
-Octave never reads browser databases or asks for a Google password. This advanced
-connection is memory-only: quit or Disconnect forgets the session. You must
-connect again after restarting. No credential is saved to SQLite or a file.
-An already-running HTTP request can take up to its timeout to release its copy;
-late results after disconnect are ignored. Your browser stays signed in.
+Open **Account → Sign in with Google** for an isolated, temporary browser window
+you control. Octave validates the account/channel in Rust, supports explicit
+refresh and stops audio on account changes. **Remember account** is off by default;
+on Windows/macOS it encrypts the session using a key in the OS credential store.
+Restore revalidates identity; Disconnect clears the active session, while Forget
+also removes saved credentials and owned browser profiles. No personal browser
+profile is read, and no credential is saved in SQLite or Git. See [account setup,
+storage and cleanup](ACCOUNT.md) for requirements and limits. Opening Account
+alone does not connect. Settings groups desktop behavior, output and sound
+preferences into expandable cards, with appearance controls first.
 
 Library songs, liked songs, albums and playlists have explicit Load more controls,
 deduplication and repeated-cursor protection. Open a collection to load its songs.
 Account Like/Unlike buttons change the actual account only when clicked; visible
 state changes only after YouTube confirms success. Refresh after an uncertain
 network outcome. Expired/rejected sessions prompt reconnection. These unofficial
-account endpoints have fixture coverage but still need validation with a real
-user-initiated session. Account connection does **not** enable authenticated or
-Premium playback; that feasibility work remains deferred.
+account endpoints have fixture coverage; live acceptance is recorded separately
+in [release notes](RELEASE.md). Verified sessions also enable native authenticated
+AAC resolution. Full-quality Premium acceptance requires an actual offered
+supported stream; sign-in alone does not prove it. The advanced manual connection
+form remains available for memory-only library access.
 
 On Windows, media keys/system media controls share the same player commands as
 the window. Track title, artist, duration and playback progress are published to
@@ -389,14 +391,17 @@ missing preparation, queue edits, repeat state and preference migration.
 During playback, the transport shows **AAC**, the service-reported bitrate (or
 “bitrate not reported”), and the decoder's sample rate/channel count. These values
 follow the active track across gapless/crossfade transitions, and clear during a
-new load or Stop. They describe the selected unsigned stream; they do not imply
+new load or Stop. They describe the selected stream; they do not imply
 Premium access, lossless audio, a measured bitrate, or the hardware output format.
-The resolver selects the highest reported bitrate among direct audio/MP4 formats
-that declare the supported AAC-LC codec. Unexpected codecs are unsupported.
+The resolver selects the highest reported bitrate among supported AAC-LC/MP4
+formats. The unsigned path accepts direct URLs. Verified accounts on Windows can
+also use ciphered URLs through the packaged, contained Rust/Boa signature helper.
+See [account setup and limits](ACCOUNT.md). Unexpected codecs are unsupported.
 
-Only supported direct AAC/MP4 streams are playable. No authenticated playback, Premium
-validation, cipher/JavaScript resolver, live-stream support or automatic
-device-switch recovery is implemented. Retry re-resolves the
+Only supported AAC/MP4 streams are playable. Account lifecycle acceptance passed;
+live full-quality Premium audio qualification remains separate and pending.
+DRM, manifest-only/live-stream playback and automatic device-switch recovery
+remain unsupported. Retry re-resolves the
 stream; seeking currently also re-resolves it, which adds latency. Output failure
 is reported and needs a manual retry. Refills longer than the bounded queued
 coverage can still cause buffering. A loopback HTTP/decoder regression exercises
@@ -427,7 +432,8 @@ are results on the current network, not proof that those recordings always requi
 accounts. Octave reports **BotCheckRequired** separately from **SignInRequired**,
 keeps the queue/position and requires an explicit retry for either response.
 No profile fallback improved access, so the production resolver stays unchanged.
-Ciphered and manifest-only responses remain unsupported in the Rust-only path.
+The unsigned path still rejects ciphered and manifest-only responses. The later
+Windows authenticated signature worker does not add unsigned attestation.
 
 `cargo test -p octave-provider --locked
 compatibility_tests::live_unsigned_request_consistency -- --ignored --exact
@@ -503,9 +509,11 @@ runtime and unlock supported audio for blocked references, with correct identity
 and real media reads beyond initial grace limits, before the frozen zero-volume
 matrix and continuous long-recording test can establish playback acceptance.
 
-Windows x64 is the initial target. Octave is MIT licensed. Playback and attestation
-retain the Rust-only, no-JavaScript-runtime scope; third-party distribution
-obligations remain tracked before release.
+Windows x64 is the initial target. Octave is MIT licensed. The application and
+audio pipeline remain Rust. Windows account playback can evaluate public player
+JavaScript in a separate Boa process without installing Node or Deno; that helper
+receives no account cookies or complete media URLs. Attestation is not added by
+the signature decoder. Third-party distribution obligations remain tracked.
 Research, planning, benchmarks, toolchains and scratch files belong outside this
 repository in `D:\Octave-Research`.
 

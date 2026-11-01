@@ -1,5 +1,51 @@
 # Release candidate evaluation
 
+## Isolated account lifecycle — 1 November 2026
+
+The native Account flow now supports user-controlled sign-in in a selected,
+installed Brave/Edge/Chrome browser with a fresh app-owned profile and no debugging
+during human authentication. The user closes it after Music loads, then a separate
+capture phase briefly reopens only that owned profile. Rust captures
+only YouTube-domain cookies through a bounded loopback connection, validates the
+identity, then closes/removes that browser profile. Personal browser profiles
+are not imported. This follows Limusic's session/account lifecycle with its own
+implementation, without adopting Tauri or storing cookies in SQLite.
+
+Remember defaults off. Windows/macOS use an AES-256-GCM sealed session and a
+separate native credential-vault key, with no plaintext fallback. Restore
+revalidates the expected identity; refresh processes scoped cookie rotation;
+account/channel changes cancel obsolete audio and retain the position for an
+explicit Resume. Disconnect revokes live handles; Forget additionally removes
+the saved file/key and remaining owned browser profiles, reporting failures.
+Verified accounts can request native authenticated AAC; CDN/artwork requests
+carry no account credentials. See [account setup and limits](ACCOUNT.md).
+
+Attended Windows/Brave acceptance passed for browser capture/profile cleanup,
+verified identity, four read-only library views, same-account refresh and actual
+Remember/restore/Forget. The test checked sealed-file and native vault-key absence
+after cleanup. One channel was available, so alternate-channel live switching is
+not applicable; synthetic default/delegated selection tests pass. All ended
+attempts' owned profiles were removed. No account/library mutations were made.
+Windows canonical-path persistence, cookie scope conflicts and missing inline
+identity were reproduced and fixed before acceptance. Source CI through `4e895b3`
+passes on Windows, Linux and macOS.
+
+The account probe initially failed native playback because it offered no direct
+AAC URL. Windows now has a separate Boa/SWC decoder for ciphered AAC. It receives
+only public script text and transform values, with no cookies or complete URLs,
+no host APIs/imports, a 512 MiB commit limit, deadline and cancellation cleanup.
+Known public vectors and the current public player pass in the optimized helper;
+these results do not establish Premium stream acceptance. Cipher decoding on
+other platforms is not yet qualified. The corrected attended native Premium
+check remains pending. See ACCOUNT.md for limits and SECURITY.md for boundaries.
+
+Offline qualification: 190 workspace tests passed, 40 opt-in tests ignored;
+strict workspace/all-target Clippy and formatting pass. A subsequent account
+queue-full cleanup regression is qualified separately. Native public-player
+worker/cancellation qualification passed; historical public vectors match two
+throttling outputs and one signature exactly. No player scripts or live session
+data are committed as fixtures.
+
 ## Discord Rich Presence — 1 November 2026
 
 Discord was reopened by the user after its earlier exclusion. The Rust adapter

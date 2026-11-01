@@ -365,13 +365,18 @@ impl Account {
         if !crate::valid_id(&id.0) {
             return Err(crate::Error::InvalidTrack);
         }
-        let response=self.request_with("player",json!({"videoId":id.0,"contentCheckOk":true,"racyCheckOk":true,"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS"}}}), &cancelled)
+        let provider = crate::Provider::new()?;
+        let cancelled = || cancelled() || self.active().is_err();
+        let player = crate::signature::player(&provider, cancelled)?;
+        let response=self.request_with("player",json!({"videoId":id.0,"contentCheckOk":true,"racyCheckOk":true,"playbackContext":{"contentPlaybackContext":{"html5Preference":"HTML5_PREF_WANTS", "signatureTimestamp":player.timestamp}}}), cancelled)
             .map_err(|e|match e{Error::Expired|Error::InvalidSession=>crate::Error::SignInRequired,Error::Cancelled=>crate::Error::Cancelled,_=>crate::Error::Network})?;
         if cancelled() {
             return Err(crate::Error::Cancelled);
         }
         self.active().map_err(|_| crate::Error::Cancelled)?;
-        crate::parse_stream(id, &response)
+        crate::signature::resolve_response(id, response, |n, signature| {
+            crate::signature::decode(&player, n, signature, cancelled)
+        })
     }
 }
 

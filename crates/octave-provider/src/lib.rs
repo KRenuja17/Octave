@@ -9,6 +9,7 @@ pub mod lyrics;
 pub mod playlist;
 pub mod range;
 pub mod related;
+mod signature;
 pub mod translation;
 mod transport;
 use octave_core::{Track, TrackId, diagnostics::Sensitive};
@@ -36,6 +37,7 @@ pub enum Error {
     BotCheckRequired,
     Unavailable,
     UnsupportedStream,
+    SignatureWorker,
     InvalidTrack,
     Cancelled,
     InvalidRange,
@@ -52,7 +54,8 @@ impl fmt::Display for Error {
    Self::SignInRequired => f.write_str("YouTube requires a valid account session for this request. Reconnect the account or choose signed-out playback."),
    Self::BotCheckRequired => f.write_str("YouTube blocked this unsigned request with a bot-verification check. Try another recording or retry later."),
    Self::Unavailable => f.write_str("This track is unavailable to this unsigned client."),
-   Self::UnsupportedStream => f.write_str("No supported direct AAC stream was offered. Ciphered streams and manifest-only playback are not supported."),
+   Self::UnsupportedStream => f.write_str("No supported AAC stream was offered. DRM and manifest-only playback are not supported."),
+   Self::SignatureWorker => f.write_str("The contained player decoder is unavailable or failed. Check that the Octave signature helper is installed, then retry."),
    Self::InvalidTrack => f.write_str("Enter an 11-character YouTube video ID."),
    Self::Cancelled => f.write_str("Playback cancelled."),
    Self::InvalidRange => f.write_str("The audio server did not return the requested byte range."),
@@ -319,13 +322,7 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
         .ok_or(Error::UnsupportedStream)?;
     let url = audio["url"].as_str().ok_or(Error::UnsupportedStream)?;
     let parsed = reqwest::Url::parse(url).map_err(|_| Error::InvalidResponse)?;
-    if parsed.scheme() != "https"
-        || !parsed
-            .host_str()
-            .is_some_and(|h| h.ends_with(".googlevideo.com"))
-    {
-        return Err(Error::InvalidResponse);
-    }
+    validate_media_url(&parsed)?;
     let number = |key: &str| {
         audio[key]
             .as_str()
@@ -340,6 +337,22 @@ fn parse_stream(id: &TrackId, value: &Value) -> Result<ResolvedStream, Error> {
         content_length: number("contentLength")?,
         duration: Duration::from_millis(number("approxDurationMs")?),
     })
+}
+fn validate_media_url(url: &reqwest::Url) -> Result<(), Error> {
+    if url.scheme() != "https"
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.port_or_known_default() != Some(443)
+        || url.path() != "/videoplayback"
+        || url.fragment().is_some()
+        || url.as_str().len() > 16384
+        || !url
+            .host_str()
+            .is_some_and(|host| host.ends_with(".googlevideo.com"))
+    {
+        return Err(Error::InvalidResponse);
+    }
+    Ok(())
 }
 fn reported_bitrate(audio: &Value) -> Option<u32> {
     ["averageBitrate", "bitrate"].into_iter().find_map(|key| {

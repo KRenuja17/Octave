@@ -11,6 +11,10 @@ services and their media/image hosts. These requests expose normal connection
 information such as IP address, plus the search terms or recording/collection
 identifiers needed for the requested feature. Public Home content may load when
 that view opens. Artwork requests do not carry account cookies.
+On Windows, authenticated playback may fetch public YouTube player JavaScript
+without account headers. A separate bounded decoder receives only that public
+script and signature/throttling strings, never session cookies or private library
+responses. Public scripts stay in memory and are not distributed with Octave.
 The service's handling of those requests is governed by
 [Google's privacy policy](https://policies.google.com/privacy) and
 [YouTube's terms](https://www.youtube.com/t/terms).
@@ -39,14 +43,24 @@ played or saved, including songs loaded from a connected private library. Files
 are not encrypted merely because they are local. History can be cleared in the
 app; uninstall preserves user profiles. Users control backups and profile removal.
 
-The current advanced Account adapter accepts an explicitly provided browser
-Cookie header, retains it only in memory and sends it to the fixed HTTPS
-YouTube Music origin. It never reads personal browser profiles or asks for a
-Google password. Disconnect/quit forgets Octave's session; it does not revoke
-Google's browser session. A bounded in-flight request may retain a copy until
-it completes or times out. This does not enable native Premium playback.
-Proposed embedded sign-in and optional credential-vault persistence are not
-implemented by the current reference review.
+Account sign-in opens an installed browser with an app-owned temporary profile.
+You enter Google credentials yourself without a debugging connection or browser
+automation, then close that window. Octave briefly reopens only its owned profile
+for capture. Native Rust captures only
+YouTube-domain session cookies through a loopback connection, validates the
+account and closes/deletes the temporary profile. Octave never reads personal
+browser profiles or collects passwords in its UI. Cleanup failures are reported;
+a crash can leave the owned profile until a later sign-in or explicit Forget.
+
+Sessions stay in memory unless you enable Remember account. Windows/macOS
+persistence uses an encrypted file in the selected profile and a separate key in
+the OS credential store; no plaintext fallback is used. Linux persistence is
+unavailable. Disconnect/quit removes the active session; Forget additionally
+removes remembered files, the vault key and owned browser profiles. Neither
+remotely revokes Google sessions. Uninstall preserves user data, so use Forget
+first to remove the vault entry. Bounded in-flight requests may retain a copy
+until cancelled or timed out. Credentials are sent only to the fixed HTTPS
+YouTube Music API origin, never to media/artwork hosts. See [account setup](ACCOUNT.md).
 
 Private library responses and fetched lyrics are memory-only unless the user
 performs an action that persists song metadata as described above. Local OS media
@@ -55,5 +69,5 @@ and manual diagnostic sharing have privacy implications outside that storage
 policy; do not include account cookies or personal profiles in reports.
 
 Use [credential safety guidance](SECURITY.md) for redacted reporting. Package
-builds include this policy. Any future telemetry, credential persistence or
+builds include this policy. Any future telemetry, changes to credential storage or
 update service requires an updated policy and appropriate user controls.
