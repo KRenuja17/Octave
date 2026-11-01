@@ -1,7 +1,7 @@
 # Windows distribution
 
-The current artifact is an unsigned evaluation package. Account/Premium checks
-remain excluded from signed-out acceptance. Translation is optional and off;
+The current artifact is an unsigned evaluation package. Attended Windows
+Account/Premium acceptance is recorded in RELEASE.md. Translation is optional and off;
 no paid translation service is required. A signature alone does not complete
 listening, fresh-machine or accessibility acceptance.
 
@@ -106,6 +106,64 @@ privacy/signing policy. Octave has not been accepted, and no SignPath sponsorshi
 or certificate is claimed. Do not add their attribution as an existing sponsor
 before approval. The owner must review these requirements and submit any account
 application; no accounts or keys are created automatically.
+
+### Prepared SignPath route
+
+`signpath-artifact.xml` is a **provider-review candidate**, based on the provider's
+[artifact examples](https://docs.signpath.io/artifact-configuration/examples).
+It restricts product/version/company/original-filename metadata on the two
+Octave executables and signs only those executables and the two installer
+scripts. Other payloads, including upstream GNU DLLs and notices, pass through
+unchanged. The provider must approve the exact configuration, source dependency
+arrangement and project eligibility before use.
+
+The optional `sign=true` distribution job uses the pinned official SignPath v3
+action and the artifact ID from the same reviewed main-branch build, after
+independent registration passes. It follows the provider's
+[GitHub trusted-build integration](https://docs.signpath.io/trusted-build-systems/github).
+There is no token, project configuration or environment created automatically.
+Before enabling, the owner must create **release-signing** with required review
+and configure its protected values from the approved provider:
+
+| Name | Type |
+| --- | --- |
+| `SIGNPATH_API_TOKEN` | Environment secret, submitter access only |
+| `SIGNPATH_ORGANIZATION_ID` | Environment variable |
+| `SIGNPATH_PROJECT_SLUG` | Environment variable |
+| `SIGNPATH_SIGNING_POLICY_SLUG` | Environment variable, manual approval policy |
+| `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Environment variable, approved configuration |
+| `SIGNPATH_PUBLISHER_THUMBPRINT` | Environment variable, independently verified public certificate thumbprint |
+
+Never paste service credentials into chat/source or commit an environment export.
+The SignPath account and GitHub account require owner-controlled MFA. Application
+acceptance, required-reviewer protection and provider manual approval are owner/
+provider prerequisites, not conditions inferred from variable names. No production
+signing request has been submitted or verified yet.
+
+`Complete-SignedPackage.ps1` imports the returned artifact into a separate output
+directory. It checks the original input manifest, clean optimized source/version,
+exact file set and unchanged non-signing payloads, retains BUILD-INFO, regenerates
+hashes and requires publisher/timestamps and both PE metadata resources. It emits
+a ZIP and SHA256 sidecar only after qualification. It relies on SignPath's trusted
+build connector/manual approval for the provenance of changed signed executables;
+signature validity alone does not prove their correspondence to unsigned code.
+`Test-SignedPackageImport.ps1` verifies real unsigned rejection and synthetic
+import-policy cases; its mock valid signatures are not evidence of live signing.
+
+The workflow repeats registration on the final signed files before uploading
+`windows-signed-review`. This is still CI with isolated Mesa, not consumer-GPU or
+SmartScreen acceptance. Use [consumer acceptance](CONSUMER_ACCEPTANCE.md) and
+`Test-ConsumerPackage.ps1` on the reviewed final signed manifest. The tool records
+non-identifying OS/GPU/RAM/input-method facts and bounded install/uninstall results;
+attended checks stay pending. It does not collect account sessions or machine/
+user names, and does not install runtimes, IMEs or alter security protections.
+
+Application entry: [SignPath Foundation](https://signpath.org/apply.html).
+Its current form needs maintainer contact information, reputation evidence and
+agreement to its conditions/data processing. The owner supplies those directly
+to SignPath. A public evaluation release may be needed for the already-released
+condition. An unpublished draft is not a public release, and another project's
+reputation is not evidence of Octave adoption. No acceptance is guaranteed.
 
 ## Production release checkpoint
 

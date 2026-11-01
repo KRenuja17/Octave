@@ -1,7 +1,8 @@
 # Code signing policy
 
-Octave's signing provider is not yet approved or configured. Current evaluation
-packages are unsigned. No SignPath sponsorship or certificate is claimed.
+Octave is pursuing SignPath Foundation's no-cost open-source route. The project
+has not been approved and the signing environment is not configured. Current
+evaluation packages are unsigned. No sponsorship or certificate is claimed.
 
 The repository owner, [KRenuja17](https://github.com/KRenuja17), reviews and
 approves production signing and publication. Signing access and provider roles
@@ -13,6 +14,15 @@ submitted for signing. Signing credentials/private keys must stay in the
 approved provider or protected signing environment, outside Git, packages and
 diagnostic output. Evaluation CI has read-only repository permissions and no
 signing credentials. Each signing request requires maintainer approval.
+
+The distribution workflow's `sign` input defaults to false. Before enabling it,
+the owner must configure the protected `release-signing` environment with a
+required reviewer and an approved SignPath policy requiring manual approval.
+Signing uses the reviewed main commit's GitHub-hosted artifact only. No signing
+job can publish a release. The candidate artifact configuration lists Octave's
+two executables and installer scripts explicitly; upstream DLLs are not signed
+under this project. Provider approval must cover the vendored source/dependency
+arrangement and verify project eligibility; local policy tests cannot grant it.
 
 The final artifact must pass publisher/timestamp verification, executable product
 and version checks, regenerated SHA256 manifests, installer/registration and

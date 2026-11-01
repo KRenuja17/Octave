@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Provider-review candidate, not an approved SignPath configuration.
+     GitHub upload-artifact stores the package contents at the ZIP root.
+     Only Octave's two executables and installer scripts may be signed. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="Octave" product-version="${version}"
+                 file-version="${version}" company-name="Octave contributors"
+                 original-filename="${file.name}">
+      <include path="octave-desktop.exe" />
+      <include path="octave-signature.exe" />
+      <for-each><authenticode-sign /></for-each>
+    </pe-file-set>
+    <powershell-file path="Install.ps1"><authenticode-sign /></powershell-file>
+    <powershell-file path="Uninstall.ps1"><authenticode-sign /></powershell-file>
+  </zip-file>
+</artifact-configuration>

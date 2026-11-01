@@ -26,6 +26,11 @@ Assert-Rejected 'unsigned-payload' { & $gate -PackageDir $root -PublisherThumbpr
     $fixtureSignature = [pscustomobject]@{Status='Valid';SignerCertificate=[pscustomobject]@{Thumbprint=$thumbprint;Extensions=@([pscustomobject]@{Oid=[pscustomobject]@{Value='2.5.29.37'};EnhancedKeyUsages=@([pscustomobject]@{Value='1.3.6.1.5.5.7.3.3'})})};TimeStamperCertificate=[pscustomobject]@{Subject='Synthetic timestamp'}}
     function Get-AuthenticodeSignature { param($LiteralPath) $fixtureSignature }
     & $gate -PackageDir $root -PublisherThumbprint $thumbprint
+    $manifest.files = @($files | Where-Object { $_.name -ne 'octave-signature.exe' })
+    $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath
+    Assert-Rejected 'omitted-playback-worker' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
+    $manifest.files = $files
+    $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath
     $fixtureSignature.Status = 'HashMismatch'
     Assert-Rejected 'invalid-signature' { & $gate -PackageDir $root -PublisherThumbprint $thumbprint }
     $fixtureSignature.Status = 'Valid'

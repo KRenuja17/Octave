@@ -6,6 +6,11 @@ on:
         description: Evaluation version (for example 0.2.0-rc.1)
         required: true
         type: string
+      sign:
+        description: Request approved SignPath signing (requires owner-configured release-signing environment)
+        required: false
+        type: boolean
+        default: false
 permissions:
   contents: read
 env:
@@ -15,6 +20,8 @@ env:
 jobs:
   package:
     runs-on: windows-2022
+    outputs:
+      artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../octave-target
       OCTAVE_TEST_DIR: ${{ github.workspace }}/../octave-tests
@@ -53,8 +60,11 @@ jobs:
           ./packaging/Test-ExecutableMetadata.ps1 -Executable "$env:PACKAGE_DIR/octave-signature.exe" -Version $env:RELEASE_VERSION -Kind signature
       - name: Signature policy fixtures
         shell: pwsh
-        run: ./packaging/Test-SigningPolicy.ps1 -WorkDir "$env:RUNNER_TEMP/signing-qa"
+        run: |
+          ./packaging/Test-SigningPolicy.ps1 -WorkDir "$env:RUNNER_TEMP/signing-qa"
+          ./packaging/Test-SignedPackageImport.ps1 -WorkDir "$env:RUNNER_TEMP/signing-import-qa" -DesktopExecutable "$env:PACKAGE_DIR/octave-desktop.exe" -WorkerExecutable "$env:PACKAGE_DIR/octave-signature.exe" -Version $env:RELEASE_VERSION
       - uses: actions/upload-artifact@v4
+        id: unsigned
         with:
           name: windows-evaluation-package
           path: ${{ env.PACKAGE_DIR }}
@@ -83,3 +93,69 @@ jobs:
             ${{ runner.temp }}/registration-qa/**/launch-*.log
           retention-days: 7
           if-no-files-found: warn
+  sign:
+    if: ${{ inputs.sign }}
+    needs: [package, independent-registration]
+    runs-on: windows-2022
+    environment: release-signing
+    permissions:
+      actions: read
+      contents: read
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      PUBLISHER_THUMBPRINT: ${{ vars.SIGNPATH_PUBLISHER_THUMBPRINT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require approved configuration
+        shell: pwsh
+        env:
+          SIGNPATH_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORG: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_CONFIG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+        run: |
+          if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Signing is restricted to reviewed main builds.' }
+          foreach ($name in @('SIGNPATH_TOKEN','SIGNPATH_ORG','SIGNPATH_PROJECT','SIGNPATH_POLICY','SIGNPATH_CONFIG','PUBLISHER_THUMBPRINT')) {
+            if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing approved configuration: $name" }
+          }
+          if ($env:PUBLISHER_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Expected independently verified publisher thumbprint.' }
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-evaluation-package
+          path: ${{ runner.temp }}/unsigned
+      - name: Request signing with provider manual approval
+        id: signpath
+        # Official v3, reviewed/pinned 2026-11-01. No auto-approval policy.
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.package.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/provider-signed
+          parameters: |
+            version: ${{ toJSON(inputs.version) }}
+      - name: Verify and assemble immutable signed package
+        shell: pwsh
+        run: |
+          $signed = ./packaging/Complete-SignedPackage.ps1 -UnsignedPackageDir "$env:RUNNER_TEMP/unsigned" -ProviderPackageDir "$env:RUNNER_TEMP/provider-signed" -OutputDir "$env:RUNNER_TEMP/signed" -ExpectedSourceCommit $env:GITHUB_SHA -PublisherThumbprint $env:PUBLISHER_THUMBPRINT
+          "SIGNED_DIR=$signed" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Repeat registration on signed files
+        shell: pwsh
+        run: |
+          $graphics = ./packaging/Set-UpCiGraphics.ps1 -WorkDir "$env:RUNNER_TEMP/signed-ci-graphics"
+          ./packaging/Test-RegisteredPackage.ps1 -PackageDir $env:SIGNED_DIR -WorkDir "$env:RUNNER_TEMP/signed-registration" -SoftwareOpenGlDir $graphics
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-signed-review
+          path: |
+            ${{ runner.temp }}/signed/*.zip
+            ${{ runner.temp }}/signed/*.sha256
+            ${{ runner.temp }}/signed/*.review.json
+            ${{ runner.temp }}/signed-registration/**/result.json
+          retention-days: 7
+          if-no-files-found: error
