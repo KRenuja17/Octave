@@ -35,9 +35,14 @@ try {
     if ($shortcut.TargetPath -ne (Join-Path $target 'octave-desktop.exe') -or $shortcut.WorkingDirectory -ne $target) { throw 'Start menu shortcut mismatch.' }
     # Explicit profile: never touch the normal listening database during QA.
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
-    $process = Start-Process -FilePath $shortcut.TargetPath -ArgumentList @('--smoke-test','--data-dir',('"' + $profile + '"')) -WindowStyle Hidden -PassThru
+    $stdout = Join-Path $root 'launch-stdout.log'
+    $stderr = Join-Path $root 'launch-stderr.log'
+    $process = Start-Process -FilePath $shortcut.TargetPath -ArgumentList @('--smoke-test','--data-dir',('"' + $profile + '"')) -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdout -RedirectStandardError $stderr
     if (-not $process.WaitForExit(30000)) { $process.Kill(); $process.WaitForExit(); throw 'Registered launch timed out.' }
-    if ($process.ExitCode -ne 0) { throw 'Registered launch failed.' }
+    if ($process.ExitCode -ne 0) {
+        $detail = Get-Content -LiteralPath $stderr -Raw
+        throw "Registered launch failed (exit $($process.ExitCode)). $detail"
+    }
     $database = Join-Path $profile 'listening.sqlite3'
     $before = (Get-FileHash -LiteralPath $database).Hash
     Set-Content -LiteralPath (Join-Path $target 'user-note.txt') -Value 'preserve'

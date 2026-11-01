@@ -74,6 +74,8 @@ jobs:
         if: always()
         with:
           name: windows-registration-evidence
-          path: ${{ runner.temp }}/registration-qa/**/result.json
+          path: |
+            ${{ runner.temp }}/registration-qa/**/result.json
+            ${{ runner.temp }}/registration-qa/**/launch-*.log
           retention-days: 7
           if-no-files-found: warn
