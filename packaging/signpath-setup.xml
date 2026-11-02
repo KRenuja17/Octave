@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Provider-review candidate. Inputs already embed the separately signed
+     payload, guard and uninstaller. Local import verifies unchanged PE code. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters><parameter name="version" required="true" /></parameters>
+  <zip-file>
+    <pe-file path="Octave-${version}-Setup.exe"><authenticode-sign /></pe-file>
+  </zip-file>
+</artifact-configuration>

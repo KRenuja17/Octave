@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Provider-review candidate. Inno resource padding must be reviewed from an
+     actual uploaded sample. Local gates require exact trimmed product/version,
+     the same compiler/source, and unchanged uninstaller code. No upstream DLLs. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="octave-uninstaller.exe"><authenticode-sign /></pe-file>
+    <powershell-file path="Setup-Guard.ps1"><authenticode-sign /></powershell-file>
+  </zip-file>
+</artifact-configuration>

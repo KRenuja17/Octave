@@ -19,9 +19,6 @@ foreach ($entry in $manifest.files) {
     $file = Join-Path $package $entry.name
     if ((Get-FileHash -LiteralPath $file).Hash -ne $entry.sha256) { throw "Payload hash mismatch: $($entry.name)" }
     if ([IO.Path]::GetExtension($file) -notin '.exe','.ps1') { continue }
-    $signature = Get-AuthenticodeSignature -LiteralPath $file
-    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $PublisherThumbprint -or -not $signature.TimeStamperCertificate) { throw "Trusted timestamped publisher signature required: $($entry.name)" }
-    $usages = @($signature.SignerCertificate.Extensions | Where-Object { $_.Oid.Value -eq '2.5.29.37' } | ForEach-Object { $_.EnhancedKeyUsages } | ForEach-Object { $_.Value })
-    if ('1.3.6.1.5.5.7.3.3' -notin $usages) { throw 'Publisher certificate lacks the code-signing usage.' }
+    & (Join-Path $PSScriptRoot 'Test-TrustedSignature.ps1') -File $file -PublisherThumbprint $PublisherThumbprint
 }
 Write-Output 'release_signatures=passed'

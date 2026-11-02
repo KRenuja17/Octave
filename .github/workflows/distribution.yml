@@ -22,6 +22,7 @@ jobs:
     runs-on: windows-2022
     outputs:
       artifact-id: ${{ steps.unsigned.outputs.artifact-id }}
+      setup-materials-id: ${{ steps.materials.outputs.artifact-id }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/../octave-target
       OCTAVE_TEST_DIR: ${{ github.workspace }}/../octave-tests
@@ -60,6 +61,15 @@ jobs:
           ./packaging/Test-SetupGuards.ps1 -WorkDir "$env:RUNNER_TEMP/setup-guards"
           ./packaging/Test-SetupInput.ps1 -PackageDir $env:PACKAGE_DIR -WorkDir "$env:RUNNER_TEMP/setup-input-qa"
           ./packaging/Build-Setup.ps1 -PackageDir $env:PACKAGE_DIR -OutputDir "$env:RUNNER_TEMP/setup" -Compiler $compiler
+          ./packaging/Build-Setup.ps1 -PackageDir $env:PACKAGE_DIR -OutputDir "$env:RUNNER_TEMP/setup-materials" -Compiler $compiler -PrepareSigning
+          ./packaging/Test-SetupSigning.ps1 -PackageDir $env:PACKAGE_DIR -SetupDir "$env:RUNNER_TEMP/setup" -MaterialsDir "$env:RUNNER_TEMP/setup-materials" -Compiler $compiler -WorkDir "$env:RUNNER_TEMP/setup-signing-qa"
+      - uses: actions/upload-artifact@v4
+        id: materials
+        with:
+          name: windows-setup-materials
+          path: ${{ runner.temp }}/setup-materials/*
+          retention-days: 7
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         with:
           name: windows-setup-evaluation
@@ -156,9 +166,11 @@ jobs:
           SIGNPATH_PROJECT: ${{ vars.SIGNPATH_PROJECT_SLUG }}
           SIGNPATH_POLICY: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
           SIGNPATH_CONFIG: ${{ vars.SIGNPATH_ARTIFACT_CONFIGURATION_SLUG }}
+          SIGNPATH_MATERIALS_CONFIG: ${{ vars.SIGNPATH_SETUP_MATERIALS_CONFIGURATION_SLUG }}
+          SIGNPATH_SETUP_CONFIG: ${{ vars.SIGNPATH_SETUP_CONFIGURATION_SLUG }}
         run: |
           if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Signing is restricted to reviewed main builds.' }
-          foreach ($name in @('SIGNPATH_TOKEN','SIGNPATH_ORG','SIGNPATH_PROJECT','SIGNPATH_POLICY','SIGNPATH_CONFIG','PUBLISHER_THUMBPRINT')) {
+          foreach ($name in @('SIGNPATH_TOKEN','SIGNPATH_ORG','SIGNPATH_PROJECT','SIGNPATH_POLICY','SIGNPATH_CONFIG','SIGNPATH_MATERIALS_CONFIG','SIGNPATH_SETUP_CONFIG','PUBLISHER_THUMBPRINT')) {
             if (-not [Environment]::GetEnvironmentVariable($name)) { throw "Missing approved configuration: $name" }
           }
           if ($env:PUBLISHER_THUMBPRINT -notmatch '^[A-Fa-f0-9]{40}$') { throw 'Expected independently verified publisher thumbprint.' }
@@ -186,6 +198,60 @@ jobs:
         run: |
           $signed = ./packaging/Complete-SignedPackage.ps1 -UnsignedPackageDir "$env:RUNNER_TEMP/unsigned" -ProviderPackageDir "$env:RUNNER_TEMP/provider-signed" -OutputDir "$env:RUNNER_TEMP/signed" -ExpectedSourceCommit $env:GITHUB_SHA -PublisherThumbprint $env:PUBLISHER_THUMBPRINT
           "SIGNED_DIR=$signed" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-setup-materials
+          path: ${{ runner.temp }}/unsigned-materials
+      - name: Request guard and uninstaller signing with manual approval
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_SETUP_MATERIALS_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ needs.package.outputs.setup-materials-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signed-materials
+      - name: Build Setup with verified signed payload and uninstaller
+        shell: pwsh
+        run: |
+          $compiler = ./packaging/Get-SetupCompiler.ps1 -ToolDir "$env:RUNNER_TEMP/inno-setup-7.1.1"
+          ./packaging/Build-Setup.ps1 -PackageDir $env:SIGNED_DIR -OutputDir "$env:RUNNER_TEMP/setup-to-sign" -Compiler $compiler -UnsignedMaterialsDir "$env:RUNNER_TEMP/unsigned-materials" -SignedMaterialsDir "$env:RUNNER_TEMP/signed-materials" -PublisherThumbprint $env:PUBLISHER_THUMBPRINT
+      - uses: actions/upload-artifact@v4
+        id: setup-input
+        with:
+          name: windows-setup-signing-input
+          path: ${{ runner.temp }}/setup-to-sign/*
+          retention-days: 7
+          if-no-files-found: error
+      - name: Request final Setup signing with manual approval
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_SETUP_CONFIGURATION_SLUG }}
+          github-artifact-id: ${{ steps.setup-input.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/provider-setup
+          parameters: |
+            version: ${{ toJSON(inputs.version) }}
+      - name: Verify immutable final Setup and unchanged embedded payload
+        shell: pwsh
+        run: |
+          $setup = ./packaging/Complete-SignedSetup.ps1 -UnsignedSetupDir "$env:RUNNER_TEMP/setup-to-sign" -ProviderSetupDir "$env:RUNNER_TEMP/provider-setup" -PackageDir $env:SIGNED_DIR -SignedMaterialsDir "$env:RUNNER_TEMP/signed-materials" -OutputDir "$env:RUNNER_TEMP/signed-setup" -ExpectedSourceCommit $env:GITHUB_SHA -PublisherThumbprint $env:PUBLISHER_THUMBPRINT
+          "SIGNED_SETUP_DIR=$setup" | Out-File -FilePath $env:GITHUB_ENV -Append
+      - name: Repeat native install, repair, upgrade and uninstall on signed files
+        shell: pwsh
+        run: |
+          $setup = @(Get-ChildItem $env:SIGNED_SETUP_DIR -Filter '*-Setup.exe')
+          if ($setup.Count -ne 1) { throw 'Expected one signed Setup executable.' }
+          $graphics = ./packaging/Set-UpCiGraphics.ps1 -WorkDir "$env:RUNNER_TEMP/signed-setup-graphics"
+          $guard = (Get-FileHash "$env:RUNNER_TEMP/signed-materials/Setup-Guard.ps1").Hash
+          $uninstaller = (Get-FileHash "$env:RUNNER_TEMP/signed-materials/octave-uninstaller.exe").Hash
+          ./packaging/Test-Setup.ps1 -Setup $setup[0].FullName -PackageDir $env:SIGNED_DIR -WorkDir "$env:RUNNER_TEMP/signed-setup-qa" -SoftwareOpenGlDir $graphics -PublisherThumbprint $env:PUBLISHER_THUMBPRINT -ExpectedGuardSha256 $guard -ExpectedUninstallerSha256 $uninstaller
       - name: Repeat registration on signed files
         shell: pwsh
         run: |
@@ -199,5 +265,7 @@ jobs:
             ${{ runner.temp }}/signed/*.sha256
             ${{ runner.temp }}/signed/*.review.json
             ${{ runner.temp }}/signed-registration/**/result.json
+            ${{ env.SIGNED_SETUP_DIR }}/*
+            ${{ runner.temp }}/signed-setup-qa/**/result.json
           retention-days: 7
           if-no-files-found: error

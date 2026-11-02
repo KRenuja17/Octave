@@ -39,6 +39,12 @@ VersionInfoProductTextVersion={#OctaveVersion}
 VersionInfoDescription=Octave Setup
 VersionInfoCompany=Octave contributors
 VersionInfoOriginalFileName=Octave-{#OctaveVersion}-Setup.exe
+#ifdef SignedUninstallerDir
+; First compile emits the exact unsigned uninstaller and stops. After provider
+; signing, Inno verifies its code is unchanged before embedding its signature.
+SignedUninstaller=yes
+SignedUninstallerDir={#SignedUninstallerDir}
+#endif
 
 [Tasks]
 Name: desktopicon; Description: "Create a &desktop shortcut"; Flags: unchecked

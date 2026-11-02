@@ -3,7 +3,10 @@ param(
     [Parameter(Mandatory)][string]$PackageDir,
     [Parameter(Mandatory)][string]$WorkDir,
     [string]$PreviousPackageDir,
-    [string]$SoftwareOpenGlDir
+    [string]$SoftwareOpenGlDir,
+    [ValidatePattern('^[A-Fa-f0-9]{40}$')][string]$PublisherThumbprint,
+    [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedGuardSha256,
+    [ValidatePattern('^[A-Fa-f0-9]{64}$')][string]$ExpectedUninstallerSha256
 )
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
@@ -16,6 +19,13 @@ $legacyKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\Octave'
 $shortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Octave.lnk'
 if ((Test-Path -LiteralPath $key) -or (Test-Path -LiteralPath $legacyKey) -or (Test-Path -LiteralPath $shortcutPath)) { throw 'An Octave registration already exists. Use a clean Windows test account; do not overwrite the user installation.' }
 $manifest = Get-Content -LiteralPath (Join-Path $package 'manifest.json') -Raw | ConvertFrom-Json
+$signedCheck = [bool]$PublisherThumbprint
+if ($signedCheck -ne [bool]$ExpectedGuardSha256 -or $signedCheck -ne [bool]$ExpectedUninstallerSha256) { throw 'Signed Setup checks require the approved publisher and both installed material hashes.' }
+if ($signedCheck) {
+    & (Join-Path $PSScriptRoot 'Test-ReleaseSignatures.ps1') -PackageDir $package -PublisherThumbprint $PublisherThumbprint | Out-Host
+    & (Join-Path $PSScriptRoot 'Test-TrustedSignature.ps1') -File $setupFile -PublisherThumbprint $PublisherThumbprint
+    & (Join-Path $PSScriptRoot 'Test-SetupMetadata.ps1') -Executable $setupFile -Version $manifest.version | Out-Host
+}
 $root = Join-Path $work ('setup-test-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $root -Force | Out-Null
 $profile = Join-Path $root 'synthetic-profile'
@@ -34,6 +44,14 @@ function Invoke-Setup([string]$Name, [string]$Destination, [switch]$Reject) {
 function Assert-Installed {
     foreach ($entry in $manifest.files) {
         if ((Get-FileHash -LiteralPath (Join-Path $target $entry.name)).Hash -ne $entry.sha256) { throw "Installed payload hash mismatch: $($entry.name)" }
+    }
+    if ($signedCheck) {
+        foreach ($name in @('Setup-Guard.ps1','unins000.exe')) {
+            $file = Join-Path $target $name
+            $expected = if ($name -eq 'Setup-Guard.ps1') { $ExpectedGuardSha256 } else { $ExpectedUninstallerSha256 }
+            if ((Get-FileHash -LiteralPath $file).Hash -ne $expected) { throw "Installed signing material differs: $name" }
+            & (Join-Path $PSScriptRoot 'Test-TrustedSignature.ps1') -File $file -PublisherThumbprint $PublisherThumbprint
+        }
     }
     $registration = Get-ItemProperty -LiteralPath $key
     if ($registration.DisplayName -ne 'Octave' -or $registration.DisplayVersion -ne $manifest.version -or $registration.InstallLocation.TrimEnd('\') -ne $target) { throw 'Native uninstall registration mismatch.' }
@@ -91,7 +109,7 @@ try {
     Invoke-Uninstall
     $installed = $false
     if ((Get-Content -LiteralPath (Join-Path $target 'user-note.txt')).Trim() -ne 'preserve' -or (Get-FileHash -LiteralPath (Join-Path $profile 'listening.sqlite3')).Hash -ne $profileHash) { throw 'Upgrade/uninstall changed preserved data.' }
-    @{version=$manifest.version; setupSha256=(Get-FileHash -LiteralPath $setupFile).Hash; manifestSha256=(Get-FileHash -LiteralPath (Join-Path $package 'manifest.json')).Hash; freshInstall=$true; repair=$true; legacyUpgrade=$true; startMenu=$true; windowsUninstall=$true; restrictedPathLaunch=$true; profilePreserved=$true; unrelatedFilesPreserved=$true; unownedTargetRejected=$true; normalUserProfileUsed=$false; freshConsumerMachine=$false; graphicsEnvironment=$(if($SoftwareOpenGlDir){'CI-only Mesa llvmpipe'}else{'host driver'})} | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
+    @{version=$manifest.version; setupSha256=(Get-FileHash -LiteralPath $setupFile).Hash; manifestSha256=(Get-FileHash -LiteralPath (Join-Path $package 'manifest.json')).Hash; freshInstall=$true; repair=$true; legacyUpgrade=$true; startMenu=$true; windowsUninstall=$true; restrictedPathLaunch=$true; profilePreserved=$true; unrelatedFilesPreserved=$true; unownedTargetRejected=$true; signedSetupAndInstalledMaterialsVerified=$signedCheck; normalUserProfileUsed=$false; freshConsumerMachine=$false; graphicsEnvironment=$(if($SoftwareOpenGlDir){'CI-only Mesa llvmpipe'}else{'host driver'})} | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $root 'result.json') -Encoding utf8
     Write-Output "native_setup_acceptance=passed evidence=$root"
 } finally {
     $env:PATH = $savedPath

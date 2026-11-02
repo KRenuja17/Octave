@@ -14,10 +14,11 @@ desktop notifications, usernames and account information from shared evidence.
 
 ## Identify the reviewed artifact
 
-The release review must supply a source commit, signed ZIP SHA256, extracted
-manifest SHA256 and independently confirmed publisher-certificate thumbprint.
-Use the source/test scripts from that same reviewed commit. Download the ZIP
-through a browser from the review/download URL and record the browser/Windows
+The release review must supply a source commit, signed Setup SHA256, signed ZIP
+SHA256, extracted manifest SHA256, installed guard/uninstaller hashes and an
+independently confirmed publisher-certificate thumbprint.
+Use the source/test scripts from that same reviewed commit. Download Setup and
+the supporting ZIP through a browser from the review/download URL and record the browser/Windows
 security messages before extracting. A USB copy, CI download or developer
 command-line launch alone does not verify consumer SmartScreen behavior.
 
@@ -37,6 +38,16 @@ pass. See Microsoft's [SmartScreen reputation documentation](https://learn.micro
   -CleanConsumerEnvironment -RunRegistrationCheck
 ```
 
+For native Setup, replace `-RunRegistrationCheck` with the following parameters;
+the review JSON supplies the public hashes. This verifies the actual installed
+uninstaller and guard after fresh install, repair and legacy migration:
+
+```powershell
+  -Setup <signed-setup.exe> -ExpectedSetupSha256 <reviewed-setup-sha256> `
+  -ExpectedGuardSha256 <reviewed-guard-sha256> `
+  -ExpectedUninstallerSha256 <reviewed-uninstaller-sha256> -RunSetupCheck
+```
+
 Use `-CleanConsumerEnvironment` only after confirming the machine is a consumer
 environment without project build dependencies. The report records this as an
 attestation; it cannot prove the machine's history. The optional registration
@@ -47,7 +58,8 @@ pass leaves attended checks pending. Do not run it over an existing installation
 
 ## Attended checks
 
-- Install with the signed `Install.ps1` using a normal user account. Launch from
+- Install with the signed Setup wizard using a normal user account (the portable
+  `Install.ps1` route is a separate alternative). Launch from
   Start, inspect the version and verify Home, Search, Playlists, Settings, Account
   and the compact/expanded listening panel render without clipping or missing
   glyphs. Keep the existing Octave palette. Measure startup time and idle memory

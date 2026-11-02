@@ -225,7 +225,9 @@ The pinned [Inno Setup compiler](https://github.com/jrsoftware/issrc/releases/ta
 is a portable build tool, separate from the Rust application. Setup comes with a
 SHA256 sidecar and build receipt binding the installer source and payload. The
 current Setup and its native uninstaller remain unsigned evaluation artifacts;
-the pending signing-provider integration must also cover these before production.
+the prepared signing workflow covers the payload, native guard/uninstaller and
+final Setup in separate approval steps. Actual provider approval and trusted
+signed-file qualification remain required before production.
 
 The alternative ZIP contains a portable executable, any required GNU runtime DLLs, dependency inventory,
 checksums, and per-user `Install.ps1`/`Uninstall.ps1` scripts. Extract it, then run

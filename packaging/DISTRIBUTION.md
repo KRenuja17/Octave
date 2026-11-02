@@ -39,12 +39,38 @@ changes. `Test-SetupInput.ps1` checks payload policy with synthetic damaged copi
 Installed apps, restricted-PATH launch, uninstall and profile preservation. It
 refuses existing Octave registrations and uses an explicit isolated profile.
 
-The native Setup container and generated uninstaller are **not** covered by the
-existing four-file portable SignPath configuration. They remain unsigned; before
-production the approved provider must sign/timestamp the contained executables,
-scripts, native uninstaller and final Setup, with corresponding same-byte checks.
-Do not publish an unsigned Setup as a signed release or treat the compiler's own
-signature as an Octave publisher signature.
+Native signing is prepared as three separately approved SignPath requests:
+portable payload, native guard/uninstaller, then the final Setup container. The
+current files remain unsigned until provider approval and actual signing pass.
+The compiler's own signature is not an Octave publisher signature.
+
+`Build-Setup.ps1 -PrepareSigning` uses the pinned compiler's noninteractive
+signature-required stop to emit `octave-uninstaller.exe`, `Setup-Guard.ps1` and
+`materials.json`. The receipt binds the source, original payload manifest,
+compiler and uninstaller cache filename. The two additional provider-review
+candidates are `signpath-setup-materials.xml` and `signpath-setup.xml`. Native
+Inno resource strings contain padding; the provider must review constraints
+from an actual sample. Local checks require exact trimmed product/version.
+
+After the provider signs the materials, `Build-Setup.ps1` accepts the separate
+`-UnsignedMaterialsDir`, `-SignedMaterialsDir` and `-PublisherThumbprint`. It
+requires a clean source tree, the signed portable package, original receipt,
+matching compiler and valid timestamped signatures. The guard's original code
+and the uninstaller's original PE code must be unchanged. Inno also checks its
+cached signed uninstaller against its freshly generated code before embedding
+the signature. `SignedUninstaller=yes` also covers Setup's temporary self-copies.
+See the official [signed-uninstaller procedure](https://jrsoftware.org/ishelp/topic_setup_signeduninstaller.htm)
+and [SignTool guidance](https://jrsoftware.org/ishelp/topic_setup_signtool.htm).
+
+The last provider request signs only this compiled Setup. `Complete-SignedSetup.ps1`
+checks publisher, timestamp, metadata, payload/source/material binding and the
+unchanged PE code/data before emitting a separate final executable, checksum
+and review receipt. The original build receipt retains the pre-signing hash;
+the review and checksum identify the final signed bytes. No failed import creates
+a release artifact. `Test-SetupSigning.ps1` covers real unsigned rejection and
+synthetic policy cases; mocked trust and fake certificate tables prove no live
+provider signing. `Test-Setup.ps1` can verify the exact installed guard/uninstaller
+hashes and signatures during fresh install, repair and legacy upgrade.
 
 The manually triggered **Windows evaluation package** workflow builds from source
 with Rust GNU, executes workspace/renderer/demuxer and packaging-policy checks,
@@ -172,6 +198,8 @@ and configure its protected values from the approved provider:
 | `SIGNPATH_PROJECT_SLUG` | Environment variable |
 | `SIGNPATH_SIGNING_POLICY_SLUG` | Environment variable, manual approval policy |
 | `SIGNPATH_ARTIFACT_CONFIGURATION_SLUG` | Environment variable, approved configuration |
+| `SIGNPATH_SETUP_MATERIALS_CONFIGURATION_SLUG` | Environment variable, approved guard/uninstaller configuration |
+| `SIGNPATH_SETUP_CONFIGURATION_SLUG` | Environment variable, approved final Setup configuration |
 | `SIGNPATH_PUBLISHER_THUMBPRINT` | Environment variable, independently verified public certificate thumbprint |
 
 Never paste service credentials into chat/source or commit an environment export.
@@ -190,8 +218,10 @@ signature validity alone does not prove their correspondence to unsigned code.
 `Test-SignedPackageImport.ps1` verifies real unsigned rejection and synthetic
 import-policy cases; its mock valid signatures are not evidence of live signing.
 
-The workflow repeats registration on the final signed files before uploading
-`windows-signed-review`. This is still CI with isolated Mesa, not consumer-GPU or
+The workflow repeats native Setup install/repair/legacy upgrade/uninstall and
+portable registration on the final signed files before uploading
+`windows-signed-review`. All three signing requests require provider approval.
+This is still CI with isolated Mesa, not consumer-GPU or
 SmartScreen acceptance. Use [consumer acceptance](CONSUMER_ACCEPTANCE.md) and
 `Test-ConsumerPackage.ps1` on the reviewed final signed manifest. The tool records
 non-identifying OS/GPU/RAM/input-method facts and bounded install/uninstall results;
@@ -206,6 +236,15 @@ condition. An unpublished draft is not a public release, and another project's
 reputation is not evidence of Octave adoption. No acceptance is guaranteed.
 
 ## Production release checkpoint
+
+For an explicitly unsigned, offline laptop handoff, use
+`Build-LaptopTestBundle.ps1 -Setup <verified-setup.exe> -OutputDir <external-dir>`.
+It checks the clean installer receipt, hash/sidecar and native metadata, then
+archives an explicit file allowlist. The ZIP includes Setup, its receipts, a
+test guide and an optional read-only environment reporter. No research directory,
+browser/profile/account data or developer tools are copied. The reporter verifies
+bundle hashes and leaves all attended checks marked not run. A USB transfer and
+unsigned preview cannot establish final signed-download/SmartScreen acceptance.
 
 1. Complete the remaining explicitly required listening/accessibility gates and
    record any agreed scope exclusions. Paid translation remains optional;
